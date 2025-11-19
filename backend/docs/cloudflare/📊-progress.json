@@ -1,0 +1,37 @@
+{
+  "started_at": "2025-09-08T03:24:40.402Z",
+  "stages": {
+    "developer-products": {
+      "status": "completed",
+      "completed_at": "2025-09-08T03:24:40.402Z",
+      "pages_crawled": 785,
+      "pages_skipped": 5,
+      "errors": 10,
+      "duration_minutes": 48
+    },
+    "ai-products": {
+      "status": "completed",
+      "completed_at": "2025-09-08T06:03:46.431Z",
+      "pages_crawled": 265,
+      "pages_skipped": 0,
+      "errors": 0,
+      "duration_minutes": 17
+    },
+    "security-products": {
+      "status": "completed",
+      "completed_at": "2025-09-08T04:18:09.245Z",
+      "pages_crawled": 506,
+      "pages_skipped": 0,
+      "errors": 0,
+      "duration_minutes": 29
+    },
+    "zero-trust": {
+      "status": "completed",
+      "completed_at": "2025-09-08T06:50:29.424Z",
+      "pages_crawled": 513,
+      "pages_skipped": 0,
+      "errors": 0,
+      "duration_minutes": 31
+    }
+  }
+}

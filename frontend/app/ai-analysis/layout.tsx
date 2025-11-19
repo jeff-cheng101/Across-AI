@@ -5,21 +5,34 @@ import type React from "react"
 import { useState } from "react"
 import Link from "next/link"
 import { motion } from "framer-motion"
-import { ChevronLeft, ChevronRight } from "lucide-react"
+import { ChevronLeft, ChevronRight, SparklesIcon, Sparkles } from 'lucide-react'
 import { Button } from "@/components/ui/button"
 import { WAFDataProvider } from "@/app/dashboard/waf-data-context"
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
 
 const brands = [
   { name: "Cloudflare", logo: "/logos/Cloudflar.png", href: "/ai-analysis/cloudflare" },
   { name: "Palo Alto", logo: "/logos/palo-alto-networks-1.png", href: "#", disabled: true },
-  { name: "F5", logo: "/logos/f5_b.png", href: "#", disabled: true },
+  { name: "F5", logo: "/logos/f5_b.png", href: "/ai-analysis/f5", disabled: false },
   { name: "CATO", logo: "/logos/cato-networks.png", href: "#", disabled: true },
+  { name: "Checkpoint", logo: "/logos/checkpoint.png", href: "#", disabled: true },
   { name: "Intezer", logo: "/logos/INTEZER_logo.png", href: "#", disabled: true },
   { name: "CyCraft", logo: "/logos/craftai.png", href: "#", disabled: true },
 ]
 
+const installedModels = [
+  { id: "gpt-oss-20b", name: "GPT-OSS20b", version: "1.0.0" },
+]
+
 export default function AIAnalysisLayout({ children }: { children: React.ReactNode }) {
   const [isCollapsed, setIsCollapsed] = useState(false)
+  const [selectedModel, setSelectedModel] = useState(installedModels[0].id)
 
   return (
     <WAFDataProvider>
@@ -50,12 +63,41 @@ export default function AIAnalysisLayout({ children }: { children: React.ReactNo
               </div>
             ) : (
               <div className="flex justify-center">
-                <div className="w-8 h-8 rounded-lg bg-cyan-500/20 flex items-center justify-center">
-                  <span className="text-cyan-400 text-xs font-bold">AI</span>
-                </div>
+                <Sparkles 
+                  className="w-6 h-6 text-white cursor-pointer hover:text-cyan-400 transition-colors" 
+                  onClick={() => setIsCollapsed(false)}
+                />
               </div>
             )}
           </div>
+
+          {!isCollapsed && (
+            <div className="p-4 border-b border-white/10">
+              <div className="flex items-center gap-2 mb-2">
+                <SparklesIcon className="w-4 h-4 text-white" />
+                <h3 className="text-white text-sm font-medium">AI 模型</h3>
+              </div>
+              <Select value={selectedModel} onValueChange={setSelectedModel}>
+                <SelectTrigger className="w-full bg-slate-800/50 border-white/10 text-white hover:bg-slate-800/70">
+                  <SelectValue placeholder="選擇模型" />
+                </SelectTrigger>
+                <SelectContent className="bg-slate-900 border-white/10">
+                  {installedModels.map((model) => (
+                    <SelectItem
+                      key={model.id}
+                      value={model.id}
+                      className="text-white hover:bg-slate-800 focus:bg-slate-800"
+                    >
+                      <div className="flex flex-col">
+                        <span className="font-medium">{model.name}</span>
+                        <span className="text-xs text-slate-400">v{model.version}</span>
+                      </div>
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          )}
 
           {/* Brand List */}
           <nav className="flex-1 p-4 space-y-2 overflow-y-auto">
@@ -91,7 +133,7 @@ export default function AIAnalysisLayout({ children }: { children: React.ReactNo
         </motion.aside>
 
         {/* Main Content */}
-        <main className="flex-1 overflow-auto">{children}</main>
+        <main className="flex-1 overflow-auto pl-6">{children}</main>
       </div>
     </WAFDataProvider>
   )

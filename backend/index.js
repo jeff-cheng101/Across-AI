@@ -1,4 +1,4 @@
- // backend/index.js
+// backend/index.js
 const express = require('express');
 const cors = require('cors');
 const { GoogleGenerativeAI } = require('@google/generative-ai');
@@ -6,11 +6,20 @@ const fs = require('fs');
 const readline = require('readline');
 const { elkMCPClient } = require('./services/elkMCPClient');
 const { ELK_CONFIG, OWASP_REFERENCES, identifyOWASPType } = require('./config/elkConfig');
-const { CLOUDFLARE_FIELD_MAPPING, generateAIFieldReference } = require('../cloudflare-field-mapping');
+
+// 產品專屬路由模組
+const cloudflareRoutes = require('./routes/cloudflare.routes');
+const f5Routes = require('./routes/f5.routes');
+const commonRoutes = require('./routes/common.routes');
 
 const app = express();
 app.use(cors());
 app.use(express.json());
+
+// 註冊產品專屬路由
+app.use('/api/cloudflare', cloudflareRoutes);
+app.use('/api/f5', f5Routes);
+app.use('/api', commonRoutes);
 
 // --- 常數設定 ---
 const LOG_FILE_PATH = '../CF-http_log.txt';
@@ -243,11 +252,13 @@ const AVAILABLE_MODELS = [
   { id: 'gemini-2.5-flash-lite', name: 'Gemini 2.5 Flash Lite' }
 ];
 
-// 取得可用的模型列表
-app.get('/api/models', (_req, res) => {
+// @deprecated - 已移至 common.routes.js
+// 取得可用的模型列表（向後兼容）
+app.get('/api/models-legacy', (_req, res) => {
   res.json(AVAILABLE_MODELS);
 });
 
+// @deprecated - 內部使用
 // 原始 AI 分析端點 (現在主要由後端內部呼叫)
 app.post('/api/analyze', async (req, res) => {
   try {
@@ -262,8 +273,9 @@ app.post('/api/analyze', async (req, res) => {
   }
 });
 
-// 簡化的 AI 測試端點
-app.post('/api/test-ai', async (req, res) => {
+// @deprecated - 已移至 common.routes.js
+// 簡化的 AI 測試端點（向後兼容）
+app.post('/api/test-ai-legacy', async (req, res) => {
   try {
     const { apiKey, model } = req.body;
     const useApiKey = apiKey || config.GEMINI_API_KEY;
@@ -1437,48 +1449,30 @@ function buildOverallData(globalStats, owaspAnalysis) {
 // === 新增 ELK 相關 API 端點 ===
 
 // ELK 連接測試端點
+// @deprecated - 請使用 /api/cloudflare/test-connection 或 /api/f5/test-connection
 app.get('/api/elk/test-connection', async (req, res) => {
+  console.warn('⚠️ 廢棄端點警告: /api/elk/test-connection 已廢棄，請使用產品專屬端點');
   try {
     const isConnected = await elkMCPClient.testConnection();
     res.json({ 
       connected: isConnected,
-      message: isConnected ? 'ELK MCP 連接正常' : 'ELK MCP 連接失敗'
+      message: isConnected ? 'ELK MCP 連接正常' : 'ELK MCP 連接失敗',
+      deprecationWarning: '此端點已廢棄，請使用 /api/cloudflare/test-connection 或 /api/f5/test-connection'
     });
   } catch (error) {
     res.status(500).json({ 
       connected: false, 
-      error: error.message 
+      error: error.message,
+      deprecationWarning: '此端點已廢棄，請使用產品專屬端點'
     });
   }
 });
 
-// 獲取 ELK 統計資料
-app.get('/api/elk/stats/:timeRange', async (req, res) => {
-  try {
-    const timeRange = req.params.timeRange || '1h';
-    const stats = await elkMCPClient.getSecurityStats(timeRange);
-    res.json(stats);
-  } catch (error) {
-    res.status(500).json({ 
-      error: '獲取統計資料失敗', 
-      details: error.message 
-    });
-  }
-});
-
-// 獲取 ELK 統計資料（無參數版本）
-app.get('/api/elk/stats', async (req, res) => {
-  try {
-    const timeRange = '1h';
-    const stats = await elkMCPClient.getSecurityStats(timeRange);
-    res.json(stats);
-  } catch (error) {
-    res.status(500).json({ 
-      error: '獲取統計資料失敗', 
-      details: error.message 
-    });
-  }
-});
+// ✅ 已移除廢棄的 /api/elk/stats 端點
+// 原因: 使用了不存在的 elasticsearch_query MCP 工具
+// 替代方案: 使用產品專屬的 WAF 分析端點:
+//   - POST /api/cloudflare/analyze-waf-risks
+//   - POST /api/f5/analyze-waf-risks
 
 // 調試端點：檢查時間分組問題
 app.get('/api/debug/time-grouping', async (req, res) => {
@@ -1526,133 +1520,16 @@ app.get('/api/debug/time-grouping', async (req, res) => {
   }
 });
 
-// 新增：Cloudflare WAF 風險分析 API
-app.post('/api/analyze-waf-risks-cloudflare', async (req, res) => {
-  try {
-    const { apiKey, model = 'gemini-2.0-flash-exp', timeRange = '24h', aiProvider = 'gemini' } = req.body;
-    
-    // 如果使用 Ollama，不需要 API Key
-    if (aiProvider !== 'ollama' && !apiKey) {
-      return res.status(400).json({ error: '請先設定 Gemini API Key 或使用 Ollama' });
-    }
-
-    console.log(`\n🔍 ===== 開始 Cloudflare WAF 風險分析 API =====`);
-    console.log(`📅 時間範圍: ${timeRange}`);
-    console.log(`🤖 AI 提供者: ${aiProvider}`);
-    console.log(`🤖 AI 模型: ${model}`);
-    
-    // Step 1: 建立 CloudflareWAFRiskService 實例
-    const CloudflareWAFRiskService = require('./services/cloudflareWAFRiskService');
-    const wafService = new CloudflareWAFRiskService();
-    
-    // Step 2: 透過 ELK MCP 分析 Cloudflare WAF 資料
-    console.log('\n⭐ Step 1: 透過 ELK MCP 分析 Cloudflare 日誌...');
-    const analysisData = await wafService.analyzeCloudflareWAF(timeRange);
-    
-    console.log(`✅ 分析完成，總事件數: ${analysisData.totalEvents}`);
-    
-    // Step 3: 生成 AI Prompt
-    console.log('\n⭐ Step 2: 生成 AI 分析 Prompt...');
-    const aiPrompt = wafService.generateAIPrompt(analysisData);
-    console.log(`✅ Prompt 長度: ${aiPrompt.length} 字元`);
-    
-    // Step 4: 呼叫 AI 進行分析（支援 Gemini 和 Ollama）
-    console.log(`\n⭐ Step 3: 呼叫 ${aiProvider === 'ollama' ? 'Ollama' : 'Gemini'} AI 分析...`);
-    
-    let responseText;
-    
-    if (aiProvider === 'ollama') {
-      // 使用 Ollama
-      const ollamaUrl = process.env.OLLAMA_URL || 'http://localhost:11434';
-      const ollamaModel = model || 'gemma3:4b';  // ✅ 改用 gemma3:4b
-      
-      console.log(`🦙 Ollama URL: ${ollamaUrl}`);
-      console.log(`🦙 Ollama 模型: ${ollamaModel}`);
-      
-      const ollamaResponse = await fetch(`${ollamaUrl}/api/generate`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          model: ollamaModel,
-          prompt: aiPrompt,
-          stream: false,
-          options: {
-            temperature: 0.7,
-            num_predict: 4096
-          }
-        })
-      });
-      
-      if (!ollamaResponse.ok) {
-        throw new Error(`Ollama API 錯誤: ${ollamaResponse.status}`);
-      }
-      
-      const ollamaData = await ollamaResponse.json();
-      responseText = ollamaData.response;
-      console.log(`✅ Ollama 回應長度: ${responseText.length} 字元`);
-      
-    } else {
-      // 使用 Gemini
-      const genAI = new GoogleGenerativeAI(apiKey);
-      const geminiModel = genAI.getGenerativeModel({ model });
-      const result = await geminiModel.generateContent(aiPrompt);
-      responseText = result.response.text();
-      console.log(`✅ Gemini 回應長度: ${responseText.length} 字元`);
-    }
-    
-    // Step 5: 解析 AI 回應（JSON 格式）
-    console.log('\n⭐ Step 4: 解析 AI 回應...');
-    let aiAnalysis;
-    
-    try {
-      // 嘗試直接解析 JSON
-      aiAnalysis = JSON.parse(responseText);
-      console.log(`✅ 成功解析 JSON，風險數量: ${aiAnalysis.risks?.length || 0}`);
-    } catch (parseError) {
-      console.log('⚠️ JSON 解析失敗，嘗試提取 JSON...');
-      
-      // 嘗試從 markdown code block 中提取
-      const jsonMatch = responseText.match(/```json\s*([\s\S]*?)\s*```/) || 
-                        responseText.match(/```\s*([\s\S]*?)\s*```/);
-      
-      if (jsonMatch) {
-        try {
-          aiAnalysis = JSON.parse(jsonMatch[1]);
-          console.log(`✅ 從 markdown 中成功解析，風險數量: ${aiAnalysis.risks?.length || 0}`);
-        } catch (e) {
-          console.log('❌ 無法解析 AI 回應，使用 Fallback 資料');
-          aiAnalysis = wafService.generateFallbackRisks(analysisData);
-        }
-      } else {
-        console.log('❌ 無法找到 JSON 格式，使用 Fallback 資料');
-        aiAnalysis = wafService.generateFallbackRisks(analysisData);
-      }
-    }
-    
-    console.log('\n✅ ===== Cloudflare WAF 風險分析完成 =====\n');
-    
-    // 返回結果
-    res.json({
-      success: true,
-      risks: aiAnalysis.risks || [],
-      metadata: {
-        totalEvents: analysisData.totalEvents,
-        timeRange: analysisData.timeRange,
-        analysisTimestamp: new Date().toISOString()
-      }
-    });
-    
-  } catch (error) {
-    console.error('❌ Cloudflare WAF 風險分析 API 失敗:', error);
-    res.status(500).json({ 
-      success: false,
-      error: 'Cloudflare WAF 風險分析失敗', 
-      details: error.message 
-    });
-  }
+// @deprecated - 請使用 /api/cloudflare/analyze-waf-risks
+// 新增：Cloudflare WAF 風險分析 API（向後兼容）
+app.post('/api/analyze-waf-risks-cloudflare', async (req, res, next) => {
+  console.warn('⚠️ 廢棄端點警告: /api/analyze-waf-risks-cloudflare 已廢棄，請使用 /api/cloudflare/analyze-waf-risks');
+  // 重定向到新端點
+  req.url = '/api/cloudflare/analyze-waf-risks';
+  return cloudflareRoutes(req, res, next);
 });
+
+// === ELK 連接管理 ===
 
 // ELK 連接預熱（可選）
 async function warmupELKConnection() {

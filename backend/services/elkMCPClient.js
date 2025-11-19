@@ -6,7 +6,6 @@ const { StdioClientTransport } = require('@modelcontextprotocol/sdk/client/stdio
 const { SSEClientTransport } = require('@modelcontextprotocol/sdk/client/sse.js');
 const { spawn } = require('child_process');
 const { ELK_CONFIG } = require('../config/elkConfig');
-const { CLOUDFLARE_FIELD_MAPPING } = require('../../cloudflare-field-mapping');
 
 // 使用全域 fetch (Node.js 18+ 內建)
 const fetch = globalThis.fetch;
@@ -372,8 +371,8 @@ class ElkMCPClient {
     }
   }
 
-  // 建構 Elasticsearch 查詢
-  buildElasticsearchQuery(timeRange = '1h', filters = {}) {
+  // 建構 Elasticsearch 查詢（產品無關）
+  buildElasticsearchQuery(timeRange = '1h', filters = {}, fieldMapping = null) {
     // 智能時間範圍查詢策略
     let query;
     
@@ -421,7 +420,8 @@ class ElkMCPClient {
     }
 
     // 添加額外的篩選條件（如果需要的話）
-    if (Object.keys(filters).length > 0) {
+    // 注意：現在 filters 需要直接使用 ELK 欄位名稱，而非邏輯名稱
+    if (Object.keys(filters).length > 0 && fieldMapping) {
       // 將簡單查詢轉換為 bool 查詢以支援篩選
       if (query.query.match_all) {
         query.query = {
@@ -440,21 +440,23 @@ class ElkMCPClient {
         };
       }
 
-      if (filters.clientIp && CLOUDFLARE_FIELD_MAPPING.client_ip) {
+      // 根據提供的 fieldMapping 動態處理篩選條件
+      if (filters.clientIp && fieldMapping.client_ip) {
         query.query.bool.filter.push({
-          term: { [CLOUDFLARE_FIELD_MAPPING.client_ip.elk_field]: filters.clientIp }
+          term: { [fieldMapping.client_ip.elk_field]: filters.clientIp }
         });
       }
 
-      if (filters.securityAction && CLOUDFLARE_FIELD_MAPPING.security_action) {
+      if (filters.securityAction && fieldMapping.security_action) {
         query.query.bool.filter.push({
-          term: { [CLOUDFLARE_FIELD_MAPPING.security_action.elk_field]: filters.securityAction }
+          term: { [fieldMapping.security_action.elk_field]: filters.securityAction }
         });
       }
-      if (filters.minWafScore && CLOUDFLARE_FIELD_MAPPING.waf_attack_score) {
+      
+      if (filters.minWafScore && fieldMapping.waf_attack_score) {
         query.query.bool.filter.push({
           range: {
-            [CLOUDFLARE_FIELD_MAPPING.waf_attack_score.elk_field]: {
+            [fieldMapping.waf_attack_score.elk_field]: {
               lte: filters.minWafScore // WAF分數越低越危險
             }
           }
@@ -479,35 +481,44 @@ class ElkMCPClient {
     return value * (multipliers[unit] || multipliers['h']);
   }
 
-  // 獲取必要的欄位清單
-  getRequiredFields() {
-    return Object.values(CLOUDFLARE_FIELD_MAPPING).map(field => field.elk_field);
+  // 獲取必要的欄位清單（需要傳入產品特定的 fieldMapping）
+  getRequiredFields(fieldMapping) {
+    if (!fieldMapping) {
+      return [];
+    }
+    return Object.values(fieldMapping).map(field => field.elk_field);
   }
 
-  // 執行 Elasticsearch 查詢
-  async queryElasticsearch(timeRange = '1h', filters = {}) {
+  // 執行 Elasticsearch 查詢（支援動態索引）
+  // options 可以包含: { indexPattern, fieldMapping }
+  async queryElasticsearch(timeRange = '1h', options = {}) {
+    const { indexPattern, fieldMapping, ...filters } = options;
+    
     try {
       await this.ensureConnection();
     } catch (error) {
       console.log('⚠️ 單例連接失敗，嘗試使用新實例...');
       // 如果單例連接失敗，使用新實例
-      return await this.queryWithNewInstance(timeRange, filters);
+      return await this.queryWithNewInstance(timeRange, options);
     }
 
     try {
-      const query = this.buildElasticsearchQuery(timeRange, filters);
+      const query = this.buildElasticsearchQuery(timeRange, filters, fieldMapping);
+      
+      // 使用提供的索引模式，或回退到預設
+      const targetIndex = indexPattern || ELK_CONFIG.elasticsearch.index;
       
       console.log('📊 執行 Elasticsearch 查詢...');
       console.log('查詢範圍:', timeRange);
       console.log('篩選條件:', filters);
-      console.log('索引:', ELK_CONFIG.elasticsearch.index);
+      console.log('索引:', targetIndex);
       console.log('查詢內容:', JSON.stringify(query, null, 2));
 
       // 使用 MCP 工具執行查詢
       const result = await this.client.callTool({
         name: 'search',
         arguments: {
-          index: ELK_CONFIG.elasticsearch.index,
+          index: targetIndex,
           query_body: query
         }
       });
@@ -601,69 +612,22 @@ class ElkMCPClient {
     });
   }
 
-  // 獲取安全事件統計
-  async getSecurityStats(timeRange = '1h') {
-    await this.ensureConnection();
-
-    try {
-      // 建構聚合查詢
-      const aggregationQuery = {
-        query: {
-          range: {
-            "@timestamp": {
-              gte: `now-${timeRange}`,
-              lte: 'now'
-            }
-          }
-        },
-        aggs: {
-          security_actions: {
-            terms: {
-              field: CLOUDFLARE_FIELD_MAPPING.security_action.elk_field,
-              size: 10
-            }
-          },
-          top_countries: {
-            terms: {
-              field: CLOUDFLARE_FIELD_MAPPING.client_country.elk_field,
-              size: 10
-            }
-          },
-          top_ips: {
-            terms: {
-              field: CLOUDFLARE_FIELD_MAPPING.client_ip.elk_field,
-              size: 10
-            }
-          },
-          waf_score_stats: {
-            stats: {
-              field: CLOUDFLARE_FIELD_MAPPING.waf_attack_score.elk_field
-            }
-          }
-        },
-        size: 0
-      };
-
-      const result = await this.client.callTool({
-        name: 'elasticsearch_query',
-        arguments: {
-          index: ELK_CONFIG.elasticsearch.index,
-          query: JSON.stringify(aggregationQuery)
-        }
-      });
-
-      if (result.isError) {
-        throw new Error(`統計查詢錯誤: ${result.content[0]?.text || 'Unknown error'}`);
-      }
-
-      const responseData = JSON.parse(result.content[0]?.text || '{}');
-      return responseData.aggregations || {};
-
-    } catch (error) {
-      console.error('❌ 安全統計查詢失敗:', error.message);
-      throw error;
-    }
-  }
+  // ✅ 已移除 getSecurityStats() 方法
+  // 原因: 該方法使用了不存在的 'elasticsearch_query' MCP 工具
+  // 
+  // 替代方案:
+  // 1. 使用 queryElasticsearch() 方法取得原始日誌資料（使用 'search' 工具）
+  // 2. 在應用層進行統計分析
+  // 3. 或使用產品專屬的 WAF 風險分析服務:
+  //    - CloudflareWAFRiskService.analyzeCloudflareWAF()
+  //    - F5WAFRiskService.analyzeF5WAF()
+  //
+  // 範例：
+  // const elkData = await elkMCPClient.queryElasticsearch('1h', { 
+  //   indexPattern: 'your-index-*',
+  //   fieldMapping: YOUR_FIELD_MAPPING 
+  // });
+  // 然後在應用層進行統計計算
 
   // 檢查連接狀態
   isConnected() {
@@ -692,25 +656,28 @@ class ElkMCPClient {
   }
 
   // 使用新實例執行查詢（回退機制）
-  async queryWithNewInstance(timeRange = '1h', filters = {}) {
+  async queryWithNewInstance(timeRange = '1h', options = {}) {
     console.log('🆕 使用新實例執行 Elasticsearch 查詢...');
     
+    const { indexPattern, fieldMapping, ...filters } = options;
     const newClient = new ElkMCPClient();
     
     try {
       await newClient.connect();
       
-      const query = newClient.buildElasticsearchQuery(timeRange, filters);
+      const query = newClient.buildElasticsearchQuery(timeRange, filters, fieldMapping);
+      const targetIndex = indexPattern || ELK_CONFIG.elasticsearch.index;
       
       console.log('📊 執行 Elasticsearch 查詢（新實例）...');
       console.log('查詢範圍:', timeRange);
       console.log('篩選條件:', filters);
+      console.log('索引:', targetIndex);
       
       // 使用新實例執行查詢
       const result = await newClient.client.callTool({
         name: 'search',
         arguments: {
-          index: ELK_CONFIG.elasticsearch.index,
+          index: targetIndex,
           query_body: query
         }
       });

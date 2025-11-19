@@ -65,8 +65,8 @@ export default function CloudflareAIAnalysisPage() {
           return
         }
 
-        // 呼叫後端 API
-        const response = await fetch('http://localhost:8080/api/analyze-waf-risks-cloudflare', {
+        // 呼叫後端 API (使用新的產品專屬端點)
+        const response = await fetch('http://localhost:8080/api/cloudflare/analyze-waf-risks', {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',

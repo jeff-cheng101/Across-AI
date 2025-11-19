@@ -188,7 +188,9 @@ Location: backend/services/elkMCPClient.js (共 805 行)
    - `async queryWithNewInstance(timeRange, filters)` - 使用新實例執行查詢（回退機制，第 695-746 行）
 
 4. **專用查詢方法**
-   - `async getAttackLogs(timeRange)` - 獲取攻擊相關日誌（第 590-595 行）
+   - `async getAttackLogs(timeRange)` - 獲取攻擊相關日誌
+     - ⚠️ **已移除**: `async getSecurityStats()` - 該方法使用了不存在的 `elasticsearch_query` MCP 工具
+     - **替代方案**: 使用 `queryElasticsearch()` 取得原始資料後在應用層進行統計
      - 自動篩選: WAF 分數 ≤ 80、安全動作 = 'block'
    
    - `async getIPActivity(clientIp, timeRange)` - 獲取特定 IP 活動（第 598-602 行）
