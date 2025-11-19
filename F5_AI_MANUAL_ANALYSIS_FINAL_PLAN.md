@@ -141,7 +141,7 @@ const loadF5WAFRisks = async () => {
     const aiProvider = localStorage.getItem('aiProvider') || 'ollama'
     const apiKey = localStorage.getItem('geminiApiKey') || ''
     const aiModel = aiProvider === 'ollama' 
-      ? (localStorage.getItem('ollamaModel') || 'gemma3:4b')
+      ? (localStorage.getItem('ollamaModel') || 'gpt-oss:20b')
       : 'gemini-2.0-flash-exp'
 
     // 準備時間範圍參數

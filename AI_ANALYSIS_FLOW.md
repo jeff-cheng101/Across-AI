@@ -29,7 +29,7 @@
 
 - **數據來源**: Elasticsearch (ELK Stack) - Cloudflare WAF 日誌
 - **查詢協議**: MCP (Model Context Protocol)
-- **AI 模型**: Google Gemini 2.0 Flash / Ollama (gemma3:4b)
+- **AI 模型**: Google Gemini 2.0 Flash / Ollama (gpt-oss:20b)
 - **參考標準**: 
   - Cloudflare 官方 WAF 分數系統
   - OWASP TOP 10 2021
@@ -62,7 +62,7 @@ POST /api/analyze-waf-risks-cloudflare
 {
   "aiProvider": "gemini" | "ollama",
   "apiKey": "your-gemini-api-key",
-  "model": "gemini-2.0-flash-exp" | "gemma3:4b",
+  "model": "gemini-2.0-flash-exp" | "gpt-oss:20b",
   "timeRange": "24h"
 }
 ```
@@ -673,7 +673,7 @@ A03_Injection:
 **API 調用**:
 ```javascript
 const ollamaUrl = process.env.OLLAMA_URL || 'http://localhost:11434';
-const ollamaModel = 'gemma3:4b';
+const ollamaModel = 'gpt-oss:20b';
 
 const response = await fetch(`${ollamaUrl}/api/generate`, {
   method: 'POST',
@@ -701,7 +701,7 @@ const responseText = data.response;
 curl -fsSL https://ollama.com/install.sh | sh
 
 # 2. 下載模型
-ollama pull gemma3:4b
+ollama pull gpt-oss:20b
 
 # 3. 啟動服務
 ollama serve
@@ -1462,7 +1462,7 @@ graph TD
     Q8 --> R
     
     R --> S{選擇 AI 提供者}
-    S -->|Ollama| T1[本地 Ollama API<br/>gemma3:4b]
+    S -->|Ollama| T1[本地 Ollama API<br/>gpt-oss:20b]
     S -->|Gemini| T2[Google Gemini API<br/>gemini-2.0-flash-exp]
     
     T1 --> U[AI 處理 Prompt]

@@ -12,7 +12,7 @@ const ELK_CONFIG = {
     
     // mcp-proxy 模式配置（推薦）
     // 修復：使用固定路徑，避免 HOME 環境變數在 root 環境下指向錯誤路徑
-    proxyCommand: process.env.MCP_PROXY_PATH || '/.local/bin/mcp-proxy',
+    proxyCommand: process.env.MCP_PROXY_PATH || '/root/.local/bin/mcp-proxy',
     proxyArgs: [
       '--transport=streamablehttp',
       `http://127.0.0.1:8080/mcp`

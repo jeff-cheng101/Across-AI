@@ -301,7 +301,7 @@ if (!responseText || responseText.trim().length === 0) {
 
 ```bash
 # 先預載入模型
-ollama run gemma3:4b
+ollama run gpt-oss:20b
 
 # 等待模型完全載入後，再進行 AI 分析
 ```
@@ -316,7 +316,7 @@ ollama run gemma3:4b
 
 | 模型 | Context Window | 處理速度 | 品質 | 建議用途 |
 |------|---------------|---------|------|---------|
-| `gemma3:4b` | 8192 | 快 ⚡⚡⚡ | 中 | 快速測試 |
+| `gpt-oss:20b` | 8192 | 快 ⚡⚡⚡ | 中 | 快速測試 |
 | `llama3:8b` | 8192 | 中 ⚡⚡ | 高 | **推薦** |
 | `qwen2.5:7b` | 32768 | 中 ⚡⚡ | 高 | 長 Prompt |
 | `mistral:7b` | 8192 | 中 ⚡⚡ | 高 | 平衡選擇 |
@@ -324,7 +324,7 @@ ollama run gemma3:4b
 **推薦**:
 - **一般使用**: `llama3:8b` - 速度與品質最佳平衡
 - **長 Prompt**: `qwen2.5:7b` - 支援 32K context
-- **快速測試**: `gemma3:4b` - 速度最快
+- **快速測試**: `gpt-oss:20b` - 速度最快
 
 ---
 
@@ -345,7 +345,7 @@ topCountries: this.getTopN(logs, 'clientCountry', 3), // 原 5
 #### **C. 使用更快的模型**
 ```typescript
 // 前端設定
-localStorage.setItem('ollamaModel', 'gemma3:4b');  // 更快
+localStorage.setItem('ollamaModel', 'gpt-oss:20b');  // 更快
 // 或
 localStorage.setItem('ollamaModel', 'llama3:8b');  // 更好品質
 ```
@@ -393,14 +393,14 @@ localStorage.setItem('ollamaModel', 'llama3:8b');  // 更好品質
 
 ```bash
 # 預期行為
-❌ Ollama API 錯誤詳情: model 'gemma3:4b' not found
-Error: Ollama API 錯誤 (404): model 'gemma3:4b' not found
+❌ Ollama API 錯誤詳情: model 'gpt-oss:20b' not found
+Error: Ollama API 錯誤 (404): model 'gpt-oss:20b' not found
 ```
 
 **解決方案**:
 ```bash
 # 下載模型
-ollama pull gemma3:4b
+ollama pull gpt-oss:20b
 ```
 
 ---
@@ -463,7 +463,7 @@ if (cached) return cached;
 async function warmupOllama() {
   await fetch(`${ollamaUrl}/api/generate`, {
     body: JSON.stringify({
-      model: 'gemma3:4b',
+      model: 'gpt-oss:20b',
       prompt: 'test',
       stream: false
     })

@@ -34,7 +34,7 @@ Cloudflare AI 分析頁面是一個基於 AI 的安全威脅分析儀表板，�
 - **前端**: Next.js 14 + React + TypeScript + Tailwind CSS + Framer Motion
 - **後端**: Node.js + Express
 - **數據來源**: Elasticsearch (ELK Stack) - Cloudflare WAF Logs
-- **AI 模型**: Google Gemini 2.0 Flash / Ollama (gemma3:4b)
+- **AI 模型**: Google Gemini 2.0 Flash / Ollama (gpt-oss:20b)
 
 ---
 
@@ -439,7 +439,7 @@ calculateValidAvgScore(logs, field)      // 計算平均分數
 │  POST /api/analyze-waf-risks-cloudflare                    │
 │  Body: {                                                    │
 │    aiProvider: 'ollama',                                    │
-│    model: 'gemma3:4b',                                      │
+│    model: 'gpt-oss:20b',                                      │
 │    timeRange: '24h'                                         │
 │  }                                                          │
 └────────────────────────┬────────────────────────────────────┘
@@ -532,7 +532,7 @@ calculateValidAvgScore(logs, field)      // 計算平均分數
 │  │                                                       │ │
 │  │ 選項 B: Ollama (本地部署)                            │ │
 │  │ - POST http://localhost:11434/api/generate           │ │
-│  │ - model: 'gemma3:4b'                                 │ │
+│  │ - model: 'gpt-oss:20b'                                 │ │
 │  └───────────────────────────────────────────────────────┘ │
 └────────────────────────┬────────────────────────────────────┘
                          │
@@ -722,7 +722,7 @@ localStorage.setItem('aiProvider', 'ollama')  // 'ollama' 或 'gemini'
 localStorage.setItem('geminiApiKey', 'your-api-key')
 
 // Ollama 模型
-localStorage.setItem('ollamaModel', 'gemma3:4b')
+localStorage.setItem('ollamaModel', 'gpt-oss:20b')
 ```
 
 ---
@@ -746,7 +746,7 @@ localStorage.setItem('ollamaModel', 'gemma3:4b')
 curl -fsSL https://ollama.com/install.sh | sh
 
 # 2. 下載模型
-ollama pull gemma3:4b
+ollama pull gpt-oss:20b
 
 # 3. 啟動 Ollama 服務（預設端口 11434）
 ollama serve
@@ -755,7 +755,7 @@ ollama serve
 **前端配置**：
 ```javascript
 aiProvider: 'ollama'
-model: 'gemma3:4b'
+model: 'gpt-oss:20b'
 apiKey: ''  // 不需要
 ```
 
@@ -798,7 +798,7 @@ if (aiProvider === 'ollama') {
   const response = await fetch(`${ollamaUrl}/api/generate`, {
     method: 'POST',
     body: JSON.stringify({
-      model: 'gemma3:4b',
+      model: 'gpt-oss:20b',
       prompt: aiPrompt,
       stream: false
     })

@@ -83,7 +83,7 @@ POST http://localhost:8080/api/f5/analyze-waf-risks
 {
   "aiProvider": "ollama" | "gemini",
   "apiKey": "YOUR_GEMINI_API_KEY",
-  "model": "gemma3:4b" | "gemini-2.0-flash-exp",
+  "model": "gpt-oss:20b" | "gemini-2.0-flash-exp",
   "timeRange": "1h" | "6h" | "12h" | "24h" | "7d" | "30d"
 }
 ```

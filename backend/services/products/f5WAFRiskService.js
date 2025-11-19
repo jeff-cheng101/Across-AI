@@ -57,6 +57,23 @@ class F5WAFRiskService {
       const logEntries = elkData.hits.map(hit => this.parseF5Log(hit.source));
       console.log(`✅ 成功解析 ${logEntries.length} 筆日誌`);
       
+      // 診斷：顯示前 3 筆日誌的 IP 和國家資訊
+      console.log('\n📊 IP 地理位置診斷（前 3 筆）:');
+      logEntries.slice(0, 3).forEach((log, index) => {
+        console.log(`  ${index + 1}. IP: ${log.clientIP} → 國家: ${log.clientCountry} (來源: ${log.clientCountrySource})`);
+      });
+      
+      // 統計國家來源分佈
+      const countrySources = {};
+      logEntries.forEach(log => {
+        const source = log.clientCountrySource || 'unknown';
+        countrySources[source] = (countrySources[source] || 0) + 1;
+      });
+      console.log('\n📊 國家資訊來源統計:');
+      Object.entries(countrySources).forEach(([source, count]) => {
+        console.log(`  - ${source}: ${count} 筆 (${(count/logEntries.length*100).toFixed(1)}%)`);
+      });
+      
       // Step 3: 使用多層次判斷模型分析攻擊
       console.log('\n⭐ Step 3: 使用多層次判斷模型分析攻擊...');
       const analysisResults = logEntries.map(log => analyzeLogEntry(log));
@@ -125,17 +142,71 @@ class F5WAFRiskService {
   
   // 解析 F5 日誌（更新為使用 f5FieldMapping.js 的欄位）
   parseF5Log(rawLog) {
-    // 從 geoip 物件中提取國家資訊
-    const countryName = rawLog.geoip?.country_name || 
+    // 從 geoip 物件中提取國家資訊（增強版：加入驗證和 fallback）
+    let countryName = rawLog.geoip?.country_name || 
                        rawLog.geoip?.country_code2 || 
-                       rawLog[this.fieldMapping.geo_location?.elk_field] || 
-                       'Unknown';
+                       null;
+    
+    let countrySource = 'geoip';
+    const clientIP = rawLog[this.fieldMapping.client_ip.elk_field];
+    
+    // 診斷模式：如果啟用詳細日誌，輸出 geoip 原始結構
+    if (process.env.F5_DEBUG_GEOIP === 'true' && rawLog.geoip) {
+      console.log(`\n🔍 [DEBUG] IP ${clientIP} 的 geoip 原始數據:`, JSON.stringify(rawLog.geoip, null, 2));
+    }
+    
+    // 數據驗證 1：檢查國家名稱是否合理
+    if (countryName && (countryName.length > 50 || countryName.length === 0)) {
+      console.warn(`⚠️ 異常的國家名稱長度: "${countryName}" (IP: ${clientIP})`);
+      if (rawLog.geoip) {
+        console.warn(`   完整 geoip 數據:`, JSON.stringify(rawLog.geoip, null, 2));
+      }
+      countryName = null;
+      countrySource = 'invalid_geoip';
+    }
+    
+    // 數據驗證 2：檢查是否包含異常字符
+    if (countryName && !/^[a-zA-Z\s\-]+$/.test(countryName)) {
+      console.warn(`⚠️ 國家名稱包含異常字符: "${countryName}" (IP: ${clientIP})`);
+      if (rawLog.geoip) {
+        console.warn(`   完整 geoip 數據:`, JSON.stringify(rawLog.geoip, null, 2));
+      }
+      countryName = null;
+      countrySource = 'invalid_geoip';
+    }
+    
+    // Fallback 1: 嘗試使用 geo_location 欄位
+    if (!countryName && rawLog[this.fieldMapping.geo_location?.elk_field]) {
+      countryName = rawLog[this.fieldMapping.geo_location?.elk_field];
+      countrySource = 'geo_location';
+      console.log(`ℹ️ 使用 geo_location fallback: ${countryName} (IP: ${clientIP})`);
+    }
+    
+    // Fallback 2: 嘗試從完整 geoip 物件中尋找其他可用欄位
+    if (!countryName && rawLog.geoip) {
+      const geoipKeys = Object.keys(rawLog.geoip);
+      for (const key of geoipKeys) {
+        if (key.toLowerCase().includes('country') && rawLog.geoip[key]) {
+          countryName = rawLog.geoip[key];
+          countrySource = `geoip.${key}`;
+          console.log(`ℹ️ 使用 geoip.${key} fallback: ${countryName} (IP: ${clientIP})`);
+          break;
+        }
+      }
+    }
+    
+    // 最終 fallback：標記為 Unknown
+    if (!countryName) {
+      countryName = 'Unknown';
+      countrySource = 'none';
+    }
     
     return {
       // 基本資訊
-      clientIP: rawLog[this.fieldMapping.client_ip.elk_field],
+      clientIP: clientIP,
       clientPort: rawLog[this.fieldMapping.client_port.elk_field],
       clientCountry: countryName,
+      clientCountrySource: countrySource,  // 新增：記錄數據來源，方便除錯
       uri: rawLog[this.fieldMapping.uri.elk_field],
       method: rawLog[this.fieldMapping.method.elk_field],
       protocol: rawLog[this.fieldMapping.protocol.elk_field],
@@ -605,12 +676,14 @@ ${attackStatisticsText}
 
 ---
 
-### 【地理與資產分析】
+### 【地理與資產分析】⭐ 真實數據區塊 ⭐
 
-- **Top 10 攻擊來源國家**: ${geoAnalysis.topCountries.slice(0, 10).map(c => `${c.item} (${c.count}次)`).join(', ') || '無'}
-- **Top 10 攻擊來源IP**: ${geoAnalysis.topIPs.slice(0, 10).map(ip => `${ip.item} (${ip.count}次)`).join(', ') || '無'}
+⚠️ **重要指示**：以下是從 F5 日誌中提取的真實攻擊數據，在生成 aiInsight 和 description 時，**必須優先使用這些實際數據**。
+
+- **Top 10 攻擊來源國家（真實）**: ${geoAnalysis.topCountries.slice(0, 10).map(c => `${c.item} (${c.count}次)`).join(', ') || '無'}
+- **Top 10 攻擊來源IP（真實）**: ${geoAnalysis.topIPs.slice(0, 10).map(ip => `${ip.item} (${ip.count}次)`).join(', ') || '無'}
 - **受影響資產總數**: ${assetAnalysis.totalAssets}
-- **Top 5 被攻擊資產**: ${assetAnalysis.topAssets.slice(0, 5).map(a => `${a.item} (${a.count}次)`).join(', ') || '無'}
+- **Top 5 被攻擊資產（真實）**: ${assetAnalysis.topAssets.slice(0, 5).map(a => `${a.item} (${a.count}次)`).join(', ') || '無'}
 
 ---
 
@@ -638,7 +711,15 @@ ${attackStatisticsText}
         5. 主要攻擊目標（Top 3 URL 及其被攻擊次數）
         6. 攻擊特徵分析（使用的攻擊向量、payload 特徵、OWASP 分類）
         7. 具體建議（基於多層次判斷結果的 F5 Advanced WAF 防護措施，包含簽章集編號、閾值設定等）
-        範例：在 2025-11-18 20:45 至 21:00 期間，F5 Advanced WAF 多層次判斷模型檢測到 150 次 SQL 注入攻擊嘗試，其中 45 次被 Level 1 判定為高風險（violation_rating ≥ 70，觸發簽章 200010136）。Level 2 評分顯示平均威脅分數為 85。Level 3 確認為 SQL Injection（OWASP A03）。主要攻擊來自中國（80 次，IP 1.2.3.4）、俄羅斯（30 次）。攻擊目標集中於 /api/login（50 次）。共影響 5 個資產。建議啟用 F5 SQL 注入防護簽章（Signature Set 200010000 系列）並調整 violation_rating 閾值為 50。",
+        
+        範例格式參考：
+        在 [開始時間] 至 [結束時間] 期間，F5 Advanced WAF 多層次判斷模型檢測到 [總次數] 次 [攻擊類型] 攻擊嘗試，其中 [高風險次數] 次被 Level 1 判定為高風險（violation_rating ≥ [閾值]，觸發簽章 [簽章ID]）。Level 2 評分顯示平均威脅分數為 [分數]。Level 3 確認為 [攻擊類型]（OWASP [分類]）。主要攻擊來自 [國家1]（[次數1] 次，IP [實際IP1]）、[國家2]（[次數2] 次，IP [實際IP2]）、[國家3]（[次數3] 次，IP [實際IP3]）。攻擊目標集中於 [URL1]（[次數1] 次）、[URL2]（[次數2] 次）。共影響 [資產數] 個資產。建議 [具體的 F5 WAF 防護措施，包含簽章集編號和閾值設定]。
+        
+        ⚠️ **關鍵要求**：
+        - 必須使用上方【攻擊統計】和【地理與資產分析】中的真實數據
+        - 禁止使用測試 IP（如 1.2.3.4、5.6.7.8、192.168.x.x、10.0.x.x 等）
+        - IP 地址必須與【地理與資產分析】中列出的完全一致
+        - 國家、URL、攻擊次數都必須使用真實統計數據",
       "createdDate": "${new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}",
       "updatedDate": "${new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}",
       "exploitInWild": true | false,
@@ -672,6 +753,7 @@ ${attackStatisticsText}
    - F5 多層次判斷模型的 Level 1-4 分析結果
    - F5 技術指標（violation_rating、threat_level、sig_ids）
    - Top 3 來源國家、Top 3 IP、Top 3 目標 URL（包含次數）
+   - **IP 地址必須使用【地理與資產分析】中列出的真實 IP，嚴格禁止使用 1.2.3.4、5.6.7.8、192.168.x.x、10.0.x.x 等測試或私有 IP**
    - 攻擊特徵與 OWASP 分類
    - 基於實際數據的 F5 WAF 具體防護建議（簽章集編號、閾值設定）
 8. 如果沒有攻擊，必須輸出空的 risks 陣列

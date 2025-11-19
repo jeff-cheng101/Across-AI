@@ -108,7 +108,7 @@ POST http://localhost:8080/api/f5/analyze-waf-risks
 {
   "aiProvider": "gemini" | "ollama",
   "apiKey": "YOUR_GEMINI_API_KEY",
-  "model": "gemini-2.0-flash-exp" | "gemma3:4b",
+  "model": "gemini-2.0-flash-exp" | "gpt-oss:20b",
   "timeRange": "1h" | "6h" | "12h" | "24h" | "7d" | "30d"
 }
 ```
@@ -139,7 +139,7 @@ POST http://localhost:8080/api/f5/analyze-waf-risks
       "end": "2024-12-18T00:00:00Z"
     },
     "aiProvider": "ollama",
-    "model": "gemma3:4b",
+    "model": "gpt-oss:20b",
     "analysisTimestamp": "2024-12-18T06:30:00Z"
   }
 }
@@ -213,7 +213,7 @@ POST http://localhost:8080/api/f5/analyze-waf-risks
          const aiProvider = localStorage.getItem('aiProvider') || 'ollama'
          const apiKey = localStorage.getItem('geminiApiKey') || ''
          const aiModel = aiProvider === 'ollama' 
-           ? (localStorage.getItem('ollamaModel') || 'gemma3:4b')
+           ? (localStorage.getItem('ollamaModel') || 'gpt-oss:20b')
            : 'gemini-2.0-flash-exp'
          
          // 檢查 Gemini API Key
