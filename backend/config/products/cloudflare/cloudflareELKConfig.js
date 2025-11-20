@@ -3,7 +3,7 @@
 
 module.exports = {
   // ELK 索引模式（Cloudflare 日誌）
-  index: process.env.ELK_CLOUDFLARE_INDEX || 'across-cf-logpush-*',
+  index: process.env.ELK_CLOUDFLARE_INDEX || 'across-cf*',
   
   // 產品識別
   productName: 'Cloudflare',

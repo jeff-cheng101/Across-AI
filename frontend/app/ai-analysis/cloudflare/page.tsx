@@ -11,6 +11,9 @@ import { format } from "date-fns"
 import { useWAFData } from "@/app/dashboard/waf-data-context"
 import { useToast } from "@/hooks/use-toast"
 
+// API 基礎 URL - 從環境變數讀取，預設為 localhost
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:8081'
+
 export default function CloudflareAIAnalysisPage() {
   const [selectedIssue, setSelectedIssue] = useState<string | null>(null)
   const [selectedCategory, setSelectedCategory] = useState<string>("high")
@@ -87,7 +90,7 @@ export default function CloudflareAIAnalysisPage() {
       }
 
       // 呼叫後端 API
-      const response = await fetch('http://localhost:8080/api/cloudflare/analyze-waf-risks', {
+      const response = await fetch(`${API_BASE_URL}/api/cloudflare/analyze-waf-risks`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -409,7 +412,7 @@ export default function CloudflareAIAnalysisPage() {
     setLoadingGuides(prev => new Set(prev).add(guideKey));
     
     try {
-      const response = await fetch('http://localhost:8080/api/cloudflare/get-operation-guide', {
+      const response = await fetch(`${API_BASE_URL}/api/cloudflare/get-operation-guide`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

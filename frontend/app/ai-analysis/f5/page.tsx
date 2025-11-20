@@ -23,6 +23,9 @@ import {
 import { useToast } from "@/hooks/use-toast"
 import { saveActionRecord, type ActionRecord } from "@/lib/action-records"
 
+// API 基礎 URL - 從環境變數讀取，預設為 localhost
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:8081'
+
 interface WAFRisk {
   id: string
   title: string
@@ -214,7 +217,7 @@ export default function F5AIAnalysisPage() {
       }
 
       // 呼叫後端 API
-      const response = await fetch('http://localhost:8080/api/f5/analyze-waf-risks', {
+      const response = await fetch(`${API_BASE_URL}/api/f5/analyze-waf-risks`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -513,7 +516,7 @@ export default function F5AIAnalysisPage() {
     setLoadingGuides(prev => new Set(prev).add(guideKey));
     
     try {
-      const response = await fetch('http://localhost:8080/api/f5/get-operation-guide', {
+      const response = await fetch(`${API_BASE_URL}/api/f5/get-operation-guide`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
