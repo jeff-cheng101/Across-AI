@@ -10,6 +10,7 @@ import { CustomDatePicker } from "@/components/custom-date-picker"
 import { format } from "date-fns"
 import { useWAFData } from "@/app/dashboard/waf-data-context"
 import { useToast } from "@/hooks/use-toast"
+import { BACKEND_API_BASE_URL } from "@/app/util/api-config"
 
 export default function CloudflareAIAnalysisPage() {
   const [selectedIssue, setSelectedIssue] = useState<string | null>(null)
@@ -87,7 +88,7 @@ export default function CloudflareAIAnalysisPage() {
       }
 
       // 呼叫後端 API
-      const response = await fetch('http://localhost:8080/api/cloudflare/analyze-waf-risks', {
+      const response = await fetch(`${BACKEND_API_BASE_URL}/api/cloudflare/analyze-waf-risks`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -409,7 +410,7 @@ export default function CloudflareAIAnalysisPage() {
     setLoadingGuides(prev => new Set(prev).add(guideKey));
     
     try {
-      const response = await fetch('http://localhost:8080/api/cloudflare/get-operation-guide', {
+      const response = await fetch(`${BACKEND_API_BASE_URL}/api/cloudflare/get-operation-guide`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

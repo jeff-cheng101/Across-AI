@@ -22,6 +22,7 @@ import {
 } from "@/components/ui/alert-dialog"
 import { useToast } from "@/hooks/use-toast"
 import { saveActionRecord, type ActionRecord } from "@/lib/action-records"
+import { BACKEND_API_BASE_URL } from "@/app/util/api-config"
 
 interface WAFRisk {
   id: string
@@ -214,7 +215,7 @@ export default function F5AIAnalysisPage() {
       }
 
       // 呼叫後端 API
-      const response = await fetch('http://localhost:8080/api/f5/analyze-waf-risks', {
+      const response = await fetch(`${BACKEND_API_BASE_URL}/api/f5/analyze-waf-risks`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -513,7 +514,7 @@ export default function F5AIAnalysisPage() {
     setLoadingGuides(prev => new Set(prev).add(guideKey));
     
     try {
-      const response = await fetch('http://localhost:8080/api/f5/get-operation-guide', {
+      const response = await fetch(`${BACKEND_API_BASE_URL}/api/f5/get-operation-guide`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
