@@ -557,6 +557,10 @@ class ElkMCPClient {
       console.log('索引:', targetIndex);
       console.log('查詢內容:', JSON.stringify(query, null, 2));
 
+      const requestTimeout = this.getTimeoutMs();
+      const callStart = Date.now();
+      console.log(`🛰️ 開始呼叫 MCP 工具 search，timeout = ${requestTimeout}ms`);
+
       // 使用 MCP 工具執行查詢
       const result = await this.client.callTool({
         name: 'search',
@@ -565,9 +569,18 @@ class ElkMCPClient {
           query_body: query
         }
       }, undefined, {
-        timeout: this.getTimeoutMs(),  // 依環境變數設定超時
-        resetTimeoutOnProgress: true  // 收到進度通知時重置超時
+        timeout: requestTimeout,  // 依環境變數設定超時
+        resetTimeoutOnProgress: true,  // 收到進度通知時重置超時
+        onprogress: (progress) => {
+          try {
+            const summary = JSON.stringify(progress);
+            console.log('📡 MCP 進度通知:', summary.length > 500 ? `${summary.slice(0, 500)}...` : summary);
+          } catch {
+            console.log('📡 MCP 進度通知（無法序列化）', progress);
+          }
+        }
       });
+      console.log(`✅ MCP 工具 search 完成，耗時 ${Date.now() - callStart}ms`);
 
       if (result.isError) {
         throw new Error(`Elasticsearch 查詢錯誤: ${result.content[0]?.text || 'Unknown error'}`);
@@ -638,7 +651,7 @@ class ElkMCPClient {
       };
 
     } catch (error) {
-      console.error('❌ Elasticsearch 查詢失敗:', error.message);
+      console.error(`❌ Elasticsearch 查詢失敗 (耗時 ${Date.now() - callStart}ms):`, error.message);
       throw error;
     }
   }

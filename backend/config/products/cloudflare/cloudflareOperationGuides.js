@@ -577,7 +577,6 @@ const CLOUDFLARE_OPERATION_GUIDES = {
         solution: '在 Bot Management 設定中，將 Verified Bots（已驗證的 bot，如 Googlebot）設為「Allow」。'
       }
     ]
-  }
   },
 
   // ========================================
