@@ -705,27 +705,35 @@ function isRealSecurityThreat(log) {
   
   // 3.1 有明確的攻擊類型
   if (log.attack_type && log.attack_type !== 'N/A' && log.attack_type !== '') {
-    const attackInfo = F5_ATTACK_TYPE_MAPPING[log.attack_type];
-    if (attackInfo) {
+    // ⚠️ 排除 OWASP 分類標籤格式（如 "A05:2025 Security Misconfiguration"）
+    // 這些是 Logstash 自動添加的分類標籤，不是攻擊行為
+    const isOwaspLabel = /^A\d+:\d{4}\s+/.test(log.attack_type);
+    if (isOwaspLabel) {
+      // 這只是分類標籤，不是攻擊，跳過此判斷
+      console.log(`   ⚠️ 跳過 OWASP 分類標籤: ${log.attack_type}`);
+    } else {
+      const attackInfo = F5_ATTACK_TYPE_MAPPING[log.attack_type];
+      if (attackInfo) {
+        return {
+          isAttack: true,
+          confidence: 'high',
+          reason: `偵測到攻擊類型: ${log.attack_type}`,
+          level: 3,
+          severity: attackInfo.severity,
+          attackType: log.attack_type,
+          category: attackInfo.category
+        };
+      }
+      // 即使不在對應表中，有 attack_type 也視為攻擊
       return {
         isAttack: true,
-        confidence: 'high',
-        reason: `偵測到攻擊類型: ${log.attack_type}`,
+        confidence: 'medium',
+        reason: `偵測到攻擊類型（未分類）: ${log.attack_type}`,
         level: 3,
-        severity: attackInfo.severity,
-        attackType: log.attack_type,
-        category: attackInfo.category
+        severity: 'medium',
+        attackType: log.attack_type
       };
     }
-    // 即使不在對應表中，有 attack_type 也視為攻擊
-    return {
-      isAttack: true,
-      confidence: 'medium',
-      reason: `偵測到攻擊類型（未分類）: ${log.attack_type}`,
-      level: 3,
-      severity: 'medium',
-      attackType: log.attack_type
-    };
   }
 
   // 3.2 違規類型匹配（注入攻擊類）
@@ -789,6 +797,19 @@ function isRealSecurityThreat(log) {
       severity: 'low',
       weakSignals: weakSignals
     };
+  }
+
+  // ========== 最終安全檢查 ==========
+  // 如果 request_status === 'passed'，且沒有任何強信號，則不應判定為攻擊
+  if (log.request_status && log.request_status.toLowerCase() === 'passed') {
+    if (violationRating < F5_VIOLATION_RATING_THRESHOLDS.LOW && weakSignals < 2) {
+      return {
+        isAttack: false,
+        confidence: 'high',
+        reason: 'request_status 為 passed 且無足夠證據（正常流量）',
+        level: 0
+      };
+    }
   }
 
   // ========== 判定為正常流量 ==========
