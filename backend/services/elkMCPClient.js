@@ -720,8 +720,8 @@ class ElkMCPClient {
     const { 
       indexPattern, 
       fieldMapping, 
-      batchSize = 100,  // 每批查詢的記錄數
-      maxBatches = 10,  // 最多查詢的批次數（防止無限查詢）
+      batchSize = ELK_CONFIG.elasticsearch.batchSize,  // 從 .env 的 ELK_BATCH_SIZE 讀取，預設 10
+      maxBatches = ELK_CONFIG.elasticsearch.maxBatches,  // 從 .env 的 ELK_MAX_BATCHES 讀取，預設 10
       ...filters 
     } = options;
     
@@ -737,6 +737,7 @@ class ElkMCPClient {
     let totalFound = 0;
     let currentBatch = 0;
     let from = 0;
+    let totalQueriedCount = 0;
 
     console.log(`📦 開始分批查詢 Elasticsearch...`);
     console.log(`批次大小: ${batchSize}, 最大批次數: ${maxBatches}`);
@@ -793,9 +794,9 @@ class ElkMCPClient {
           const records = JSON.parse(dataText);
           
           if (Array.isArray(records)) {
-            // 直接是記錄陣列
+            // 直接是記錄陣列（無法得知總數，需要繼續查詢直到沒有資料）
             batchHits = records;
-            batchTotal = records.length;
+            batchTotal = -1; // 標記為未知總數
           } else if (records.hits?.hits) {
             // 標準 Elasticsearch 格式
             batchHits = records.hits.hits;
@@ -811,10 +812,12 @@ class ElkMCPClient {
           batchTotal = 0;
         }
 
-        // 如果第一批，記錄總數
-        if (currentBatch === 0) {
+        // 如果第一批，記錄總數（如果可取得的話）
+        if (currentBatch === 0 && batchTotal >= 0) {
           totalFound = batchTotal;
-          console.log(`📊 總共找到 ${totalFound} 筆記錄`);
+          console.log(`📊 Elasticsearch 索引總共有 ${totalFound} 筆記錄`);
+        } else if (currentBatch === 0 && batchTotal === -1) {
+          console.log(`📊 無法取得總筆數，將持續查詢直到沒有資料`);
         }
 
         // 如果這批沒有資料，停止查詢
@@ -834,7 +837,9 @@ class ElkMCPClient {
         });
 
         allHits.push(...formattedHits);
+        totalQueriedCount = allHits.length;
         console.log(`✅ 批次 ${currentBatch + 1} 取得 ${formattedHits.length} 筆記錄，累計 ${allHits.length} 筆`);
+        console.log(`🔢 總共查詢筆數（目前）: ${totalQueriedCount}`);
 
         // 如果這批資料少於批次大小，表示已經是最後一批
         if (batchHits.length < batchSize) {
@@ -847,7 +852,8 @@ class ElkMCPClient {
         currentBatch++;
 
         // 如果已取得足夠的資料（達到總數），停止查詢
-        if (allHits.length >= totalFound) {
+        // 注意：只有在 totalFound > 0 時才檢查（避免在未知總數時誤判）
+        if (totalFound > 0 && allHits.length >= totalFound) {
           console.log(`✅ 已取得所有 ${totalFound} 筆記錄`);
           break;
         }
@@ -865,12 +871,14 @@ class ElkMCPClient {
     }
 
     console.log(`✅ 分批查詢完成，共取得 ${allHits.length} 筆記錄（${currentBatch + 1} 批次）`);
+    console.log(`📈 總共查詢筆數: ${totalQueriedCount}`);
 
     return {
       total: totalFound,
       hits: allHits,
       batches: currentBatch + 1,
-      batchSize: batchSize
+      batchSize: batchSize,
+      queriedCount: totalQueriedCount
     };
   }
 

@@ -142,7 +142,10 @@ const ELK_CONFIG = {
     // - F5: config/products/f5/f5ELKConfig.js (across-f5-awaf-*)
     index: process.env.ELK_INDEX || 'across-cf-*',
     apiKey: process.env.ELK_API_KEY || 'XzJlcm1wb0JQWGtnSXBHR0tEMFg6MERFYWFNTUFTTmxXOEhpdUg2aGwtUQ==',
-    maxResults: parsePositiveInt(process.env.ELK_MAX_RESULTS, 2)
+    maxResults: parsePositiveInt(process.env.ELK_MAX_RESULTS, 2),
+    // elastic mcp 分批查詢配置
+    batchSize: parsePositiveInt(process.env.ELK_BATCH_SIZE, 10),
+    maxBatches: parsePositiveInt(process.env.ELK_MAX_BATCHES, 10)
   },
 
   // 查詢配置
