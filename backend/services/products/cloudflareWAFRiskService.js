@@ -585,13 +585,18 @@ ${attackStatisticsText}
         confirmedExploitable: sqlInjection.highRisk > 0,
         recommendations: [
           {
-            title: '啟用 Cloudflare WAF SQL 注入防護規則',
-            description: '立即啟用並強化 Cloudflare WAF 的 SQL 注入防護規則集',
+            title: '封鎖攻擊來源 IP',
+            description: `立即在 Cloudflare WAF 中封鎖主要攻擊 IP（如 ${topIP?.item || '檢測到的攻擊 IP'}），使用 IP Lists 功能建立黑名單並配置 Custom Rule 阻擋。前往 Account Home → Configurations → Lists 建立 IP list，然後在 Custom rules 中使用 (ip.src in $blocked_ips) 表達式。`,
             priority: 'high'
           },
           {
-            title: '檢查並更新資料庫查詢',
-            description: '使用參數化查詢防止 SQL 注入攻擊',
+            title: '強化輸入驗證與參數檢查',
+            description: '對所有輸入參數實施嚴格的白名單檢查，並使用參數化查詢防止 SQL 注入。在 Cloudflare 中使用 Custom Rules 配置 HTTP Headers 驗證（如 X-CSRF-Token）和 Cookie 驗證（如 Session Cookie），限制敏感 API 端點的訪問。也可以使用 HMAC Token 驗證（is_timed_hmac_valid_v0 函數）提供更強的保護。',
+            priority: 'high'
+          },
+          {
+            title: '啟用 Cloudflare WAF SQL 注入防護規則',
+            description: '立即啟用並強化 Cloudflare WAF 的 SQL 注入防護規則集。前往 Security → WAF → Managed rules，部署 Cloudflare Managed Ruleset 和 OWASP Core Ruleset。同時建立 Custom Rule 使用 Attack Score 阻擋高風險請求：(cf.waf.score.sqli le 20)。',
             priority: 'high'
           }
         ]
@@ -619,8 +624,18 @@ ${attackStatisticsText}
         confirmedExploitable: xssAttacks.highRisk > 0,
         recommendations: [
           {
+            title: '封鎖攻擊來源 IP',
+            description: `立即在 Cloudflare WAF 中封鎖主要攻擊 IP（如 ${topIP?.item || '檢測到的攻擊 IP'}），使用 IP Lists 功能建立黑名單。`,
+            priority: 'high'
+          },
+          {
+            title: '強化輸入驗證與 XSS 防護',
+            description: '配置 Cloudflare WAF 的 XSS 防護規則，使用 Custom Rules 過濾包含 <script>、javascript: 等危險字符的請求。同時在應用層實施輸入過濾和輸出編碼，啟用 Content Security Policy (CSP) Headers 提供額外防護。',
+            priority: 'high'
+          },
+          {
             title: '啟用 XSS 防護規則',
-            description: '配置 Cloudflare WAF 的 XSS 防護規則',
+            description: '配置 Cloudflare WAF 的 XSS 防護規則並啟用 CSP',
             priority: 'high'
           }
         ]

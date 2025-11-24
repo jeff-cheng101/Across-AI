@@ -1097,6 +1097,219 @@ const CLOUDFLARE_OPERATION_GUIDES = {
   },
 
   // ========================================
+  // 輸入驗證與參數檢查
+  // ========================================
+  INPUT_VALIDATION_RULES: {
+    id: 'INPUT_VALIDATION_RULES',
+    title: '強化輸入驗證與參數檢查',
+    category: 'Input Validation',
+    severity: 'high',
+    estimatedTime: '15-25 分鐘',
+    prerequisites: [
+      '需要 Cloudflare Pro 或以上方案（Custom Rules 功能）',
+      '已登入 Cloudflare Dashboard',
+      '了解應用程式的 API 端點和參數需求',
+      '確認需要保護的敏感路徑（如 /api/, /admin/ 等）'
+    ],
+    steps: [
+      {
+        stepNumber: 1,
+        title: '進入 Custom Rules 設定頁面',
+        description: '開啟 WAF Custom Rules 設定區域',
+        actions: [
+          '登入 Cloudflare Dashboard',
+          '選擇目標網站',
+          '前往 Security → WAF → Custom rules',
+          '查看現有的 Custom rules 列表'
+        ],
+        screenshot: null,
+        notes: 'Custom rules 功能需要 Pro 或以上方案才能使用'
+      },
+      {
+        stepNumber: 2,
+        title: '建立 HTTP Header 驗證規則',
+        description: '驗證關鍵的 HTTP Headers（如 CSRF Token、API Key）',
+        actions: [
+          '點擊「Create rule」按鈕',
+          '規則名稱：Validate Required Headers',
+          '設定條件（方式一）- 驗證 CSRF Token 存在性：',
+          '  點擊「Edit expression」',
+          '  輸入：not any(lower(http.request.headers.names[*])[*] eq "x-csrf-token") and (http.request.uri.path eq "/api/submit")',
+          '設定條件（方式二）- 驗證 API Key 值：',
+          '  輸入：not any(http.request.headers["x-api-key"][*] eq "your-secret-key") and (http.request.uri.path matches "^/api/")',
+          '設定條件（方式三）- 驗證多個 Headers：',
+          '  輸入：(http.request.method eq "POST") and not (any(http.request.headers["x-csrf-token"][*] ne "") and any(http.request.headers["x-api-key"][*] ne ""))',
+          '選擇動作：Block 或 Managed Challenge',
+          '（可選）配置自定義回應：',
+          '  Response type: application/json',
+          '  Response code: 403',
+          '  Response body: {"error": "Missing required security headers"}',
+          '點擊「Deploy」部署規則'
+        ],
+        screenshot: null,
+        notes: 'Header 名稱在 http.request.headers 欄位中會自動轉為小寫。CSRF Token 驗證對防止跨站請求偽造攻擊非常重要。'
+      },
+      {
+        stepNumber: 3,
+        title: '建立 Cookie 驗證規則',
+        description: '驗證 Session Cookie 格式和存在性',
+        actions: [
+          '建立新的 Custom Rule',
+          '規則名稱：Validate Session Cookie',
+          '點擊「Edit expression」',
+          '設定條件（方式一）- 驗證 Cookie 存在且格式正確：',
+          '  輸入：not http.cookie matches "session_id=[0-9a-f]{32}" and (http.request.uri.path matches "^/dashboard/")',
+          '設定條件（方式二）- 驗證多個 Cookie：',
+          '  輸入：(http.request.uri.path eq "/api/protected") and not (http.cookie contains "auth_token=" and http.cookie contains "user_id=")',
+          '設定條件（方式三）- 保護特定區域：',
+          '  輸入：(http.request.uri.path matches "^/(admin|dashboard)/") and not http.cookie matches "admin_session=[0-9a-zA-Z]{40}"',
+          '選擇動作：',
+          '  - Block：完全阻擋',
+          '  - Managed Challenge：顯示挑戰頁面',
+          '  - Redirect：重定向到登入頁面（配置 URL: https://example.com/login）',
+          '點擊「Deploy」'
+        ],
+        screenshot: null,
+        notes: 'matches 運算子需要 Business 或 Enterprise 方案。Cookie 驗證可以防止未授權訪問敏感區域。'
+      },
+      {
+        stepNumber: 4,
+        title: '建立 HMAC Token 驗證規則（進階）',
+        description: '使用 HMAC Token 提供更強的 API 保護',
+        actions: [
+          '建立新的 Custom Rule',
+          '規則名稱：HMAC Token Validation',
+          '點擊「Edit expression」',
+          '使用 is_timed_hmac_valid_v0() 函數驗證 Token：',
+          '  基本格式：',
+          '  (http.host eq "api.example.com" and not is_timed_hmac_valid_v0("your-secret-key", http.request.uri, 3600, http.request.timestamp.sec, 8))',
+          '  ',
+          '  參數說明：',
+          '  - "your-secret-key"：用於生成 HMAC 的密鑰（與後端共享）',
+          '  - http.request.uri：要驗證的完整 URI（包含 Token）',
+          '  - 3600：Token 有效期（秒），例如 3600 = 1 小時',
+          '  - http.request.timestamp.sec：當前時間戳',
+          '  - 8：分隔符長度（例如 "?verify=" 的長度為 8）',
+          '  ',
+          '  範例 URI 格式：',
+          '  /api/resource?verify=1234567890-base64encodedhmac',
+          '選擇動作：Block',
+          '配置自定義回應：',
+          '  Response type: application/json',
+          '  Response code: 401',
+          '  Response body: {"error": "Invalid or expired token"}',
+          '點擊「Deploy」'
+        ],
+        screenshot: null,
+        notes: 'is_timed_hmac_valid_v0() 函數需要 Pro 或以上方案。HMAC Token 驗證提供時間限制和防篡改保護，適合保護下載連結、API 端點等。後端需要使用相同的密鑰和算法生成 Token。'
+      },
+      {
+        stepNumber: 5,
+        title: '限制敏感路徑訪問',
+        description: '為管理後台和 API 端點建立額外保護',
+        actions: [
+          '建立新的 Custom Rule',
+          '規則名稱：Protect Sensitive Paths',
+          '點擊「Edit expression」',
+          '設定條件（方式一）- 限制管理後台訪問（需特定 IP）：',
+          '  輸入：(http.request.uri.path matches "^/(admin|wp-admin|phpmyadmin)/") and not (ip.src in {192.168.1.100 10.0.0.0/8})',
+          '設定條件（方式二）- 限制 API 訪問（需 Header + Cookie）：',
+          '  輸入：(http.request.uri.path matches "^/api/") and not (any(http.request.headers["x-api-key"][*] ne "") and http.cookie contains "session_id=")',
+          '設定條件（方式三）- 組合多個保護層：',
+          '  輸入：(http.request.uri.path eq "/api/admin/delete") and not (',
+          '    (ip.src in {192.168.1.0/24}) and',
+          '    (http.request.method eq "DELETE") and',
+          '    (any(http.request.headers["x-admin-token"][*] ne "")) and',
+          '    (http.cookie matches "admin_session=[0-9a-zA-Z]{40}")',
+          '  )',
+          '選擇動作：Block',
+          '點擊「Deploy」'
+        ],
+        screenshot: null,
+        notes: '建議為不同敏感度的路徑建立不同的規則。管理後台應該限制 IP 訪問，API 端點應該驗證 Token 或 API Key。'
+      },
+      {
+        stepNumber: 6,
+        title: '監控和調整',
+        description: '驗證規則效果並進行微調',
+        actions: [
+          '前往 Security → Events 查看安全事件',
+          '篩選條件：',
+          '  - Action: Block 或 Managed Challenge',
+          '  - Rule: 選擇剛才建立的規則名稱',
+          '檢查被阻擋的請求：',
+          '  - 確認是否為真實的異常請求',
+          '  - 識別誤報情況（正常請求被阻擋）',
+          '如有誤報：',
+          '  - 方式一：調整規則條件（放寬驗證）',
+          '  - 方式二：建立例外規則（Skip 特定條件）',
+          '  - 方式三：改用「Log」模式觀察幾天後再啟用「Block」',
+          '建立監控儀表板：',
+          '  - 使用 GraphQL Analytics API 定期查詢規則觸發次數',
+          '  - 設定告警（當規則觸發次數異常時通知）',
+          '定期檢視（建議每週）：',
+          '  - 檢查規則是否仍然有效',
+          '  - 根據新的攻擊模式調整規則',
+          '  - 更新 API Key、Session Cookie 格式等'
+        ],
+        screenshot: null,
+        notes: '持續監控和調整是維持安全的關鍵。建議先使用「Log」模式測試 1-2 天，確認無誤報後再改為「Block」。'
+      }
+    ],
+    references: [
+      {
+        title: 'Cloudflare Custom Rules 官方文件',
+        url: 'https://developers.cloudflare.com/waf/custom-rules/',
+        type: 'official'
+      },
+      {
+        title: 'Require specific HTTP headers 用例',
+        url: 'https://developers.cloudflare.com/waf/custom-rules/use-cases/require-specific-headers/',
+        type: 'official'
+      },
+      {
+        title: 'Require a specific cookie 用例',
+        url: 'https://developers.cloudflare.com/waf/custom-rules/use-cases/require-specific-cookie/',
+        type: 'official'
+      },
+      {
+        title: 'Configure token authentication 用例',
+        url: 'https://developers.cloudflare.com/waf/custom-rules/use-cases/configure-token-authentication/',
+        type: 'official'
+      },
+      {
+        title: 'Cloudflare Rules Language 語法',
+        url: 'https://developers.cloudflare.com/ruleset-engine/rules-language/',
+        type: 'official'
+      },
+      {
+        title: '內部文件 - Custom Rules 詳細說明',
+        url: '/backend/docs/cloudflare/stages/stage-4-security-products/custom-rules.md',
+        type: 'internal'
+      }
+    ],
+    relatedScores: ['http.request.headers', 'http.cookie', 'http.request.uri.path'],
+    troubleshooting: [
+      {
+        issue: '正常的 API 請求被阻擋',
+        solution: '1. 檢查 Header 或 Cookie 格式是否正確。2. 確認規則的表達式是否過於嚴格。3. 先使用「Log」模式觀察 1-2 天，分析被阻擋的請求。4. 為特定的合法用戶或 IP 建立例外規則（Skip 規則）。5. 如果使用 HMAC Token，檢查後端生成的 Token 格式和密鑰是否正確。'
+      },
+      {
+        issue: 'HMAC Token 驗證總是失敗',
+        solution: '1. 確認後端使用的密鑰與規則中的密鑰一致。2. 檢查 Token 的時間戳是否正確（後端和 Cloudflare 時間需同步）。3. 確認分隔符長度參數正確（例如 "?verify=" 長度為 8）。4. 檢查 Token 是否已過期（根據設定的有效期）。5. 使用 curl 測試並查看 Security Events 中的詳細錯誤訊息。'
+      },
+      {
+        issue: '使用 matches 運算子時出現語法錯誤',
+        solution: 'matches 運算子需要 Business 或 Enterprise 方案。如果是 Pro 方案，改用 contains、eq、starts_with 等運算子。例如：將 http.cookie matches "session=[0-9a-f]{32}" 改為 http.cookie contains "session=" and len(http.cookie) ge 40。'
+      },
+      {
+        issue: '不確定應該驗證哪些 Headers 或 Cookies',
+        solution: '1. 檢查應用程式的前端代碼，找出發送的 Headers 和 Cookies。2. 使用瀏覽器開發者工具（F12）查看 Network 請求。3. 優先驗證安全相關的 Headers（如 X-CSRF-Token、Authorization、X-API-Key）。4. 對於敏感操作（如刪除、修改），建議驗證 Session Cookie 和 CSRF Token。5. 諮詢開發團隊確認應用程式的安全機制。'
+      }
+    ]
+  },
+
+  // ========================================
   // 流量監控
   // ========================================
   MONITOR_TRAFFIC_PATTERNS: {
@@ -1289,11 +1502,37 @@ function mapRecommendationToGuideId(title, category) {
     '限制 IP': 'RESTRICT_HIGH_RISK_IPS',
     'IP 地址': 'RESTRICT_HIGH_RISK_IPS',
     'IP地址': 'RESTRICT_HIGH_RISK_IPS',
+    '封鎖來源 IP': 'RESTRICT_HIGH_RISK_IPS',
+    '封鎖 IP': 'RESTRICT_HIGH_RISK_IPS',
+    '封鎖IP': 'RESTRICT_HIGH_RISK_IPS',
+    '阻擋 IP': 'RESTRICT_HIGH_RISK_IPS',
+    '阻擋IP': 'RESTRICT_HIGH_RISK_IPS',
+    'Block IP': 'RESTRICT_HIGH_RISK_IPS',
+    'block ip': 'RESTRICT_HIGH_RISK_IPS',
+    'IP 黑名單': 'RESTRICT_HIGH_RISK_IPS',
+    'IP黑名單': 'RESTRICT_HIGH_RISK_IPS',
+    'IP Blacklist': 'RESTRICT_HIGH_RISK_IPS',
+    'blacklist': 'RESTRICT_HIGH_RISK_IPS',
+    '來源 IP': 'RESTRICT_HIGH_RISK_IPS',
+    '來源IP': 'RESTRICT_HIGH_RISK_IPS',
     
     // 監控相關
     '監控流量': 'MONITOR_TRAFFIC_PATTERNS',
     '流量模式': 'MONITOR_TRAFFIC_PATTERNS',
     '流量監控': 'MONITOR_TRAFFIC_PATTERNS',
+    
+    // 輸入驗證相關
+    '輸入驗證': 'INPUT_VALIDATION_RULES',
+    '強化輸入驗證': 'INPUT_VALIDATION_RULES',
+    '參數驗證': 'INPUT_VALIDATION_RULES',
+    '參數檢查': 'INPUT_VALIDATION_RULES',
+    'Input Validation': 'INPUT_VALIDATION_RULES',
+    'Parameter Validation': 'INPUT_VALIDATION_RULES',
+    '白名單檢查': 'INPUT_VALIDATION_RULES',
+    '參數化查詢': 'INPUT_VALIDATION_RULES',
+    'HTTP Header': 'INPUT_VALIDATION_RULES',
+    'Cookie 驗證': 'INPUT_VALIDATION_RULES',
+    'HMAC Token': 'INPUT_VALIDATION_RULES',
     '阻擋攻擊': 'WAF_CUSTOM_RULE_SETUP',
     '設定 WAF 規則': 'WAF_CUSTOM_RULE_SETUP',
     'Attack Score': 'WAF_CUSTOM_RULE_SETUP',

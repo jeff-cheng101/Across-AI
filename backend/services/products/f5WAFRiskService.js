@@ -795,9 +795,21 @@ ${attackStatisticsText}
         cveId: null,
         recommendations: [
           {
-            title: '啟用 F5 WAF SQL 注入防護',
-            description: '配置 F5 Advanced WAF 的 SQL 注入攻擊簽章，並啟用學習模式以減少誤報',
+            title: topIP?.item ? `封鎖來源 IP ${topIP.item}` : '封鎖攻擊來源 IP',
+            description: topIP?.item 
+              ? `立即在 F5 WAF 的 IP Address Exceptions 中封鎖 ${topIP.item}，該 IP 已發起 ${topIP.count} 次 SQL 注入攻擊，以阻止進一步的注入嘗試` 
+              : '立即在 F5 WAF 中封鎖攻擊來源 IP，以阻止進一步的注入嘗試',
             priority: 'high'
+          },
+          {
+            title: '啟用 F5 WAF SQL 注入防護簽章',
+            description: '配置 F5 Advanced WAF 的 SQL 注入攻擊簽章（Signature Set 200010000），並啟用學習模式以減少誤報',
+            priority: 'high'
+          },
+          {
+            title: '強化輸入驗證與參數檢查',
+            description: '對所有 SQL 查詢相關的輸入參數實施嚴格的資料類型檢查、長度限制和正則表達式驗證，並使用參數化查詢防止 SQL 注入',
+            priority: 'medium'
           },
           {
             title: '調整違規評分閾值',
@@ -831,9 +843,21 @@ ${attackStatisticsText}
         cveId: null,
         recommendations: [
           {
-            title: '啟用 XSS 防護規則',
-            description: '配置 F5 WAF 的 XSS 防護規則並啟用內容編碼檢查',
+            title: topIP?.item ? `封鎖來源 IP ${topIP.item}` : '封鎖攻擊來源 IP',
+            description: topIP?.item 
+              ? `立即在 F5 WAF 的 IP Address Exceptions 中封鎖 ${topIP.item}，該 IP 已發起 ${topIP.count} 次 XSS 攻擊` 
+              : '立即在 F5 WAF 中封鎖攻擊來源 IP',
             priority: 'high'
+          },
+          {
+            title: '啟用 XSS 防護規則',
+            description: '配置 F5 WAF 的 XSS 防護規則（Signature Set 200003000）並啟用內容編碼檢查',
+            priority: 'high'
+          },
+          {
+            title: '強化輸入驗證與參數檢查',
+            description: '對所有輸出到前端的參數實施嚴格的 HTML 編碼、屬性編碼和 JavaScript 編碼，並配置內容安全策略（CSP）',
+            priority: 'medium'
           }
         ]
       });
@@ -862,18 +886,25 @@ ${attackStatisticsText}
         cveId: null,
         recommendations: [
           {
-            title: '立即阻擋攻擊來源',
-            description: '將攻擊來源 IP 加入黑名單，阻止進一步的攻擊嘗試',
+            title: topIP?.item ? `立即封鎖來源 IP ${topIP.item}` : '立即封鎖攻擊來源 IP',
+            description: topIP?.item 
+              ? `緊急！立即在 F5 WAF 和防火牆中封鎖 ${topIP.item}，該 IP 已發起 ${topIP.count} 次命令執行攻擊，阻止進一步的攻擊嘗試` 
+              : '緊急！立即在 F5 WAF 和防火牆中封鎖攻擊來源 IP',
             priority: 'high'
           },
           {
-            title: '啟用命令執行防護',
-            description: '配置 F5 WAF 的命令執行防護簽章並阻擋可疑請求',
+            title: '啟用命令執行防護簽章',
+            description: '配置 F5 WAF 的命令執行防護簽章（Signature Set 200020000）並阻擋可疑請求，同時檢查參數元字符限制',
+            priority: 'high'
+          },
+          {
+            title: '強化輸入驗證與參數檢查',
+            description: '對所有可能執行系統命令的參數實施最嚴格的白名單驗證，禁止危險元字符（;|&$`）並使用安全的 API 替代直接命令執行',
             priority: 'high'
           },
           {
             title: '緊急安全檢查',
-            description: '立即檢查受影響端點的代碼執行邏輯和輸入驗證',
+            description: '立即檢查受影響端點的代碼執行邏輯和輸入驗證，確認是否存在未修補的 RCE 漏洞',
             priority: 'high'
           }
         ]
