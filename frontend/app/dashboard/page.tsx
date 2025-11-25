@@ -223,13 +223,15 @@ export default function DashboardPage() {
   const handleAgentClick = (e: React.MouseEvent) => {
     e.preventDefault()
     e.stopPropagation()
-    router.push("/dify")
+    // router.push("/dify")
+    window.open("https://twister5.phison.com/app/9dd18b0d-460b-44f3-a6fb-88bb8a76ad22/workflow", "_blank")
   }
 
   const handleKBRAGClick = (e: React.MouseEvent) => {
     e.preventDefault()
     e.stopPropagation()
-    router.push("/kb-rag")
+    // router.push("/kb-rag")
+    window.open("https://twister5.phison.com/datasets", "_blank")
   }
 
   const handleAIAnalysisClick = (e: React.MouseEvent) => {
