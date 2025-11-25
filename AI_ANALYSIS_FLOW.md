@@ -129,7 +129,7 @@ const analysisData = await wafService.analyzeCloudflareWAF(timeRange);
   
   2. 建構 Elasticsearch 查詢
      - elkMCPClient.buildElasticsearchQuery(timeRange)
-     - 索引: across-cf-logpush-*
+     - 索引: adasone-cf-logpush-*
      - 時間過濾: @timestamp (gte: now-24h, lte: now)
      - 排序: 按時間降序
      - 數量限制: 1000 筆
@@ -439,7 +439,7 @@ analysisData = {
 ```markdown
 ### 【資料來源】
 
-- **索引名稱**: across-cf-logpush-*
+- **索引名稱**: adasone-cf-logpush-*
 - **時間範圍**: 2025-11-13T00:00:00Z ~ 2025-11-14T00:00:00Z
 - **總日誌數**: 1,234 筆
 - **分析時間**: 2025-11-14T10:30:00Z
@@ -1290,7 +1290,7 @@ const ELK_CONFIG = {
   // Elasticsearch 連接配置
   elasticsearch: {
     host: process.env.ELK_HOST || 'https://10.168.10.250:9200',
-    index: process.env.ELK_INDEX || 'across-cf-logpush-*',
+    index: process.env.ELK_INDEX || 'adasone-cf-logpush-*',
     apiKey: process.env.ELK_API_KEY || 'your-api-key',
     maxResults: parsePositiveInt(process.env.ELK_MAX_RESULTS, 2)
   },

@@ -118,7 +118,7 @@ ensureConnection() → 確保 MCP 連接可用
 
 ### 3.2 查詢建構
 
-**索引名稱**: `across-f5-awaf-*`
+**索引名稱**: `adasone-f5-waf-*`
 
 **查詢結構**:
 ```json
@@ -154,7 +154,7 @@ parseTimeRange(timeRange) {
 **MCP 工具調用**:
 ```javascript
 await elkMCPClient.queryElasticsearch(timeRange, {
-  indexPattern: 'across-f5-awaf-*'
+  indexPattern: 'adasone-f5-waf-*'
 });
 ```
 
@@ -1250,7 +1250,7 @@ const lowRisks = wafRisks.filter(risk =>
 ┌─────────────────────────────────────────────────────────────┐
 │                    Elasticsearch                             │
 │  ┌──────────────────────────────────────────────────────┐  │
-│  │ Index: across-f5-awaf-*                               │  │
+│  │ Index: adasone-f5-waf-*                               │  │
 │  │ • F5 WAF 原始日誌                                     │  │
 │  │ • 攻擊簽章、違規資訊                                  │  │
 │  │ • 地理位置、時間戳記                                  │  │
@@ -1361,7 +1361,7 @@ const lowRisks = wafRisks.filter(risk =>
 #### 1. 查不到日誌資料
 ```
 檢查項目:
-- ELK 索引是否正確: across-f5-awaf-*
+- ELK 索引是否正確: adasone-f5-waf-*
 - 時間範圍是否有資料
 - MCP Server 是否正常運行
 - 網路連接是否正常

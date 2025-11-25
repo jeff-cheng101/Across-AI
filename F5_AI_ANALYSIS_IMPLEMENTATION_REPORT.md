@@ -420,7 +420,7 @@ Frontend State Update
    ```
 
 2. ✅ **ELK 連接**
-   - 索引：`across-f5-awaf-*`
+   - 索引：`adasone-f5-waf-*`
    - 確認有 F5 日誌資料
 
 3. ✅ **AI 提供者**

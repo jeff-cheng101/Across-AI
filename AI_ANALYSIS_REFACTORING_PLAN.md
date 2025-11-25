@@ -35,7 +35,7 @@ backend/
 ```
 
 **問題**:
-- `elkConfig.js` 硬編碼 `across-cf-logpush-*` 索引
+- `elkConfig.js` 硬編碼 `adasone-cf-logpush-*` 索引
 - 配置檔案散落在不同位置
 - 無法支援 F5、Checkpoint 等其他產品
 
@@ -120,7 +120,7 @@ backend/
 │   │   ├── f5/
 │   │   │   ├── f5Standards.js                  ← 新建
 │   │   │   ├── f5FieldMapping.js               ← 新建
-│   │   │   └── f5ELKConfig.js                  ← 新建（索引: across-f5-awaf-*）
+│   │   │   └── f5ELKConfig.js                  ← 新建（索引: adasone-f5-waf-*）
 │   │   │
 │   │   └── checkpoint/                         ← 未來擴展
 │   │       ├── checkpointStandards.js
@@ -250,7 +250,7 @@ backend/
 
 module.exports = {
   // ELK 索引模式（Cloudflare 日誌）
-  index: process.env.ELK_CLOUDFLARE_INDEX || 'across-cf-logpush-*',
+  index: process.env.ELK_CLOUDFLARE_INDEX || 'adasone-cf-logpush-*',
   
   // 產品識別
   productName: 'Cloudflare',
@@ -368,7 +368,7 @@ rm cloudflare-field-mapping.js
 
 module.exports = {
   // ELK 索引模式（F5 AWAF 日誌）
-  index: process.env.ELK_F5_INDEX || 'across-f5-awaf-*',
+  index: process.env.ELK_F5_INDEX || 'adasone-f5-waf-*',
   
   // 產品識別
   productName: 'F5',
@@ -1113,7 +1113,7 @@ const handleReload = () => {
 curl http://localhost:8080/api/cloudflare/test-connection
 
 # 預期回應:
-# {"connected":true,"product":"Cloudflare","index":"across-cf-logpush-*","message":"Cloudflare ELK 連接正常"}
+# {"connected":true,"product":"Cloudflare","index":"adasone-cf-logpush-*","message":"Cloudflare ELK 連接正常"}
 
 # 2. 測試 Cloudflare 統計
 curl http://localhost:8080/api/cloudflare/stats
@@ -1131,7 +1131,7 @@ curl http://localhost:8080/api/elk/test-connection
 curl http://localhost:8080/api/f5/test-connection
 
 # 預期回應:
-# {"connected":true,"product":"F5","index":"across-f5-awaf-*","message":"F5 ELK 連接正常"}
+# {"connected":true,"product":"F5","index":"adasone-f5-waf-*","message":"F5 ELK 連接正常"}
 
 # 2. 測試 F5 統計
 curl http://localhost:8080/api/f5/stats
@@ -1196,8 +1196,8 @@ npm run dev
 
 | 產品 | 環境變數 | 預設索引 | 時間欄位 | 配置檔案 |
 |------|---------|---------|----------|---------|
-| **Cloudflare** | `ELK_CLOUDFLARE_INDEX` | `across-cf-logpush-*` | `EdgeStartTimestamp` | `cloudflareELKConfig.js` |
-| **F5** | `ELK_F5_INDEX` | `across-f5-awaf-*` | `@timestamp` | `f5ELKConfig.js` |
+| **Cloudflare** | `ELK_CLOUDFLARE_INDEX` | `adasone-cf-logpush-*` | `EdgeStartTimestamp` | `cloudflareELKConfig.js` |
+| **F5** | `ELK_F5_INDEX` | `adasone-f5-waf-*` | `@timestamp` | `f5ELKConfig.js` |
 | **Checkpoint** (未來) | `ELK_CHECKPOINT_INDEX` | `across-checkpoint-*` | `@timestamp` | `checkpointELKConfig.js` |
 
 ---
@@ -1221,7 +1221,7 @@ npm run dev
 - [ ] 刪除根目錄的 `cloudflare-field-mapping.js`
 
 ### Phase 3: F5 檔案建立
-- [ ] 建立 `f5ELKConfig.js`（索引: `across-f5-awaf-*`）
+- [ ] 建立 `f5ELKConfig.js`（索引: `adasone-f5-waf-*`）
 - [ ] 建立 `f5Standards.js`
 - [ ] 建立 `f5FieldMapping.js`
 - [ ] 建立 `f5WAFRiskService.js`

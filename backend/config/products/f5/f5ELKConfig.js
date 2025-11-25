@@ -3,7 +3,7 @@
 
 module.exports = {
   // ELK 索引模式（F5 AWAF 日誌）
-  index: process.env.ELK_F5_INDEX || 'across-f5-awaf-*',
+  index: process.env.ELK_F5_INDEX || 'adasone-f5-waf-*',
   
   // 產品識別
   productName: 'F5',

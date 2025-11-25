@@ -585,7 +585,7 @@ cp frontend/app/ai-analysis/f5/page.tsx frontend/app/ai-analysis/f5/page.tsx.bac
   ```
 
 ### 2. ELK 連接確認
-- 確保 ELK 索引配置正確：`across-f5-awaf-*`
+- 確保 ELK 索引配置正確：`adasone-f5-waf-*`
 - 確保有 F5 日誌資料
 - 測試連接：`GET http://localhost:8080/api/f5/test-connection`
 
@@ -609,7 +609,7 @@ cp frontend/app/ai-analysis/f5/page.tsx frontend/app/ai-analysis/f5/page.tsx.bac
 |------|------------|----|----|
 | API 端點 | `/api/cloudflare/analyze-waf-risks` | `/api/f5/analyze-waf-risks` | 不同產品使用不同端點 |
 | 產品名稱 | "Cloudflare" | "F5" | 顯示名稱不同 |
-| ELK 索引 | `across-cloudflare-*` | `across-f5-awaf-*` | 不同的日誌索引 |
+| ELK 索引 | `across-cloudflare-*` | `adasone-f5-waf-*` | 不同的日誌索引 |
 | 欄位對應 | `cloudflareFieldMapping.js` | `f5FieldMapping.js` | 不同的欄位結構 |
 | 攻擊簽名 | Cloudflare WAF Rules | F5 Attack Signatures | 不同的攻擊識別方式 |
 

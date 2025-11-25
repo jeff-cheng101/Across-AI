@@ -138,9 +138,9 @@ const ELK_CONFIG = {
     host: process.env.ELK_HOST || 'https://127.0.0.1:9200',
     // 注意：此 index 為預設測試用索引
     // 實際使用時，各產品應使用自己的 ELK 配置：
-    // - Cloudflare: config/products/cloudflare/cloudflareELKConfig.js (across-cf-logpush-*)
-    // - F5: config/products/f5/f5ELKConfig.js (across-f5-awaf-*)
-    index: process.env.ELK_INDEX || 'across-cf-*',
+    // - Cloudflare: config/products/cloudflare/cloudflareELKConfig.js (adasone-cf-logpush-*)
+    // - F5: config/products/f5/f5ELKConfig.js (adasone-f5-waf-*)
+    index: process.env.ELK_INDEX || 'adasone-cf-*',
     apiKey: process.env.ELK_API_KEY || 'XzJlcm1wb0JQWGtnSXBHR0tEMFg6MERFYWFNTUFTTmxXOEhpdUg2aGwtUQ==',
     maxResults: parsePositiveInt(process.env.ELK_MAX_RESULTS, 2),
     // elastic mcp 分批查詢配置
