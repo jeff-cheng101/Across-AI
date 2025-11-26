@@ -413,7 +413,7 @@ const CHECKPOINT_FIELD_MAPPING = {
 
 // === 輔助函數 ===
 module.exports = {
-  ...CHECKPOINT_FIELD_MAPPING,
+  CHECKPOINT_FIELD_MAPPING,  // 明確導出 CHECKPOINT_FIELD_MAPPING
   
   // 輔助函數：根據邏輯欄位名稱獲取ELK欄位名稱
   getELKField: (logicalFieldName) => {

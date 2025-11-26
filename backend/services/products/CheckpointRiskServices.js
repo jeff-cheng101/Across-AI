@@ -55,7 +55,19 @@ class CheckpointRiskServices {
       
       // Step 2: 解析 Check Point 日誌
       console.log(`\n⭐ Step 2: 解析 ${elkData.hits.length} 筆日誌...`);
-      const logEntries = elkData.hits.map(hit => this.parseCheckPointLog(hit.source));
+      
+      // 過濾掉無效的記錄（source 為 undefined 或 null）
+      const validHits = elkData.hits.filter(hit => hit && hit.source);
+      console.log(`   有效記錄: ${validHits.length} / ${elkData.hits.length}`);
+      
+      if (validHits.length === 0) {
+        console.log('⚠️ 沒有有效的日誌資料');
+        return this.getEmptyAnalysisResult();
+      }
+      
+      const logEntries = validHits
+        .map(hit => this.parseCheckPointLog(hit.source))
+        .filter(log => log !== null);  // 過濾掉解析失敗的記錄
       console.log(`✅ 成功解析 ${logEntries.length} 筆日誌`);
       
       // 診斷：顯示前 3 筆日誌的基本資訊
@@ -155,6 +167,12 @@ class CheckpointRiskServices {
    * 使用 checkpointFieldMapping.js 的欄位對應
    */
   parseCheckPointLog(rawLog) {
+    // 防護檢查：確保 rawLog 不是 undefined 或 null
+    if (!rawLog) {
+      console.warn('⚠️ 警告: 收到空的日誌記錄，跳過');
+      return null;
+    }
+    
     // 提取基本欄位
     const log = {
       // 時間戳記
