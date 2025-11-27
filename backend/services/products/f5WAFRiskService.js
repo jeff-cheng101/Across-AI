@@ -42,7 +42,7 @@ class F5WAFRiskService {
     try {
       // Step 1: 透過 ELK MCP 查詢 F5 日誌
       console.log('\n⭐ Step 1: 透過 MCP 查詢 F5 日誌...');
-      const elkData = await this.elkClient.queryElasticsearchBatched(
+      const elkData = await this.elkClient.queryElasticsearch(
         timeRange,
         { indexPattern: this.elkConfig.index }
       );
