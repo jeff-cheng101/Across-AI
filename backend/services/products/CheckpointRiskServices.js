@@ -146,8 +146,31 @@ class CheckpointRiskServices {
    * 解析 Check Point 日誌（包含時間處理修正）
    */
   parseCheckPointLog(rawLog) {
+    // 安全獲取欄位值的輔助函數（優先使用直接欄位名，再嘗試映射）
+    const safeGet = (fieldName, alternativeFields = []) => {
+      // 優先使用映射配置的欄位名
+      const fieldConfig = this.fieldMapping[fieldName];
+      if (fieldConfig && fieldConfig.elk_field && rawLog[fieldConfig.elk_field] !== undefined) {
+        return rawLog[fieldConfig.elk_field];
+      }
+      
+      // 嘗試直接使用欄位名
+      if (rawLog[fieldName] !== undefined) {
+        return rawLog[fieldName];
+      }
+      
+      // 嘗試備用欄位名
+      for (const altField of alternativeFields) {
+        if (rawLog[altField] !== undefined) {
+          return rawLog[altField];
+        }
+      }
+      
+      return undefined;
+    };
+    
     // 處理時間戳記（支援 Unix timestamp 和 ISO 8601）
-    const rawTimestamp = rawLog[this.fieldMapping['@timestamp'].elk_field];
+    const rawTimestamp = safeGet('@timestamp', ['time', 'timestamp']);
     
     let timestamp;
     if (typeof rawTimestamp === 'number') {
@@ -164,45 +187,45 @@ class CheckpointRiskServices {
     return {
       // 基本欄位
       timestamp: timestamp,
-      log_uid: rawLog[this.fieldMapping.log_uid.elk_field],
-      action: rawLog[this.fieldMapping.action.elk_field],
-      rule_uid: rawLog[this.fieldMapping.rule_uid.elk_field],
-      rule_name: rawLog[this.fieldMapping.rule_name.elk_field],
+      log_uid: safeGet('loguid', ['log_uid', 'uid']),
+      action: safeGet('action'),
+      rule_uid: safeGet('rule_uid', ['ruleuid']),
+      rule_name: safeGet('rule_name'),
       
       // 來源/目的地
-      src_ip: rawLog[this.fieldMapping.src_ip.elk_field],
-      dst_ip: rawLog[this.fieldMapping.dst_ip.elk_field],
-      src_country: rawLog[this.fieldMapping.src_country.elk_field],
-      dst_country: rawLog[this.fieldMapping.dst_country.elk_field],
-      src_machine_name: rawLog[this.fieldMapping.src_machine_name.elk_field],
-      dst_machine_name: rawLog[this.fieldMapping.dst_machine_name.elk_field],
+      src_ip: safeGet('src', ['src_ip', 'origin']),
+      dst_ip: safeGet('dst', ['dst_ip']),
+      src_country: safeGet('src_country', ['origin_sic_name', 's_location']),
+      dst_country: safeGet('dst_country', ['xlatedst_country', 'd_location']),
+      src_machine_name: safeGet('src_machine_name', ['src_host']),
+      dst_machine_name: safeGet('dst_machine_name', ['dst_host', 'dst_domain_name']),
       
       // 應用程式
-      appi_name: rawLog[this.fieldMapping.appi_name.elk_field],
-      app_category: rawLog[this.fieldMapping.app_category.elk_field],
-      app_risk: rawLog[this.fieldMapping.app_risk.elk_field],
-      app_id: rawLog[this.fieldMapping.app_id.elk_field],
+      appi_name: safeGet('appi_name', ['app_name', 'application']),
+      app_category: safeGet('app_category', ['category']),
+      app_risk: safeGet('app_risk', ['risk']),
+      app_id: safeGet('app_id'),
       
       // Threat Prevention 欄位（新增）
-      threat_severity: rawLog[this.fieldMapping.threat_severity?.elk_field],
-      threat_name: rawLog[this.fieldMapping.threat_name?.elk_field],
-      threat_category: rawLog[this.fieldMapping.threat_category?.elk_field],
-      burst_count: rawLog[this.fieldMapping.burst_count?.elk_field],
-      count: rawLog[this.fieldMapping.count?.elk_field],
+      threat_severity: safeGet('threat_severity', ['severity']),
+      threat_name: safeGet('threat_name'),
+      threat_category: safeGet('threat_category'),
+      burst_count: safeGet('burst_count'),
+      count: safeGet('count'),
       
       // HTTP 欄位（新增）
-      http_user_agent: rawLog[this.fieldMapping.http_user_agent?.elk_field],
-      http_url: rawLog[this.fieldMapping.http_url?.elk_field],
-      http_method: rawLog[this.fieldMapping.http_method?.elk_field],
+      http_user_agent: safeGet('http_user_agent', ['user_agent']),
+      http_url: safeGet('http_url', ['url']),
+      http_method: safeGet('http_method', ['method']),
       
       // URL Filtering 欄位（新增）
-      url_category: rawLog[this.fieldMapping.url_category?.elk_field],
-      url_reputation: rawLog[this.fieldMapping.url_reputation?.elk_field],
+      url_category: safeGet('url_category'),
+      url_reputation: safeGet('url_reputation', ['reputation']),
       
       // 網路層
-      protocol: rawLog[this.fieldMapping.protocol.elk_field],
-      service: rawLog[this.fieldMapping.service.elk_field],
-      dst_port: rawLog[this.fieldMapping.dst_port.elk_field],
+      protocol: safeGet('protocol', ['proto']),
+      service: safeGet('service', ['service_id']),
+      dst_port: safeGet('service', ['dst_port', 'port']),
       
       // 原始數據
       rawLog: rawLog
@@ -855,4 +878,4 @@ ${JSON.stringify(analysisData, null, 2)}
   }
 }
 
-module.exports = new CheckpointRiskServices();
+module.exports = CheckpointRiskServices;
