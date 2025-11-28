@@ -250,162 +250,144 @@ class CloudflareWAFRiskService {
     });
   }
   
-  // 分析 SQL 注入（使用新的多層判斷邏輯）
-  analyzeSQLInjection(logEntries) {
-    // 使用新的多層判斷邏輯
-    const sqliLogs = logEntries.filter(log => {
-      // 排除 Cloudflare 內部端點
+  /**
+   * 通用攻擊類型分析函數（增強版 - 包含細分統計）
+   * @param {Array} logEntries - 所有日誌條目
+   * @param {Function} filterFn - 攻擊類型過濾函數
+   * @param {string} scoreField - WAF 分數欄位名稱（如 'wafSQLiScore'）
+   * @returns {Object} 攻擊統計資訊
+   */
+  analyzeAttacksByType(logEntries, filterFn, scoreField) {
+    // 過濾出符合條件的日誌
+    const filteredLogs = logEntries.filter(log => {
       if (isCloudflareInternalEndpoint(log.requestURI)) {
         return false;
       }
+      return filterFn(log);
+    });
+    
+    // 細分不同狀態（使用 analyzeThreatLevel）
+    const statusCounts = {
+      blocked: 0,        // block, connectionClose
+      challenged: 0,     // challenge, jschallenge, managedChallenge
+      rateLimited: 0,    // rateLimit, l7ddos
+      logged: 0,         // log (未採取動作)
+      allowed: 0,        // allow, bypass
+      other: 0           // 其他狀態
+    };
+    
+    filteredLogs.forEach(log => {
+      const analysis = analyzeThreatLevel(log);
       
-      // 條件 1：WAF SQLi Score < 20（確定攻擊）
+      if (analysis.category === 'BLOCKED_ATTACK') {
+        statusCounts.blocked++;
+      } else if (analysis.category === 'CHALLENGED') {
+        statusCounts.challenged++;
+      } else if (analysis.category === 'RATE_LIMITED') {
+        statusCounts.rateLimited++;
+      } else if (analysis.category === 'CONFIRMED_ATTACK' && !analysis.isBlocked) {
+        statusCounts.logged++;
+      } else if (analysis.category === 'BYPASSED_ATTACK') {
+        statusCounts.allowed++;
+      } else {
+        statusCounts.other++;
+      }
+    });
+    
+    return {
+      count: filteredLogs.length,
+      // 向後兼容的欄位
+      blocked: statusCounts.blocked,
+      unblocked: statusCounts.logged + statusCounts.allowed,
+      highRisk: statusCounts.logged + statusCounts.allowed,
+      // 新增：細分狀態統計
+      statusCounts: statusCounts,
+      challenged: statusCounts.challenged,
+      rateLimited: statusCounts.rateLimited,
+      logged: statusCounts.logged,
+      allowed: statusCounts.allowed,
+      // 其他統計
+      topIPs: this.getTopIPsWithCountry(filteredLogs, 5),
+      topTargets: this.getTopN(filteredLogs, 'requestURI', 10),
+      topCountries: this.getTopN(filteredLogs, 'clientCountry', 5),
+      affectedAssets: this.groupByZoneName(filteredLogs),
+      avgScore: calculateValidAvgScore(filteredLogs, scoreField)
+    };
+  }
+  
+  // 分析 SQL 注入（使用通用函數）
+  analyzeSQLInjection(logEntries) {
+    return this.analyzeAttacksByType(logEntries, (log) => {
+      // 使用 analyzeThreatLevel 進行完整的多層判斷
+      const analysis = analyzeThreatLevel(log);
+      
+      // 不是威脅則跳過
+      if (!analysis.isThreat) {
+        return false;
+      }
+      
+      // 檢查是否為 SQL 注入類型
+      // 方法 1: analyzeThreatLevel 已識別為 SQL 注入
+      if (analysis.attackType && analysis.attackType.includes('SQL')) {
+        return true;
+      }
+      
+      // 方法 2: WAF SQLi Score < 20（確定攻擊）
       if (isValidWAFScore(log.wafSQLiScore) && log.wafSQLiScore < 20) {
         return true;
       }
       
-      // 條件 2：SecurityRule 觸發 SQL 相關規則
+      // 方法 3: SecurityRule 觸發 SQL 相關規則
       if (log.securityRule && log.securityRule.toLowerCase().includes('sql')) {
         return true;
       }
       
-      // 條件 3：使用多層判斷邏輯
-      const analysis = analyzeThreatLevel(log);
-      if (analysis.isThreat && analysis.attackType && analysis.attackType.includes('SQL')) {
+      // 方法 4: SecurityRuleDescription 包含 SQL 相關
+      if (log.securityRuleDescription && log.securityRuleDescription.toLowerCase().includes('sql')) {
         return true;
       }
       
       return false;
-    });
-    
-    // 分類：已阻擋 vs 未阻擋
-    const blockedLogs = sqliLogs.filter(log => {
-      const analysis = analyzeThreatLevel(log);
-      return analysis.isBlocked;
-    });
-    
-    const unblockedLogs = sqliLogs.filter(log => {
-      const analysis = analyzeThreatLevel(log);
-      return !analysis.isBlocked;
-    });
-    
-    return {
-      count: sqliLogs.length,
-      blocked: blockedLogs.length,
-      unblocked: unblockedLogs.length,
-      highRisk: unblockedLogs.length,  // 未阻擋 = 高風險
-      topIPs: this.getTopIPsWithCountry(sqliLogs, 5),  // Top 5 IP + 國家
-      topTargets: this.getTopN(sqliLogs, 'requestURI', 10),
-      topCountries: this.getTopN(sqliLogs, 'clientCountry', 5),
-      affectedAssets: this.groupByZoneName(sqliLogs),  // 按 ZoneName 分組
-      avgScore: calculateValidAvgScore(sqliLogs, 'wafSQLiScore')
-    };
+    }, 'wafSQLiScore');
   }
   
-  // 分析 XSS 攻擊（使用新的多層判斷邏輯）
+  // 分析 XSS 攻擊（使用通用函數）
   analyzeXSSAttacks(logEntries) {
-    const xssLogs = logEntries.filter(log => {
-      if (isCloudflareInternalEndpoint(log.requestURI)) {
-        return false;
-      }
-      
-      // 條件 1：WAF XSS Score < 20
-      if (isValidWAFScore(log.wafXSSScore) && log.wafXSSScore < 20) {
-        return true;
-      }
-      
-      // 條件 2：SecurityRule 觸發 XSS 規則
-      if (log.securityRule && log.securityRule.toLowerCase().includes('xss')) {
-        return true;
-      }
-      
-      // 條件 3：URI 包含 XSS pattern
-      if (log.requestURI && (log.requestURI.includes('<script') || log.requestURI.includes('javascript:'))) {
-        return true;
-      }
-      
-      // 條件 4：多層判斷邏輯
+    return this.analyzeAttacksByType(logEntries, (log) => {
       const analysis = analyzeThreatLevel(log);
-      if (analysis.isThreat && analysis.attackType && analysis.attackType.includes('XSS')) {
-        return true;
-      }
+      if (!analysis.isThreat) return false;
+      
+      // 檢查是否為 XSS 類型
+      if (analysis.attackType && analysis.attackType.includes('XSS')) return true;
+      if (isValidWAFScore(log.wafXSSScore) && log.wafXSSScore < 20) return true;
+      if (log.securityRule && log.securityRule.toLowerCase().includes('xss')) return true;
+      if (log.securityRuleDescription && log.securityRuleDescription.toLowerCase().includes('xss')) return true;
+      if (analysis.uriAnalysis && analysis.uriAnalysis.attackType === 'XSS') return true;
       
       return false;
-    });
-    
-    // 分類：已阻擋 vs 未阻擋
-    const blockedLogs = xssLogs.filter(log => {
-      const analysis = analyzeThreatLevel(log);
-      return analysis.isBlocked;
-    });
-    
-    const unblockedLogs = xssLogs.filter(log => {
-      const analysis = analyzeThreatLevel(log);
-      return !analysis.isBlocked;
-    });
-    
-    return {
-      count: xssLogs.length,
-      blocked: blockedLogs.length,
-      unblocked: unblockedLogs.length,
-      highRisk: unblockedLogs.length,
-      topIPs: this.getTopIPsWithCountry(xssLogs, 5),
-      topTargets: this.getTopN(xssLogs, 'requestURI', 10),
-      topCountries: this.getTopN(xssLogs, 'clientCountry', 5),
-      affectedAssets: this.groupByZoneName(xssLogs),
-      avgScore: calculateValidAvgScore(xssLogs, 'wafXSSScore')
-    };
+    }, 'wafXSSScore');
   }
   
-  // 分析 RCE 攻擊（使用新的多層判斷邏輯）
+  // 分析 RCE 攻擊（使用通用函數）
   analyzeRCEAttacks(logEntries) {
-    const rceLogs = logEntries.filter(log => {
-      if (isCloudflareInternalEndpoint(log.requestURI)) {
-        return false;
-      }
-      
-      // 條件 1：WAF RCE Score < 20
-      if (isValidWAFScore(log.wafRCEScore) && log.wafRCEScore < 20) {
-        return true;
-      }
-      
-      // 條件 2：SecurityRule 觸發 RCE 規則
-      if (log.securityRule && (log.securityRule.toLowerCase().includes('rce') || 
-                               log.securityRule.toLowerCase().includes('remote code'))) {
-        return true;
-      }
-      
-      // 條件 3：多層判斷邏輯
+    return this.analyzeAttacksByType(logEntries, (log) => {
       const analysis = analyzeThreatLevel(log);
-      if (analysis.isThreat && analysis.attackType && analysis.attackType.includes('RCE')) {
-        return true;
-      }
+      if (!analysis.isThreat) return false;
+      
+      // 檢查是否為 RCE 類型
+      if (analysis.attackType && analysis.attackType.includes('RCE')) return true;
+      if (isValidWAFScore(log.wafRCEScore) && log.wafRCEScore < 20) return true;
+      if (log.securityRule && (log.securityRule.toLowerCase().includes('rce') || 
+                               log.securityRule.toLowerCase().includes('remote code') ||
+                               log.securityRule.toLowerCase().includes('command'))) return true;
+      if (log.securityRuleDescription && (
+            log.securityRuleDescription.toLowerCase().includes('rce') ||
+            log.securityRuleDescription.toLowerCase().includes('remote code') ||
+            log.securityRuleDescription.toLowerCase().includes('command execution'))) return true;
+      if (analysis.uriAnalysis && analysis.uriAnalysis.attackType === 'COMMAND_INJECTION') return true;
       
       return false;
-    });
-    
-    // 分類：已阻擋 vs 未阻擋
-    const blockedLogs = rceLogs.filter(log => {
-      const analysis = analyzeThreatLevel(log);
-      return analysis.isBlocked;
-    });
-    
-    const unblockedLogs = rceLogs.filter(log => {
-      const analysis = analyzeThreatLevel(log);
-      return !analysis.isBlocked;
-    });
-    
-    return {
-      count: rceLogs.length,
-      blocked: blockedLogs.length,
-      unblocked: unblockedLogs.length,
-      highRisk: unblockedLogs.length,
-      topIPs: this.getTopIPsWithCountry(rceLogs, 5),
-      topTargets: this.getTopN(rceLogs, 'requestURI', 10),
-      topCountries: this.getTopN(rceLogs, 'clientCountry', 5),
-      affectedAssets: this.groupByZoneName(rceLogs),
-      avgScore: calculateValidAvgScore(rceLogs, 'wafRCEScore')
-    };
+    }, 'wafRCEScore');
   }
   
   // 分析惡意機器人流量
@@ -515,6 +497,118 @@ class CloudflareWAFRiskService {
     });
     
     return Array.from(found).slice(0, 15);
+  }
+  
+  /**
+   * 根據 SecurityAction 和阻擋狀態生成動態建議
+   * @param {Object} attackData - 攻擊統計資料
+   * @param {string} attackType - 攻擊類型（如 'SQL 注入'）
+   * @param {string} wafRuleSet - WAF 規則集名稱
+   * @returns {Object} 包含 protectionStatus 和 recommendations 的物件
+   */
+  generateDynamicRecommendations(attackData, attackType, wafRuleSet = '') {
+    const { blocked = 0, challenged = 0, logged = 0, unblocked = 0, count = 0 } = attackData;
+    
+    // 計算阻擋率和挑戰率
+    const blockedRate = count > 0 ? blocked / count : 0;
+    const challengedRate = count > 0 ? challenged / count : 0;
+    const unblockedRate = count > 0 ? unblocked / count : 0;
+    
+    let protectionStatus = '';
+    let recommendations = [];
+    
+    // 情境 1: 全部被阻擋（100%）
+    if (blockedRate === 1) {
+      protectionStatus = `Cloudflare WAF 已成功阻擋所有 ${count} 次 ${attackType} 攻擊`;
+      recommendations = [
+        {
+          title: '防護規則已生效 - 持續監控',
+          description: `Cloudflare WAF 已成功阻擋所有 ${count} 次 ${attackType} 攻擊嘗試，防護規則運作正常。建議持續監控攻擊趨勢，觀察阻擋量是否上升，評估是否為組織性攻擊或隨機掃描`,
+          priority: 'medium'
+        },
+        {
+          title: '分析攻擊模式',
+          description: `檢視被阻擋的 ${attackType} 攻擊手法與來源。前往 Cloudflare Dashboard → Security → Events 查看攻擊詳情，評估是否需要調整 WAF Score 閾值或建立額外的 Custom Rules`,
+          priority: 'low'
+        },
+        {
+          title: '評估 WAF Score 閾值設定',
+          description: `目前 ${attackType} 防護的 WAF Score 閾值有效，建議保持當前設定。若未來攻擊量上升，可考慮進一步強化閾值`,
+          priority: 'low'
+        }
+      ];
+    }
+    // 情境 2: 大部分被阻擋（80%-99%）
+    else if (blockedRate >= 0.8 && blockedRate < 1) {
+      protectionStatus = `Cloudflare WAF 已阻擋 ${blocked} 次 ${attackType} 攻擊，${unblocked} 次未阻擋`;
+      recommendations = [
+        {
+          title: '強化防護規則 - 減少通過率',
+          description: `目前仍有 ${unblocked} 次 ${attackType} 攻擊未被阻擋（通過率 ${(unblockedRate * 100).toFixed(1)}%）。建議${wafRuleSet ? `強化 Cloudflare WAF 的 ${wafRuleSet}，` : ''}調整 WAF Attack Score 閾值以提高阻擋率。前往 Security → WAF → Custom rules 建立更嚴格的規則`,
+          priority: 'high'
+        },
+        {
+          title: '持續監控已阻擋攻擊',
+          description: `Cloudflare WAF 已成功阻擋 ${blocked} 次攻擊（阻擋率 ${(blockedRate * 100).toFixed(1)}%），防護規則基本有效。建議持續觀察阻擋量是否上升，並分析未被阻擋的請求特徵`,
+          priority: 'medium'
+        },
+        {
+          title: '封鎖高頻攻擊來源',
+          description: `針對重複發起攻擊的 IP 地址，使用 Cloudflare IP Lists 建立黑名單。前往 Account Home → Configurations → Lists 建立 IP list，然後在 Custom rules 中使用 (ip.src in $blocked_ips) 表達式阻擋`,
+          priority: 'medium'
+        }
+      ];
+    }
+    // 情境 3: 大部分被挑戰（50%-80% challenged）
+    else if (challengedRate >= 0.5) {
+      protectionStatus = `Cloudflare 已對 ${challenged} 次 ${attackType} 請求發出挑戰，${blocked} 次已阻擋，${unblocked} 次未阻擋`;
+      recommendations = [
+        {
+          title: '評估挑戰有效性',
+          description: `目前有 ${challenged} 次請求（${(challengedRate * 100).toFixed(1)}%）處於挑戰狀態。建議檢視挑戰通過率，評估挑戰是否有效阻止攻擊。若挑戰通過率過高，建議調整為直接阻擋（block）以提高防護效果`,
+          priority: 'high'
+        },
+        {
+          title: '強化防護規則',
+          description: `建議${wafRuleSet ? `啟用或強化 ${wafRuleSet}，` : ''}將 WAF Score 閾值調整為更嚴格的設定。考慮將挑戰（challenge）改為阻擋（block）以提供更強的防護`,
+          priority: 'high'
+        },
+        {
+          title: '分析挑戰結果',
+          description: `前往 Cloudflare Dashboard → Security → Events 查看挑戰的結果統計，分析哪些請求通過了挑戰，評估是否為合法流量或攻擊繞過`,
+          priority: 'medium'
+        }
+      ];
+    }
+    // 情境 4: 大部分未被阻擋（< 80% blocked）
+    else {
+      const totalUnprotected = unblocked + (challenged || 0);
+      protectionStatus = `⚠️ 警告：${totalUnprotected} 次 ${attackType} 攻擊未被有效阻擋，僅 ${blocked} 次被阻擋（阻擋率 ${(blockedRate * 100).toFixed(1)}%）`;
+      recommendations = [
+        {
+          title: `立即啟用 ${attackType} 防護規則`,
+          description: `⚠️ 緊急：目前有 ${totalUnprotected} 次 ${attackType} 攻擊未被有效阻擋（通過率 ${((totalUnprotected / count) * 100).toFixed(1)}%），防護力度不足。建議${wafRuleSet ? `立即啟用或強化 Cloudflare WAF 的 ${wafRuleSet}，` : ''}並將防護模式設定為阻擋（Block）。前往 Security → WAF → Managed rules 啟用相關規則集`,
+          priority: 'high'
+        },
+        {
+          title: '緊急封鎖攻擊來源',
+          description: `立即在 Cloudflare WAF 中使用 IP Lists 封鎖主要攻擊來源 IP。前往 Account Home → Configurations → Lists 建立 IP list，然後在 Security → WAF → Custom rules 中配置封鎖規則`,
+          priority: 'high'
+        },
+        {
+          title: '配置 WAF Score 阻擋規則',
+          description: `建立 Custom Rule 使用 Attack Score 阻擋高風險請求。表達式範例：(cf.waf.score.sqli le 20) or (cf.waf.score.xss le 20) or (cf.waf.score.rce le 20)。將 Action 設定為 Block`,
+          priority: 'high'
+        },
+        {
+          title: '檢查應用層防護',
+          description: `檢查後端應用程式的輸入驗證和安全防護機制，確保即使攻擊通過 WAF，應用層也能有效防護。實施縱深防禦策略`,
+          priority: 'high'
+        }
+      ];
+    }
+    
+    return { protectionStatus, recommendations };
   }
   
   // 生成 AI 分析 Prompt（基於新的判斷流程）
@@ -784,9 +878,35 @@ ${attackStatisticsText}
    - Top 5 來源 IP 和國家
    - 受影響資產
 
-4. ⚠️ **建議（Recommendations）**：
-   - 針對未阻擋的攻擊：提供具體的 SOP 步驟
-   - 針對已阻擋的攻擊：建議持續監控
+4. ⚠️ **建議（Recommendations）動態生成規則**：
+   
+   **根據阻擋狀態動態調整建議內容：**
+   
+   a. **如果攻擊全部被阻擋（blocked = 100%）→**
+      - 建議標題：「防護規則已生效 - 持續監控」
+      - 建議內容：「Cloudflare WAF 已成功阻擋所有 X 次攻擊嘗試，防護規則運作正常。建議持續監控攻擊趨勢，觀察阻擋量是否上升」
+      - 優先級：medium 或 low
+   
+   b. **如果攻擊大部分被阻擋（blocked >= 80%）→**
+      - 建議標題：「強化防護規則 - 減少通過率」
+      - 建議內容：「目前仍有 Y 次攻擊未被阻擋（通過率 Z%），建議強化 WAF 規則，調整 WAF Score 閾值以提高阻擋率」
+      - 優先級：high 或 medium
+   
+   c. **如果攻擊大部分被挑戰（challenged >= 50%）→**
+      - 建議標題：「評估挑戰有效性」
+      - 建議內容：「目前有 X 次請求處於挑戰狀態（Y%），建議檢視挑戰通過率，評估是否需要調整為直接阻擋（block）」
+      - 優先級：high
+   
+   d. **如果攻擊大部分未被阻擋（blocked < 80%）→**
+      - 建議標題：「立即啟用防護規則」
+      - 建議內容：「⚠️ 緊急：目前有 X 次攻擊未被有效阻擋（通過率 Y%），建議立即啟用或強化 Cloudflare WAF 規則，並將防護模式設定為阻擋（Block）」
+      - 優先級：high 或 critical
+   
+   **⚠️ 重要禁止事項：**
+   - **禁止在攻擊已被阻擋的情況下（blocked >= 80%），建議「立即啟用」防護規則，這是邏輯矛盾**
+   - **禁止在攻擊全部被阻擋時（blocked = 100%），使用 high 或 critical severity**
+   - **禁止編造任何不存在於【攻擊統計】中的數據**：包括 WAF Score、IP 地址、簽章 ID 等
+   - **禁止使用模糊語言**：避免「可能」、「或許」、「建議檢查」等不確定性描述
 
 5. ⚠️ **CVE 編號**：一律設為 null
 
@@ -821,39 +941,64 @@ ${attackStatisticsText}
       const topCountry = sqlInjection.topCountries[0];
       const topIP = sqlInjection.topIPs[0];
       
+      // 使用動態建議生成器
+      const { protectionStatus, recommendations: dynamicRecommendations } = this.generateDynamicRecommendations(
+        sqlInjection,
+        'SQL 注入',
+        'SQL 注入防護規則集（Cloudflare Managed Ruleset + OWASP Core Ruleset）'
+      );
+      
+      // 根據阻擋狀態動態判定 severity
+      const blockedRate = sqlInjection.blocked / sqlInjection.count;
+      let severity;
+      if (blockedRate === 1) {
+        severity = 'low';  // 全部阻擋
+      } else if (blockedRate >= 0.8) {
+        severity = 'medium';  // 大部分阻擋
+      } else if (sqlInjection.highRisk > 50) {
+        severity = 'critical';  // 高風險且大部分未阻擋
+      } else {
+        severity = 'high';
+      }
+      
+      // 構建基本建議（封鎖 IP、輸入驗證、WAF Score 規則）
+      const basicRecommendations = [
+        {
+          title: topIP?.item ? `封鎖來源 IP ${topIP.item}` : '封鎖攻擊來源 IP',
+          description: topIP?.item 
+            ? `在 Cloudflare WAF 中封鎖 ${topIP.item}（來自 ${topIP.country || '未知'}），該 IP 已發起 ${topIP.count} 次 SQL 注入攻擊。使用 IP Lists 功能建立黑名單：Account Home → Configurations → Lists` 
+            : '在 Cloudflare WAF 中封鎖攻擊來源 IP',
+          priority: 'high'
+        },
+        {
+          title: '強化輸入驗證與參數檢查',
+          description: '對所有輸入參數實施嚴格的白名單檢查，並使用參數化查詢防止 SQL 注入。在 Cloudflare 中使用 Custom Rules 配置 HTTP Headers 驗證和 Cookie 驗證，限制敏感 API 端點的訪問',
+          priority: 'medium'
+        },
+        {
+          title: '配置 WAF Score 阻擋規則',
+          description: `建立 Custom Rule 使用 Attack Score 阻擋高風險 SQL 注入請求。表達式：(cf.waf.score.sqli le 20)，Action：Block。平均 WAF 分數為 ${sqlInjection.avgScore}`,
+          priority: 'medium'
+        }
+      ];
+      
       risks.push({
         id: `sql-injection-${Date.now()}`,
         title: 'SQL 注入攻擊檢測',
-        severity: sqlInjection.highRisk > 50 ? 'critical' : sqlInjection.count > 100 ? 'high' : 'medium',
-        openIssues: sqlInjection.count,
-        resolvedIssues: 0,
+        severity: severity,
+        openIssues: sqlInjection.unblocked || 0,
+        resolvedIssues: sqlInjection.blocked || 0,
         affectedAssets: sqlInjection.affectedAssets?.length || 0,
         tags: sqlInjection.highRisk > 0 ? ['Internet Exposed', 'Confirmed Exploitable'] : ['Internet Exposed'],
-        description: `檢測到 ${sqlInjection.count} 次 SQL 注入攻擊嘗試，其中 ${sqlInjection.blocked || 0} 次已被阻擋，${sqlInjection.unblocked || 0} 次未被阻擋（需要立即處理）。主要來源國家：${sqlInjection.topCountries.slice(0, 3).map(c => c.item).join('、')}。`,
-        aiInsight: `在時間範圍 ${formatDate(timeRange.start)} ~ ${formatDate(timeRange.end)} 內檢測到 ${sqlInjection.count} 次 SQL 注入嘗試，其中 ${sqlInjection.highRisk} 次屬於高風險級別（WAF 分數 < 20）。已阻擋 ${sqlInjection.blocked || 0} 次，未阻擋 ${sqlInjection.unblocked || 0} 次。主要攻擊來自 ${topCountry?.item || '未知'}（${topCountry?.count || 0} 次），Top 攻擊 IP 為 ${topIP?.item || '未知'}（${topIP?.count || 0} 次，來自 ${topIP?.country || '未知'}）。平均 WAF 分數為 ${sqlInjection.avgScore}。建議立即檢查受影響端點並封鎖攻擊來源。`,
+        description: `檢測到 ${sqlInjection.count} 次 SQL 注入攻擊嘗試，其中 ${sqlInjection.blocked || 0} 次已被阻擋，${sqlInjection.unblocked || 0} 次未被阻擋。主要來源國家：${sqlInjection.topCountries.slice(0, 3).map(c => c.item).join('、')}。`,
+        aiInsight: `在時間範圍 ${formatDate(timeRange.start)} ~ ${formatDate(timeRange.end)} 內檢測到 ${sqlInjection.count} 次 SQL 注入嘗試，其中 ${sqlInjection.highRisk} 次屬於高風險級別（WAF 分數 < 20）。${protectionStatus}。主要攻擊來自 ${topCountry?.item || '未知'}（${topCountry?.count || 0} 次），Top 攻擊 IP 為 ${topIP?.item || '未知'}（${topIP?.count || 0} 次，來自 ${topIP?.country || '未知'}）。平均 WAF 分數為 ${sqlInjection.avgScore}。`,
         createdDate: formatDate(timeRange.start),
         updatedDate: formatDate(timeRange.end),
         exploitInWild: sqlInjection.highRisk > 0,
         internetExposed: true,
         confirmedExploitable: sqlInjection.highRisk > 0,
         cveId: null,
-        recommendations: [
-          {
-            title: '封鎖攻擊來源 IP',
-            description: `立即在 Cloudflare WAF 中封鎖主要攻擊 IP（如 ${topIP?.item || '檢測到的攻擊 IP'}），使用 IP Lists 功能建立黑名單並配置 Custom Rule 阻擋。前往 Account Home → Configurations → Lists 建立 IP list，然後在 Custom rules 中使用 (ip.src in $blocked_ips) 表達式。`,
-            priority: 'high'
-          },
-          {
-            title: '強化輸入驗證與參數檢查',
-            description: '對所有輸入參數實施嚴格的白名單檢查，並使用參數化查詢防止 SQL 注入。在 Cloudflare 中使用 Custom Rules 配置 HTTP Headers 驗證（如 X-CSRF-Token）和 Cookie 驗證（如 Session Cookie），限制敏感 API 端點的訪問。',
-            priority: 'high'
-          },
-          {
-            title: '啟用 Cloudflare WAF SQL 注入防護規則',
-            description: '立即啟用並強化 Cloudflare WAF 的 SQL 注入防護規則集。前往 Security → WAF → Managed rules，部署 Cloudflare Managed Ruleset 和 OWASP Core Ruleset。同時建立 Custom Rule 使用 Attack Score 阻擋高風險請求：(cf.waf.score.sqli le 20)。',
-            priority: 'high'
-          }
-        ]
+        recommendations: [...dynamicRecommendations, ...basicRecommendations]
       });
     }
     
@@ -861,39 +1006,127 @@ ${attackStatisticsText}
       const topCountry = xssAttacks.topCountries[0];
       const topIP = xssAttacks.topIPs[0];
       
+      // 使用動態建議生成器
+      const { protectionStatus, recommendations: dynamicRecommendations } = this.generateDynamicRecommendations(
+        xssAttacks,
+        'XSS 攻擊',
+        'XSS 防護規則集（Cloudflare Managed Ruleset + OWASP Core Ruleset）'
+      );
+      
+      // 根據阻擋狀態動態判定 severity
+      const blockedRate = xssAttacks.blocked / xssAttacks.count;
+      let severity;
+      if (blockedRate === 1) {
+        severity = 'low';
+      } else if (blockedRate >= 0.8) {
+        severity = 'medium';
+      } else if (xssAttacks.highRisk > 30) {
+        severity = 'high';
+      } else {
+        severity = 'medium';
+      }
+      
+      // 構建基本建議
+      const basicRecommendations = [
+        {
+          title: topIP?.item ? `封鎖來源 IP ${topIP.item}` : '封鎖攻擊來源 IP',
+          description: topIP?.item 
+            ? `在 Cloudflare WAF 中封鎖 ${topIP.item}（來自 ${topIP?.country || '未知'}），該 IP 已發起 ${topIP.count} 次 XSS 攻擊` 
+            : '在 Cloudflare WAF 中封鎖攻擊來源 IP',
+          priority: 'high'
+        },
+        {
+          title: '強化輸入驗證與 XSS 防護',
+          description: '配置 Cloudflare WAF 的 XSS 防護規則，使用 Custom Rules 過濾包含 <script>、javascript: 等危險字符的請求。同時在應用層實施輸入過濾和輸出編碼，啟用 Content Security Policy (CSP) Headers',
+          priority: 'high'
+        },
+        {
+          title: '配置 WAF Score 阻擋規則',
+          description: `建立 Custom Rule 使用 Attack Score 阻擋高風險 XSS 請求。表達式：(cf.waf.score.xss le 20)，Action：Block。平均 WAF 分數為 ${xssAttacks.avgScore}`,
+          priority: 'medium'
+        }
+      ];
+      
       risks.push({
         id: `xss-attack-${Date.now()}`,
         title: 'XSS 攻擊檢測',
-        severity: xssAttacks.highRisk > 30 ? 'high' : 'medium',
-        openIssues: xssAttacks.count,
-        resolvedIssues: 0,
+        severity: severity,
+        openIssues: xssAttacks.unblocked || 0,
+        resolvedIssues: xssAttacks.blocked || 0,
         affectedAssets: xssAttacks.affectedAssets?.length || 0,
         tags: ['Internet Exposed', 'Confirmed Exploitable'],
         description: `檢測到 ${xssAttacks.count} 次跨站腳本攻擊嘗試，其中 ${xssAttacks.blocked || 0} 次已被阻擋，${xssAttacks.unblocked || 0} 次未被阻擋。`,
-        aiInsight: `在時間範圍 ${formatDate(timeRange.start)} ~ ${formatDate(timeRange.end)} 內檢測到 ${xssAttacks.count} 次 XSS 攻擊嘗試，其中 ${xssAttacks.highRisk} 次屬於高風險級別（WAF 分數 < 20）。已阻擋 ${xssAttacks.blocked || 0} 次，未阻擋 ${xssAttacks.unblocked || 0} 次。主要攻擊來自 ${topCountry?.item || '未知'}（${topCountry?.count || 0} 次），Top IP 為 ${topIP?.item || '未知'}（來自 ${topIP?.country || '未知'}）。平均 WAF 分數為 ${xssAttacks.avgScore}。建議立即啟用 CSP 並檢查輸入驗證機制。`,
+        aiInsight: `在時間範圍 ${formatDate(timeRange.start)} ~ ${formatDate(timeRange.end)} 內檢測到 ${xssAttacks.count} 次 XSS 攻擊嘗試，其中 ${xssAttacks.highRisk} 次屬於高風險級別（WAF 分數 < 20）。${protectionStatus}。主要攻擊來自 ${topCountry?.item || '未知'}（${topCountry?.count || 0} 次），Top IP 為 ${topIP?.item || '未知'}（來自 ${topIP?.country || '未知'}）。平均 WAF 分數為 ${xssAttacks.avgScore}。`,
         createdDate: formatDate(timeRange.start),
         updatedDate: formatDate(timeRange.end),
         exploitInWild: false,
         internetExposed: true,
         confirmedExploitable: xssAttacks.highRisk > 0,
         cveId: null,
-        recommendations: [
-          {
-            title: '封鎖攻擊來源 IP',
-            description: `立即在 Cloudflare WAF 中封鎖主要攻擊 IP（如 ${topIP?.item || '檢測到的攻擊 IP'}），使用 IP Lists 功能建立黑名單。`,
-            priority: 'high'
-          },
-          {
-            title: '強化輸入驗證與 XSS 防護',
-            description: '配置 Cloudflare WAF 的 XSS 防護規則，使用 Custom Rules 過濾包含 <script>、javascript: 等危險字符的請求。同時在應用層實施輸入過濾和輸出編碼，啟用 Content Security Policy (CSP) Headers 提供額外防護。',
-            priority: 'high'
-          },
-          {
-            title: '啟用 XSS 防護規則',
-            description: '配置 Cloudflare WAF 的 XSS 防護規則並啟用 CSP',
-            priority: 'high'
-          }
-        ]
+        recommendations: [...dynamicRecommendations, ...basicRecommendations]
+      });
+    }
+    
+    if (rceAttacks && rceAttacks.count > 0) {
+      const topCountry = rceAttacks.topCountries?.[0];
+      const topIP = rceAttacks.topIPs?.[0];
+      
+      // 使用動態建議生成器
+      const { protectionStatus, recommendations: dynamicRecommendations } = this.generateDynamicRecommendations(
+        rceAttacks,
+        'RCE 攻擊',
+        'RCE 防護規則集（Cloudflare Managed Ruleset + OWASP Core Ruleset）'
+      );
+      
+      // 根據阻擋狀態動態判定 severity（RCE 是最嚴重的攻擊）
+      const blockedRate = rceAttacks.blocked / rceAttacks.count;
+      let severity;
+      if (blockedRate === 1) {
+        severity = 'medium';  // 全部阻擋但仍需警惕
+      } else if (blockedRate >= 0.8) {
+        severity = 'high';  // 大部分阻擋
+      } else {
+        severity = 'critical';  // 大部分未阻擋
+      }
+      
+      // 構建基本建議
+      const basicRecommendations = [
+        {
+          title: topIP?.item ? `緊急封鎖來源 IP ${topIP.item}` : '緊急封鎖攻擊來源 IP',
+          description: topIP?.item 
+            ? `⚠️ 緊急！立即在 Cloudflare WAF 和防火牆中封鎖 ${topIP.item}（來自 ${topIP?.country || '未知'}），該 IP 已發起 ${topIP.count} 次 RCE 攻擊，阻止進一步的攻擊嘗試` 
+            : '⚠️ 緊急！立即在 Cloudflare WAF 中封鎖攻擊來源 IP',
+          priority: 'high'
+        },
+        {
+          title: '緊急安全檢查',
+          description: '立即檢查受影響端點的代碼執行邏輯和輸入驗證，確認是否存在未修補的 RCE 漏洞。此類攻擊已被確認在野外利用',
+          priority: 'high'
+        },
+        {
+          title: '配置 WAF Score 阻擋規則',
+          description: `建立 Custom Rule 使用 Attack Score 阻擋高風險 RCE 請求。表達式：(cf.waf.score.rce le 20)，Action：Block。平均 WAF 分數為 ${rceAttacks.avgScore}`,
+          priority: 'high'
+        }
+      ];
+      
+      risks.push({
+        id: `rce-attack-${Date.now()}`,
+        title: 'RCE 遠程代碼執行攻擊檢測',
+        severity: severity,
+        openIssues: rceAttacks.unblocked || 0,
+        resolvedIssues: rceAttacks.blocked || 0,
+        affectedAssets: rceAttacks.affectedAssets?.length || 0,
+        tags: ['Critical', 'Internet Exposed', 'Confirmed Exploitable'],
+        description: `⚠️ 嚴重警告：檢測到 ${rceAttacks.count} 次遠程代碼執行攻擊嘗試，其中 ${rceAttacks.blocked || 0} 次已被阻擋，${rceAttacks.unblocked || 0} 次未被阻擋。`,
+        aiInsight: `⚠️ 嚴重警告：在時間範圍 ${formatDate(timeRange.start)} ~ ${formatDate(timeRange.end)} 內檢測到 ${rceAttacks.count} 次遠程代碼執行（RCE）攻擊嘗試，其中 ${rceAttacks.highRisk} 次屬於極高風險級別（WAF 分數 < 20）。${protectionStatus}。主要攻擊來自 ${topCountry?.item || '未知'}（${topCountry?.count || 0} 次），Top IP 為 ${topIP?.item || '未知'}（來自 ${topIP?.country || '未知'}）。平均 WAF 分數為 ${rceAttacks.avgScore}。此類攻擊已被確認在野外利用。`,
+        createdDate: formatDate(timeRange.start),
+        updatedDate: formatDate(timeRange.end),
+        exploitInWild: true,
+        internetExposed: true,
+        confirmedExploitable: true,
+        cveId: null,
+        recommendations: [...dynamicRecommendations, ...basicRecommendations]
       });
     }
     

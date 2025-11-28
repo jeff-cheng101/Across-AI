@@ -376,228 +376,174 @@ class F5WAFRiskService {
     };
   }
   
-  // === 增強版攻擊分析方法（使用多層次判斷結果）===
+  // === 增強版攻擊分析方法（基於 f5Standards.js 的分類）===
   
-  // 分析 SQL 注入（增強版）
-  analyzeSQLInjectionEnhanced(logEntries, realAttacks) {
-    const sqliLogs = realAttacks.filter(result => {
-      const category = result.attackCategory;
-      const violationCategory = result.violationCategory;
-      
-      return (
-        category?.category === 'INJECTION_ATTACKS' && 
-        category?.type?.toLowerCase().includes('sql')
-      ) || (
-        violationCategory?.category === 'INJECTION_ATTACKS' &&
-        violationCategory?.violation?.toLowerCase().includes('sql')
-      );
-    });
+  /**
+   * 通用攻擊分析函數
+   * @param {Array} realAttacks - 已判定的真實攻擊
+   * @param {Array} logEntries - 所有日誌條目
+   * @param {Function} filterFn - 攻擊類型過濾函數
+   * @param {boolean} includeHighRisk - 是否計算高風險數量
+   * @returns {Object} 攻擊統計資訊
+   */
+  analyzeAttacksByType(realAttacks, logEntries, filterFn, includeHighRisk = false) {
+    const filteredLogs = realAttacks.filter(filterFn);
     
-    const highRiskLogs = sqliLogs.filter(result => 
-      result.severity === 'critical' || result.severity === 'high'
-    );
+    const highRiskLogs = includeHighRisk 
+      ? filteredLogs.filter(result => result.severity === 'critical' || result.severity === 'high')
+      : [];
     
     // 從 realAttacks 中獲取原始 log entries
-    const sqliLogEntries = sqliLogs.map(result => {
+    const filteredLogEntries = filteredLogs.map(result => {
       return logEntries.find(log => 
         log.clientIP === result.originalData?.client_ip ||
         log.uri === result.originalData?.uri
       );
     }).filter(log => log);
     
-    return {
-      count: sqliLogs.length,
-      highRisk: highRiskLogs.length,
-      topIPs: this.getTopN(sqliLogEntries, 'clientIP', 10),
-      topTargets: this.getTopN(sqliLogEntries, 'uri', 10),
-      topCountries: this.getTopN(sqliLogEntries, 'clientCountry', 5),
-      affectedAssets: new Set(sqliLogEntries.map(log => log.host || log.fqdn).filter(h => h)).size,
-      // 新增技術指標
-      avgViolationRating: this.calculateAvg(sqliLogEntries, 'violationRating'),
-      avgThreatScore: this.calculateAvg(sqliLogs.map(l => ({ threatScore: l.threatScore })), 'threatScore'),
-      topSignatures: this.getTopSignatures(sqliLogEntries, 3)
+    // 統計 request_status 分佈
+    const requestStatusCounts = {
+      blocked: 0,
+      passed: 0,
+      alerted: 0,
+      other: 0
     };
+    
+    filteredLogEntries.forEach(log => {
+      const status = log.request_status?.toLowerCase();
+      if (status === 'blocked') {
+        requestStatusCounts.blocked++;
+      } else if (status === 'passed') {
+        requestStatusCounts.passed++;
+      } else if (status === 'alerted') {
+        requestStatusCounts.alerted++;
+      } else {
+        requestStatusCounts.other++;
+      }
+    });
+    
+    const result = {
+      count: filteredLogs.length,
+      topIPs: this.getTopN(filteredLogEntries, 'clientIP', 10),
+      topTargets: this.getTopN(filteredLogEntries, 'uri', 10),
+      topCountries: this.getTopN(filteredLogEntries, 'clientCountry', 5),
+      affectedAssets: new Set(filteredLogEntries.map(log => log.host || log.fqdn).filter(h => h)).size,
+      avgViolationRating: this.calculateAvg(filteredLogEntries, 'violationRating'),
+      avgThreatScore: this.calculateAvg(filteredLogs.map(l => ({ threatScore: l.threatScore })), 'threatScore'),
+      topSignatures: this.getTopSignatures(filteredLogEntries, 3),
+      requestStatusCounts: requestStatusCounts, // 新增 request_status 統計
+      blockedCount: requestStatusCounts.blocked,
+      passedCount: requestStatusCounts.passed,
+      alertedCount: requestStatusCounts.alerted
+    };
+    
+    if (includeHighRisk) {
+      result.highRisk = highRiskLogs.length;
+    }
+    
+    return result;
   }
   
-  // 分析 XSS 攻擊（增強版）
+  // 分析 SQL 注入（使用 F5_ATTACK_TYPE_MAPPING）
+  analyzeSQLInjectionEnhanced(logEntries, realAttacks) {
+    return this.analyzeAttacksByType(realAttacks, logEntries, (result) => {
+      const attackType = result.originalData?.attack_type;
+      // 使用 F5_ATTACK_TYPE_MAPPING 判斷
+      return attackType && F5_ATTACK_TYPE_MAPPING[attackType]?.name === 'SQL Injection';
+    }, true);
+  }
+  
+  // 分析 XSS 攻擊（使用 F5_ATTACK_TYPE_MAPPING）
   analyzeXSSAttacksEnhanced(logEntries, realAttacks) {
-    const xssLogs = realAttacks.filter(result => {
-      const category = result.attackCategory;
-      return category?.type?.toLowerCase().includes('xss') ||
-             category?.type?.toLowerCase().includes('cross site scripting');
-    });
-    
-    const highRiskLogs = xssLogs.filter(result => 
-      result.severity === 'critical' || result.severity === 'high'
-    );
-    
-    const xssLogEntries = xssLogs.map(result => {
-      return logEntries.find(log => 
-        log.clientIP === result.originalData?.client_ip
+    return this.analyzeAttacksByType(realAttacks, logEntries, (result) => {
+      const attackType = result.originalData?.attack_type;
+      return attackType && (
+        F5_ATTACK_TYPE_MAPPING[attackType]?.name === 'Cross-Site Scripting' ||
+        attackType === 'XSS'
       );
-    }).filter(log => log);
-    
-    return {
-      count: xssLogs.length,
-      highRisk: highRiskLogs.length,
-      topIPs: this.getTopN(xssLogEntries, 'clientIP', 10),
-      topTargets: this.getTopN(xssLogEntries, 'uri', 10),
-      topCountries: this.getTopN(xssLogEntries, 'clientCountry', 5),
-      affectedAssets: new Set(xssLogEntries.map(log => log.host || log.fqdn).filter(h => h)).size,
-      // 新增技術指標
-      avgViolationRating: this.calculateAvg(xssLogEntries, 'violationRating'),
-      avgThreatScore: this.calculateAvg(xssLogs.map(l => ({ threatScore: l.threatScore })), 'threatScore'),
-      topSignatures: this.getTopSignatures(xssLogEntries, 3)
-    };
+    }, true);
   }
   
-  // 分析命令執行攻擊（增強版）
+  // 分析命令執行攻擊（使用 F5_ATTACK_TYPE_MAPPING）
   analyzeCommandExecutionEnhanced(logEntries, realAttacks) {
-    const cmdLogs = realAttacks.filter(result => {
-      const category = result.attackCategory;
-      return category?.type?.toLowerCase().includes('command') ||
-             category?.type?.toLowerCase().includes('rce');
-    });
-    
-    const highRiskLogs = cmdLogs.filter(result => 
-      result.severity === 'critical' || result.severity === 'high'
-    );
-    
-    const cmdLogEntries = cmdLogs.map(result => {
-      return logEntries.find(log => 
-        log.clientIP === result.originalData?.client_ip
+    return this.analyzeAttacksByType(realAttacks, logEntries, (result) => {
+      const attackType = result.originalData?.attack_type;
+      return attackType && (
+        F5_ATTACK_TYPE_MAPPING[attackType]?.name === 'Command Execution' ||
+        F5_ATTACK_TYPE_MAPPING[attackType]?.name === 'Server Side Code Injection'
       );
-    }).filter(log => log);
-    
-    return {
-      count: cmdLogs.length,
-      highRisk: highRiskLogs.length,
-      topIPs: this.getTopN(cmdLogEntries, 'clientIP', 10),
-      topTargets: this.getTopN(cmdLogEntries, 'uri', 10),
-      topCountries: this.getTopN(cmdLogEntries, 'clientCountry', 5),
-      affectedAssets: new Set(cmdLogEntries.map(log => log.host || log.fqdn).filter(h => h)).size,
-      // 新增技術指標
-      avgViolationRating: this.calculateAvg(cmdLogEntries, 'violationRating'),
-      avgThreatScore: this.calculateAvg(cmdLogs.map(l => ({ threatScore: l.threatScore })), 'threatScore'),
-      topSignatures: this.getTopSignatures(cmdLogEntries, 3)
-    };
+    }, true);
   }
   
-  // 分析路徑遍歷（增強版）
+  // 分析路徑遍歷（使用 F5_ATTACK_TYPE_MAPPING）
   analyzePathTraversalEnhanced(logEntries, realAttacks) {
-    const pathLogs = realAttacks.filter(result => {
-      const category = result.attackCategory;
-      return category?.type?.toLowerCase().includes('traversal') ||
-             category?.type?.toLowerCase().includes('predictable');
-    });
-    
-    const pathLogEntries = pathLogs.map(result => {
-      return logEntries.find(log => 
-        log.clientIP === result.originalData?.client_ip
+    return this.analyzeAttacksByType(realAttacks, logEntries, (result) => {
+      const attackType = result.originalData?.attack_type;
+      return attackType && (
+        F5_ATTACK_TYPE_MAPPING[attackType]?.name === 'Path Traversal' ||
+        attackType === 'Predictable Resource Location'
       );
-    }).filter(log => log);
-    
-    return {
-      count: pathLogs.length,
-      topIPs: this.getTopN(pathLogEntries, 'clientIP', 10),
-      topTargets: this.getTopN(pathLogEntries, 'uri', 10),
-      affectedAssets: new Set(pathLogEntries.map(log => log.host || log.fqdn).filter(h => h)).size
-    };
+    }, false);
   }
   
-  // 分析機器人流量（增強版）
+  // 分析機器人流量（使用 F5_ATTACK_TYPE_MAPPING）
   analyzeBotTrafficEnhanced(logEntries, realAttacks) {
-    const botLogs = realAttacks.filter(result => {
-      const category = result.violationCategory;
-      return category?.category === 'BOT_ATTACKS' ||
-             (result.attackCategory?.type?.toLowerCase().includes('bot'));
-    });
-    
-    const botLogEntries = botLogs.map(result => {
-      return logEntries.find(log => 
-        log.clientIP === result.originalData?.client_ip
+    return this.analyzeAttacksByType(realAttacks, logEntries, (result) => {
+      const attackType = result.originalData?.attack_type;
+      return attackType && (
+        F5_ATTACK_TYPE_MAPPING[attackType]?.type === 'BOT' ||
+        attackType.toLowerCase().includes('bot')
       );
-    }).filter(log => log);
-    
-    return {
-      count: botLogs.length,
-      topIPs: this.getTopN(botLogEntries, 'clientIP', 10),
-      topCountries: this.getTopN(botLogEntries, 'clientCountry', 5),
-      affectedAssets: new Set(botLogEntries.map(log => log.host || log.fqdn).filter(h => h)).size
-    };
+    }, false);
   }
   
-  // 分析資訊洩漏（增強版）
+  // 分析資訊洩漏（使用 F5_ATTACK_TYPE_MAPPING）
   analyzeInformationLeakageEnhanced(logEntries, realAttacks) {
-    const leakLogs = realAttacks.filter(result => {
-      const category = result.attackCategory;
-      const violationCategory = result.violationCategory;
-      return category?.category === 'INFORMATION_DISCLOSURE' ||
-             violationCategory?.category === 'INFORMATION_DISCLOSURE';
-    });
-    
-    const leakLogEntries = leakLogs.map(result => {
-      return logEntries.find(log => 
-        log.clientIP === result.originalData?.client_ip
+    return this.analyzeAttacksByType(realAttacks, logEntries, (result) => {
+      const attackType = result.originalData?.attack_type;
+      return attackType && (
+        F5_ATTACK_TYPE_MAPPING[attackType]?.name === 'Information Leakage' ||
+        F5_ATTACK_TYPE_MAPPING[attackType]?.type === 'MISCONFIGURATION'
       );
-    }).filter(log => log);
-    
-    return {
-      count: leakLogs.length,
-      topIPs: this.getTopN(leakLogEntries, 'clientIP', 10),
-      topTargets: this.getTopN(leakLogEntries, 'uri', 10),
-      affectedAssets: new Set(leakLogEntries.map(log => log.host || log.fqdn).filter(h => h)).size
-    };
+    }, false);
   }
   
-  // 分析會話攻擊（新增）
+  // 分析會話攻擊（使用 F5_ATTACK_TYPE_MAPPING）
   analyzeSessionAttacksEnhanced(logEntries, realAttacks) {
-    const sessionLogs = realAttacks.filter(result => {
-      const violationCategory = result.violationCategory;
-      return violationCategory?.category === 'SESSION_ATTACKS';
-    });
-    
-    const sessionLogEntries = sessionLogs.map(result => {
-      return logEntries.find(log => 
-        log.clientIP === result.originalData?.client_ip
+    return this.analyzeAttacksByType(realAttacks, logEntries, (result) => {
+      const attackType = result.originalData?.attack_type;
+      return attackType && (
+        F5_ATTACK_TYPE_MAPPING[attackType]?.type === 'AUTHENTICATION' ||
+        attackType === 'Brute Force' ||
+        attackType === 'Session Hijacking' ||
+        attackType === 'Credential Stuffing'
       );
-    }).filter(log => log);
-    
-    return {
-      count: sessionLogs.length,
-      highRisk: sessionLogs.filter(r => r.severity === 'critical' || r.severity === 'high').length,
-      topIPs: this.getTopN(sessionLogEntries, 'clientIP', 10),
-      topCountries: this.getTopN(sessionLogEntries, 'clientCountry', 5),
-      affectedAssets: new Set(sessionLogEntries.map(log => log.host || log.fqdn).filter(h => h)).size
-    };
+    }, true);
   }
   
-  // 分析其他攻擊（新增）
+  // 分析其他攻擊（不在已知分類中的攻擊）
   analyzeOtherAttacksEnhanced(logEntries, realAttacks) {
-    const knownCategories = [
-      'INJECTION_ATTACKS', 'INFORMATION_DISCLOSURE', 'SESSION_ATTACKS', 
-      'BOT_ATTACKS', 'CRITICAL_ATTACKS'
+    const knownAttackTypes = [
+      'SQL Injection', 'XSS', 'Cross-Site Scripting', 'Command Execution',
+      'Path Traversal', 'Predictable Resource Location', 'Information Leakage',
+      'Brute Force', 'Session Hijacking', 'Credential Stuffing', 'Server Side Code Injection'
     ];
     
-    const otherLogs = realAttacks.filter(result => {
-      const category = result.attackCategory?.category;
-      const violationCategory = result.violationCategory?.category;
-      return !knownCategories.includes(category) && 
-             !knownCategories.includes(violationCategory);
-    });
-    
-    const otherLogEntries = otherLogs.map(result => {
-      return logEntries.find(log => 
-        log.clientIP === result.originalData?.client_ip
+    return this.analyzeAttacksByType(realAttacks, logEntries, (result) => {
+      const attackType = result.originalData?.attack_type;
+      if (!attackType) return false;
+      
+      // 檢查是否為已知類型
+      const isKnownType = knownAttackTypes.some(known => 
+        attackType === known || attackType.toLowerCase().includes(known.toLowerCase())
       );
-    }).filter(log => log);
-    
-    return {
-      count: otherLogs.length,
-      topIPs: this.getTopN(otherLogEntries, 'clientIP', 10),
-      topCountries: this.getTopN(otherLogEntries, 'clientCountry', 5),
-      affectedAssets: new Set(otherLogEntries.map(log => log.host || log.fqdn).filter(h => h)).size
-    };
+      
+      // 檢查是否為 Bot 類型
+      const isBotType = F5_ATTACK_TYPE_MAPPING[attackType]?.type === 'BOT' || 
+                        attackType.toLowerCase().includes('bot');
+      
+      return !isKnownType && !isBotType;
+    }, false);
   }
   
   // 分析地理分佈
@@ -729,6 +675,10 @@ ${index + 1}. **${type}**
    - 檢測次數: ${data.count}
    ${data.highRisk !== undefined ? `- 高風險 (critical/high): ${data.highRisk}` : ''}
    - 受影響資產: ${data.affectedAssets}
+   ${data.avgViolationRating !== undefined && data.avgViolationRating !== 'N/A' ? `- 平均違規評分 (violation_rating): ${data.avgViolationRating}` : ''}
+   ${data.avgThreatScore !== undefined && data.avgThreatScore !== 'N/A' ? `- 平均威脅分數: ${data.avgThreatScore}` : ''}
+   ${data.topSignatures && data.topSignatures.length > 0 ? `- 觸發簽章 (sig_ids): ${data.topSignatures.map(s => `${s.signature} (${s.count}次)`).join(', ')}` : ''}
+   ${data.blockedCount !== undefined ? `- WAF 處理狀態: blocked=${data.blockedCount}次, passed=${data.passedCount}次, alerted=${data.alertedCount}次` : ''}
    - Top 5 來源IP: ${data.topIPs ? data.topIPs.slice(0, 5).map(ip => `${ip.item} (${ip.count}次)`).join(', ') : '無'}
    - Top 5 來源國家: ${data.topCountries ? data.topCountries.map(c => `${c.item} (${c.count}次)`).join(', ') : '無'}
    ${data.topTargets ? `- Top 5 攻擊目標: ${data.topTargets.slice(0, 5).map(t => `${t.item} (${t.count}次)`).join(', ')}` : ''}
@@ -769,9 +719,12 @@ ${index + 1}. **${type}**
 - ThreatLevel === 'High' → 確定攻擊
 - 嚴重違規類型 → 確定攻擊
 
-**Level 2 - 綜合評分**
-- violation_rating >= 70 → 高風險攻擊
-- violation_rating >= 50 → 中風險攻擊
+**Level 2 - 綜合評分**（violation_rating 閾值）
+- violation_rating >= ${F5_VIOLATION_RATING_THRESHOLDS.CRITICAL} → 嚴重威脅 (Critical)
+- violation_rating >= ${F5_VIOLATION_RATING_THRESHOLDS.HIGH} → 高風險攻擊 (High)
+- violation_rating >= ${F5_VIOLATION_RATING_THRESHOLDS.MEDIUM} → 中風險 (Medium)
+- violation_rating >= ${F5_VIOLATION_RATING_THRESHOLDS.LOW} → 低風險 (Low)
+- violation_rating < ${F5_VIOLATION_RATING_THRESHOLDS.LOW} → 安全範圍
 
 **Level 3 - 攻擊類型匹配**
 - 有明確的 attack_type → 高信心攻擊
@@ -787,6 +740,8 @@ ${index + 1}. **${type}**
 - 51-70: 中風險 (Medium)
 - 71-85: 低風險 (Low)
 - 86-100: 正常流量 (Clean)
+
+⚠️ **重要提示**：以上閾值來自 f5Standards.js，描述攻擊時請使用【攻擊統計】中的實際數值，而非假設閾值。
 
 ---
 
@@ -825,18 +780,32 @@ ${attackStatisticsText}
       "description": "詳細描述（200-300字），必須包含多層次判斷結果",
       "aiInsight": "AI 深度分析（150-250字），必須包含以下內容：
         1. 具體檢測數字（攻擊總次數、高風險次數）和時間範圍
-        2. F5 多層次判斷模型的分析結果（Level 1: 基於 violation_rating 和 sig_ids 的判斷、Level 2: 威脅評分、Level 3: 攻擊類型匹配、Level 4: 行為模式分析）
-        3. F5 特定技術指標（violation_rating 評分範圍、threat_level、觸發的 sig_ids 簽章編號）
+        2. F5 多層次判斷模型的分析結果（Level 1-4）
+        3. F5 特定技術指標（若【攻擊統計】中有 violation_rating 和 sig_ids 數據，則使用；若無則改用多層次判斷模型描述）
         4. 主要攻擊來源（Top 3 國家及其攻擊次數、Top 3 IP 及其攻擊次數）
         5. 主要攻擊目標（Top 3 URL 及其被攻擊次數）
         6. 攻擊特徵分析（使用的攻擊向量、payload 特徵、OWASP 分類）
-        7. 具體建議（基於多層次判斷結果的 F5 Advanced WAF 防護措施，包含簽章集編號、閾值設定等）
+        7. 具體建議（基於多層次判斷結果的 F5 Advanced WAF 防護措施）
         
-        範例格式參考：
-        在 [開始時間] 至 [結束時間] 期間，F5 Advanced WAF 多層次判斷模型檢測到 [總次數] 次 [攻擊類型] 攻擊嘗試，其中 [高風險次數] 次被 Level 1 判定為高風險（violation_rating ≥ [閾值]，觸發簽章 [簽章ID]）。Level 2 評分顯示平均威脅分數為 [分數]。Level 3 確認為 [攻擊類型]（OWASP [分類]）。主要攻擊來自 [國家1]（[次數1] 次，IP [實際IP1]）、[國家2]（[次數2] 次，IP [實際IP2]）、[國家3]（[次數3] 次，IP [實際IP3]）。攻擊目標集中於 [URL1]（[次數1] 次）、[URL2]（[次數2] 次）。共影響 [資產數] 個資產。建議 [具體的 F5 WAF 防護措施，包含簽章集編號和閾值設定]。
+        ⚠️ **aiInsight 寫作範例**（使用實際數據填充）：
         
-        ⚠️ **關鍵要求**：
-        - 必須使用上方【攻擊統計】和【地理與資產分析】中的真實數據
+        在 [實際開始時間] 至 [實際結束時間] 期間，F5 Advanced WAF 多層次判斷模型檢測到 [總次數] 次 [攻擊類型] 攻擊嘗試。
+        
+        【若攻擊統計中有 violation_rating 數據】則寫：
+        平均 violation_rating 為 [實際平均值]，其中 [高風險次數] 次為高風險攻擊。
+        
+        【若攻擊統計中有簽章數據】則寫：
+        觸發簽章 [實際簽章ID及次數]。
+        
+        【若攻擊統計中無上述數據】則改用：
+        根據 F5 多層次判斷模型（Level 1: 確定性指標、Level 2: 綜合評分、Level 3: 攻擊類型匹配、Level 4: 行為模式分析）確認為真實攻擊。
+        
+        Level 3 攻擊類型匹配確認為 [攻擊類型]（OWASP [分類]）。主要攻擊來自 [國家1]（[次數1] 次，IP [實際IP1]）、[國家2]（[次數2] 次，IP [實際IP2]）。攻擊目標集中於 [URL1]（[次數1] 次）、[URL2]（[次數2] 次）。共影響 [資產數] 個資產。建議 [具體的 F5 WAF 防護措施]。
+        
+        ⚠️ **絕對禁止編造資料**：
+        - 所有數字、IP、簽章ID、violation_rating 必須來自上方【攻擊統計】
+        - 如果【攻擊統計】中沒有「觸發簽章」資料，請勿編造"觸發簽章 12345、67890"等內容
+        - 如果【攻擊統計】中沒有「平均違規評分」，請改用「Level 1-4 判斷模型確認」的描述方式
         - 禁止使用測試 IP（如 1.2.3.4、5.6.7.8、192.168.x.x、10.0.x.x 等）
         - IP 地址必須與【地理與資產分析】中列出的完全一致
         - 國家、URL、攻擊次數都必須使用真實統計數據",
@@ -868,16 +837,22 @@ ${attackStatisticsText}
 4. ⚠️ **CVE 編號規則**：將 cveId 設為 null
 5. ⚠️ **多層次判斷**：description 中必須說明判斷依據（Level 1-4）
 6. 每個風險至少提供 2-3 個具體建議
-7. ⚠️ **aiInsight 必須包含**：
+7. ⚠️ **aiInsight 寫作要求**：
    - 具體數字（攻擊總次數、高風險次數、受影響資產數）
    - F5 多層次判斷模型的 Level 1-4 分析結果
-   - F5 技術指標（violation_rating、threat_level、sig_ids）
+   - 若【攻擊統計】中有 violation_rating 或 sig_ids，則使用實際數值；若無則改用「多層次判斷模型確認」描述
    - Top 3 來源國家、Top 3 IP、Top 3 目標 URL（包含次數）
    - **IP 地址必須使用【地理與資產分析】中列出的真實 IP，嚴格禁止使用 1.2.3.4、5.6.7.8、192.168.x.x、10.0.x.x 等測試或私有 IP**
    - 攻擊特徵與 OWASP 分類
-   - 基於實際數據的 F5 WAF 具體防護建議（簽章集編號、閾值設定）
+   - 基於實際數據的 F5 WAF 具體防護建議
 8. 如果沒有攻擊，必須輸出空的 risks 陣列
 9. ⚠️ **禁止使用模糊語言**：避免「可能」、「或許」、「建議檢查」等不確定性描述，必須基於實際數據提供明確的分析和建議
+10. ⚠️ **禁止編造任何不存在於【攻擊統計】中的數據**：包括簽章ID、violation_rating閾值、IP地址等
+11. ⚠️ **根據 request_status 動態調整建議**：
+    - 如果攻擊全部被阻擋（blocked）→ 說明防護規則已生效，建議應為「防護規則已生效，持續監控攻擊趨勢，觀察阻擋量是否上升」
+    - 如果攻擊大部分被阻擋（80%以上）→ 建議「強化防護規則以減少通過率，持續監控已阻擋攻擊」
+    - 如果攻擊大部分未被阻擋 → 建議「立即啟用防護規則，緊急封鎖攻擊來源」
+    - **禁止在攻擊已被阻擋的情況下，建議「立即啟用」防護規則，這是邏輯矛盾**
 
 ---
 
@@ -887,56 +862,152 @@ ${attackStatisticsText}
     return promptTemplate.trim();
   }
   
+  /**
+   * 根據 request_status 生成動態建議
+   * @param {Object} attackData - 攻擊統計資料
+   * @param {string} attackType - 攻擊類型
+   * @param {string} signatureSet - F5 簽章集編號
+   * @returns {Object} 包含 aiInsight 和 recommendations 的物件
+   */
+  generateDynamicRecommendations(attackData, attackType, signatureSet = '') {
+    const { blockedCount, passedCount, alertedCount, count } = attackData;
+    const mostlyBlocked = blockedCount / count >= 0.8; // 80% 以上被阻擋
+    const allBlocked = blockedCount === count; // 全部被阻擋
+    
+    let protectionStatus = '';
+    let recommendations = [];
+    
+    if (allBlocked) {
+      // 全部被阻擋
+      protectionStatus = `根據 F5 多層次判斷模型（Level 1: request_status = blocked）確認為已阻擋的攻擊`;
+      recommendations = [
+        {
+          title: '防護規則已生效 - 持續監控',
+          description: `F5 Advanced WAF 已成功阻擋所有 ${count} 次 ${attackType} 攻擊嘗試，防護規則運作正常。建議持續監控攻擊趨勢，觀察阻擋量是否上升`,
+          priority: 'medium'
+        },
+        {
+          title: '分析攻擊模式',
+          description: `檢視被阻擋的 ${attackType} 攻擊手法與來源，評估是否為組織性攻擊或隨機掃描，必要時可調整防護策略`,
+          priority: 'low'
+        }
+      ];
+    } else if (mostlyBlocked) {
+      // 大部分被阻擋
+      protectionStatus = `根據 F5 多層次判斷模型確認為 ${attackType} 攻擊嘗試，其中 ${blockedCount} 次已被阻擋，${passedCount} 次通過，${alertedCount} 次觸發告警`;
+      recommendations = [
+        {
+          title: '強化防護規則 - 減少通過率',
+          description: `目前仍有 ${passedCount} 次 ${attackType} 攻擊通過防護，建議${signatureSet ? `啟用或強化 F5 Advanced WAF 的 ${signatureSet}，` : ''}調整閾值設定以提高阻擋率`,
+          priority: 'high'
+        },
+        {
+          title: '持續監控已阻擋攻擊',
+          description: `F5 Advanced WAF 已成功阻擋 ${blockedCount} 次攻擊，建議持續觀察阻擋量是否上升`,
+          priority: 'medium'
+        }
+      ];
+    } else {
+      // 大部分未被阻擋
+      protectionStatus = `根據 F5 多層次判斷模型確認為 ${attackType} 攻擊嘗試，但僅 ${blockedCount} 次被阻擋，${passedCount} 次通過，${alertedCount} 次觸發告警`;
+      recommendations = [
+        {
+          title: `立即啟用 ${attackType} 防護規則`,
+          description: `⚠️ 緊急：目前有 ${passedCount} 次 ${attackType} 攻擊通過防護，建議${signatureSet ? `立即啟用 F5 Advanced WAF 的 ${signatureSet}，` : ''}並將防護模式設定為阻擋（Blocking）`,
+          priority: 'high'
+        },
+        {
+          title: '緊急封鎖攻擊來源',
+          description: `立即在 F5 WAF 中封鎖主要攻擊來源 IP，防止進一步攻擊`,
+          priority: 'high'
+        }
+      ];
+    }
+    
+    return { protectionStatus, recommendations };
+  }
+  
   // 生成 Fallback 風險資料（AI 解析失敗時使用）
   generateFallbackRisks(analysisData) {
     const risks = [];
-    const { sqlInjection, xssAttacks, commandExecution, botTraffic, sessionAttacks, timeRange } = analysisData;
+    const { 
+      sqlInjection, 
+      xssAttacks, 
+      commandExecution, 
+      pathTraversal,
+      botTraffic, 
+      informationLeakage,
+      sessionAttacks, 
+      otherAttacks,
+      timeRange 
+    } = analysisData;
     
     if (sqlInjection.count > 0) {
       const topCountry = sqlInjection.topCountries?.[0];
       const topIP = sqlInjection.topIPs?.[0];
       const topTarget = sqlInjection.topTargets?.[0];
       
+      // 根據 highRisk 比例動態判定 severity
+      const highRiskRatio = sqlInjection.highRisk / sqlInjection.count;
+      const severity = highRiskRatio > 0.5 ? 'critical' : 'high';
+      
+      // 構建技術指標描述
+      let technicalDetails = '';
+      if (sqlInjection.avgViolationRating && sqlInjection.avgViolationRating !== 'N/A') {
+        technicalDetails = `平均 violation_rating 為 ${sqlInjection.avgViolationRating}。`;
+      }
+      if (sqlInjection.topSignatures && sqlInjection.topSignatures.length > 0) {
+        technicalDetails += `觸發簽章：${sqlInjection.topSignatures.map(s => `${s.signature} (${s.count}次)`).join('、')}。`;
+      }
+      if (!technicalDetails) {
+        technicalDetails = '根據 F5 多層次判斷模型（Level 1-4）確認為真實攻擊。';
+      }
+      
+      // 使用動態建議生成器
+      const { protectionStatus, recommendations: dynamicRecommendations } = this.generateDynamicRecommendations(
+        sqlInjection,
+        'SQL 注入',
+        'SQL 注入防護簽章（Signature Set 200010000 系列）'
+      );
+      
+      // 構建基本建議（封鎖 IP、輸入驗證、閾值調整）
+      const basicRecommendations = [
+        {
+          title: topIP?.item ? `封鎖來源 IP ${topIP.item}` : '封鎖攻擊來源 IP',
+          description: topIP?.item 
+            ? `立即在 F5 WAF 的 IP Address Exceptions 中封鎖 ${topIP.item}，該 IP 已發起 ${topIP.count} 次 SQL 注入攻擊` 
+            : '立即在 F5 WAF 中封鎖攻擊來源 IP',
+          priority: 'high'
+        },
+        {
+          title: '強化輸入驗證與參數檢查',
+          description: '對所有 SQL 查詢相關的輸入參數實施嚴格的資料類型檢查、長度限制和正則表達式驗證，並使用參數化查詢防止 SQL 注入',
+          priority: 'medium'
+        },
+        {
+          title: '調整違規評分閾值',
+          description: `根據多層次判斷結果，建議將 violation_rating 閾值設定為 ${F5_VIOLATION_RATING_THRESHOLDS.MEDIUM} 以上進行阻擋，以優化防護策略`,
+          priority: 'medium'
+        }
+      ];
+      
       risks.push({
         id: `sql-injection-${Date.now()}`,
         title: 'SQL 注入攻擊檢測（多層次判斷）',
-        severity: sqlInjection.highRisk > 50 ? 'critical' : 'high',
+        severity: severity,
         openIssues: sqlInjection.count,
         resolvedIssues: 0,
         affectedAssets: sqlInjection.affectedAssets,
         tags: ['Internet Exposed', 'High Volume', 'F5 多層次判斷'],
         description: `F5 Advanced WAF 多層次判斷模型檢測到 ${sqlInjection.count} 次 SQL 注入攻擊嘗試，其中 ${sqlInjection.highRisk} 次為高風險攻擊。`,
-        aiInsight: `在分析時間範圍內，F5 Advanced WAF 多層次判斷模型檢測到 ${sqlInjection.count} 次 SQL 注入攻擊嘗試，其中 ${sqlInjection.highRisk} 次被 Level 1 判定為高風險攻擊（violation_rating ≥ 70，且觸發 F5 攻擊簽章）。根據 Level 2 威脅評分機制，這些攻擊展現出明顯的惡意特徵。Level 3 攻擊類型匹配確認為 SQL Injection（OWASP A03:2021），攻擊手法包含 UNION 查詢、時間延遲注入等技術。主要攻擊來自 ${topCountry?.item || '未知地區'}（${topCountry?.count || 0} 次），Top 攻擊 IP 為 ${topIP?.item || '未知'}（${topIP?.count || 0} 次）。攻擊目標集中於 ${topTarget?.item || '多個端點'}（${topTarget?.count || 0} 次）。共影響 ${sqlInjection.affectedAssets} 個資產。建議立即啟用 F5 Advanced WAF 的 SQL 注入防護簽章（Signature Set 200010000 系列），將 violation_rating 閾值設定為 50 以上自動阻擋，並啟用學習模式以優化防護規則。`,
+        aiInsight: `在分析時間範圍內，F5 Advanced WAF 多層次判斷模型檢測到 ${sqlInjection.count} 次 SQL 注入攻擊嘗試，其中 ${sqlInjection.highRisk} 次為高風險攻擊。${technicalDetails} ${protectionStatus}。Level 3 攻擊類型匹配確認為 SQL Injection（OWASP A03:2021），攻擊手法包含 UNION 查詢、時間延遲注入等技術。主要攻擊來自 ${topCountry?.item || '未知地區'}（${topCountry?.count || 0} 次），Top 攻擊 IP 為 ${topIP?.item || '未知'}（${topIP?.count || 0} 次）。攻擊目標集中於 ${topTarget?.item || '多個端點'}（${topTarget?.count || 0} 次）。共影響 ${sqlInjection.affectedAssets} 個資產。`,
         createdDate: timeRange ? this.formatDateTaipei(timeRange.start) : new Date().toLocaleDateString('zh-TW'),
         updatedDate: timeRange ? this.formatDateTaipei(timeRange.end) : new Date().toLocaleDateString('zh-TW'),
         exploitInWild: false,
         internetExposed: true,
         confirmedExploitable: false,
         cveId: null,
-        recommendations: [
-          {
-            title: topIP?.item ? `封鎖來源 IP ${topIP.item}` : '封鎖攻擊來源 IP',
-            description: topIP?.item 
-              ? `立即在 F5 WAF 的 IP Address Exceptions 中封鎖 ${topIP.item}，該 IP 已發起 ${topIP.count} 次 SQL 注入攻擊，以阻止進一步的注入嘗試` 
-              : '立即在 F5 WAF 中封鎖攻擊來源 IP，以阻止進一步的注入嘗試',
-            priority: 'high'
-          },
-          {
-            title: '啟用 F5 WAF SQL 注入防護簽章',
-            description: '配置 F5 Advanced WAF 的 SQL 注入攻擊簽章（Signature Set 200010000），並啟用學習模式以減少誤報',
-            priority: 'high'
-          },
-          {
-            title: '強化輸入驗證與參數檢查',
-            description: '對所有 SQL 查詢相關的輸入參數實施嚴格的資料類型檢查、長度限制和正則表達式驗證，並使用參數化查詢防止 SQL 注入',
-            priority: 'medium'
-          },
-          {
-            title: '調整違規評分閾值',
-            description: '根據多層次判斷結果，調整 violation_rating 閾值以優化防護策略',
-            priority: 'medium'
-          }
-        ]
+        recommendations: [...dynamicRecommendations, ...basicRecommendations]
       });
     }
     
@@ -944,6 +1015,18 @@ ${attackStatisticsText}
       const topCountry = xssAttacks.topCountries?.[0];
       const topIP = xssAttacks.topIPs?.[0];
       const topTarget = xssAttacks.topTargets?.[0];
+      
+      // 構建技術指標描述
+      let technicalDetails = '';
+      if (xssAttacks.avgViolationRating && xssAttacks.avgViolationRating !== 'N/A') {
+        technicalDetails = `平均 violation_rating 為 ${xssAttacks.avgViolationRating}。`;
+      }
+      if (xssAttacks.topSignatures && xssAttacks.topSignatures.length > 0) {
+        technicalDetails += `觸發簽章：${xssAttacks.topSignatures.map(s => `${s.signature} (${s.count}次)`).join('、')}。`;
+      }
+      if (!technicalDetails) {
+        technicalDetails = '根據 F5 多層次判斷模型確認為真實攻擊。';
+      }
       
       risks.push({
         id: `xss-attack-${Date.now()}`,
@@ -954,7 +1037,7 @@ ${attackStatisticsText}
         affectedAssets: xssAttacks.affectedAssets,
         tags: ['Internet Exposed', 'F5 多層次判斷'],
         description: `F5 Advanced WAF 檢測到 ${xssAttacks.count} 次 XSS 攻擊嘗試。`,
-        aiInsight: `在分析時間範圍內，F5 Advanced WAF 多層次判斷模型檢測到 ${xssAttacks.count} 次 XSS（跨站腳本）攻擊嘗試，其中 ${xssAttacks.highRisk} 次被判定為高風險攻擊。Level 1 判斷顯示這些攻擊觸發了 F5 XSS 防護簽章，violation_rating 評分達到警戒水平。Level 3 攻擊類型匹配確認為 Cross-Site Scripting（OWASP A03:2021），攻擊手法包含 <script> 標籤注入、事件處理器注入（如 onerror、onload）等。主要攻擊來自 ${topCountry?.item || '未知地區'}（${topCountry?.count || 0} 次），Top 攻擊 IP 為 ${topIP?.item || '未知'}（${topIP?.count || 0} 次）。攻擊目標為 ${topTarget?.item || '多個端點'}（${topTarget?.count || 0} 次）。共影響 ${xssAttacks.affectedAssets} 個資產。建議立即啟用 F5 Advanced WAF 的 XSS 防護規則並配置內容安全策略（CSP），同時檢查受影響端點的輸入驗證與輸出編碼機制。`,
+        aiInsight: `在分析時間範圍內，F5 Advanced WAF 多層次判斷模型檢測到 ${xssAttacks.count} 次 XSS（跨站腳本）攻擊嘗試，其中 ${xssAttacks.highRisk} 次被判定為高風險攻擊。${technicalDetails} Level 3 攻擊類型匹配確認為 Cross-Site Scripting（OWASP A03:2021），攻擊手法包含 <script> 標籤注入、事件處理器注入（如 onerror、onload）等。主要攻擊來自 ${topCountry?.item || '未知地區'}（${topCountry?.count || 0} 次），Top 攻擊 IP 為 ${topIP?.item || '未知'}（${topIP?.count || 0} 次）。攻擊目標為 ${topTarget?.item || '多個端點'}（${topTarget?.count || 0} 次）。共影響 ${xssAttacks.affectedAssets} 個資產。建議立即啟用 F5 Advanced WAF 的 XSS 防護規則並配置內容安全策略（CSP），同時檢查受影響端點的輸入驗證與輸出編碼機制。`,
         createdDate: timeRange ? this.formatDateTaipei(timeRange.start) : new Date().toLocaleDateString('zh-TW'),
         updatedDate: timeRange ? this.formatDateTaipei(timeRange.end) : new Date().toLocaleDateString('zh-TW'),
         exploitInWild: false,
@@ -988,6 +1071,21 @@ ${attackStatisticsText}
       const topIP = commandExecution.topIPs?.[0];
       const topTarget = commandExecution.topTargets?.[0];
       
+      // 構建技術指標描述
+      let technicalDetails = '';
+      if (commandExecution.avgViolationRating && commandExecution.avgViolationRating !== 'N/A') {
+        const avgRating = parseFloat(commandExecution.avgViolationRating);
+        const ratingLevel = avgRating >= F5_VIOLATION_RATING_THRESHOLDS.CRITICAL ? 'Critical' : 
+                           avgRating >= F5_VIOLATION_RATING_THRESHOLDS.HIGH ? 'High' : 'Medium';
+        technicalDetails = `平均 violation_rating 為 ${commandExecution.avgViolationRating}（${ratingLevel} 等級）。`;
+      }
+      if (commandExecution.topSignatures && commandExecution.topSignatures.length > 0) {
+        technicalDetails += `觸發簽章：${commandExecution.topSignatures.map(s => `${s.signature} (${s.count}次)`).join('、')}。`;
+      }
+      if (!technicalDetails) {
+        technicalDetails = '根據 F5 多層次判斷模型確認為極高風險攻擊。';
+      }
+      
       risks.push({
         id: `rce-attack-${Date.now()}`,
         title: '命令執行攻擊檢測',
@@ -997,7 +1095,7 @@ ${attackStatisticsText}
         affectedAssets: commandExecution.affectedAssets,
         tags: ['Critical', 'Internet Exposed', 'F5 多層次判斷'],
         description: `F5 Advanced WAF 檢測到 ${commandExecution.count} 次命令執行攻擊嘗試。`,
-        aiInsight: `⚠️ 嚴重警告：在分析時間範圍內，F5 Advanced WAF 多層次判斷模型檢測到 ${commandExecution.count} 次遠程命令執行（RCE）攻擊嘗試，其中 ${commandExecution.highRisk} 次為極高風險攻擊。Level 1 判斷顯示所有攻擊均觸發了 F5 命令執行防護簽章，violation_rating 評分達到 Critical 等級（≥ 90）。Level 2 威脅評分顯示這些攻擊具有明確的惡意意圖和高度危害性。Level 3 攻擊類型匹配確認為 Remote Command Execution / Code Injection（OWASP A03:2021），攻擊手法包含 Shell 命令注入、系統命令執行等技術。主要攻擊來自 ${topCountry?.item || '未知地區'}（${topCountry?.count || 0} 次），Top 攻擊 IP 為 ${topIP?.item || '未知'}（${topIP?.count || 0} 次），攻擊目標為 ${topTarget?.item || '多個端點'}（${topTarget?.count || 0} 次）。共影響 ${commandExecution.affectedAssets} 個資產。此類攻擊已被確認在野外利用，建議立即阻擋來源 IP、啟用 F5 Advanced WAF 的命令執行防護簽章（Signature Set 200020000 系列），並緊急檢查受影響端點的代碼執行邏輯。`,
+        aiInsight: `⚠️ 嚴重警告：在分析時間範圍內，F5 Advanced WAF 多層次判斷模型檢測到 ${commandExecution.count} 次遠程命令執行（RCE）攻擊嘗試，其中 ${commandExecution.highRisk} 次為極高風險攻擊。${technicalDetails} Level 3 攻擊類型匹配確認為 Remote Command Execution / Code Injection（OWASP A03:2021），攻擊手法包含 Shell 命令注入、系統命令執行等技術。主要攻擊來自 ${topCountry?.item || '未知地區'}（${topCountry?.count || 0} 次），Top 攻擊 IP 為 ${topIP?.item || '未知'}（${topIP?.count || 0} 次），攻擊目標為 ${topTarget?.item || '多個端點'}（${topTarget?.count || 0} 次）。共影響 ${commandExecution.affectedAssets} 個資產。此類攻擊已被確認在野外利用，建議立即阻擋來源 IP、啟用 F5 Advanced WAF 的命令執行防護簽章（Signature Set 200020000 系列），並緊急檢查受影響端點的代碼執行邏輯。`,
         createdDate: timeRange ? this.formatDateTaipei(timeRange.start) : new Date().toLocaleDateString('zh-TW'),
         updatedDate: timeRange ? this.formatDateTaipei(timeRange.end) : new Date().toLocaleDateString('zh-TW'),
         exploitInWild: true,
@@ -1028,6 +1126,72 @@ ${attackStatisticsText}
             priority: 'high'
           }
         ]
+      });
+    }
+    
+    // 資訊洩漏攻擊處理
+    if (informationLeakage && informationLeakage.count > 0) {
+      const topCountry = informationLeakage.topCountries?.[0];
+      const topIP = informationLeakage.topIPs?.[0];
+      const topTarget = informationLeakage.topTargets?.[0];
+      
+      // 構建技術指標描述
+      let technicalDetails = '';
+      if (informationLeakage.avgViolationRating && informationLeakage.avgViolationRating !== 'N/A') {
+        technicalDetails = `平均 violation_rating 為 ${informationLeakage.avgViolationRating}。`;
+      }
+      if (informationLeakage.topSignatures && informationLeakage.topSignatures.length > 0) {
+        technicalDetails += `觸發簽章：${informationLeakage.topSignatures.map(s => `${s.signature} (${s.count}次)`).join('、')}。`;
+      }
+      if (!technicalDetails) {
+        technicalDetails = '根據 F5 多層次判斷模型確認為資訊洩漏風險。';
+      }
+      
+      // 使用動態建議生成器
+      const { protectionStatus, recommendations: dynamicRecommendations } = this.generateDynamicRecommendations(
+        informationLeakage,
+        '資訊洩漏',
+        '資訊洩漏防護規則'
+      );
+      
+      // 構建基本建議
+      const basicRecommendations = [
+        {
+          title: topIP?.item ? `封鎖來源 IP ${topIP.item}` : '封鎖攻擊來源 IP',
+          description: topIP?.item 
+            ? `在 F5 WAF 中封鎖 ${topIP.item}，該 IP 已發起 ${topIP.count} 次資訊洩漏攻擊` 
+            : '在 F5 WAF 中封鎖攻擊來源 IP',
+          priority: 'medium'
+        },
+        {
+          title: '檢查受影響端點的回應處理機制',
+          description: '檢視受影響端點的錯誤處理、調試資訊、系統配置是否外洩，確保敏感資訊不會暴露於回應中',
+          priority: 'high'
+        },
+        {
+          title: '配置自訂錯誤頁面',
+          description: '在 F5 WAF 中配置自訂錯誤頁面，隱藏服務器版本、技術棧等敏感資訊',
+          priority: 'medium'
+        }
+      ];
+      
+      risks.push({
+        id: `info-leakage-${Date.now()}`,
+        title: '資訊洩漏攻擊檢測',
+        severity: 'medium',
+        openIssues: informationLeakage.count,
+        resolvedIssues: 0,
+        affectedAssets: informationLeakage.affectedAssets,
+        tags: ['Internet Exposed', 'F5 多層次判斷'],
+        description: `F5 Advanced WAF 檢測到 ${informationLeakage.count} 次資訊洩漏攻擊嘗試。`,
+        aiInsight: `在分析時間範圍內，F5 Advanced WAF 多層次判斷模型檢測到 ${informationLeakage.count} 次資訊洩漏攻擊嘗試。${technicalDetails} ${protectionStatus}。主要攻擊來自 ${topCountry?.item || '未知地區'}（${topCountry?.count || 0} 次），Top 攻擊 IP 為 ${topIP?.item || '未知'}（${topIP?.count || 0} 次）。攻擊目標集中於 ${topTarget?.item || '多個端點'}（${topTarget?.count || 0} 次）。共影響 ${informationLeakage.affectedAssets} 個資產。`,
+        createdDate: timeRange ? this.formatDateTaipei(timeRange.start) : new Date().toLocaleDateString('zh-TW'),
+        updatedDate: timeRange ? this.formatDateTaipei(timeRange.end) : new Date().toLocaleDateString('zh-TW'),
+        exploitInWild: false,
+        internetExposed: true,
+        confirmedExploitable: false,
+        cveId: null,
+        recommendations: [...dynamicRecommendations, ...basicRecommendations]
       });
     }
     

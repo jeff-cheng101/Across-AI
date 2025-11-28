@@ -120,18 +120,20 @@ const F5_REQUEST_STATUS_MAPPING = {
 
 /**
  * F5 violation_rating 違規評分閾值
+ * 基於實際 F5 日誌分析，violation_rating 範圍為 0-5
  * 數值越大表示威脅越高
  */
 const F5_VIOLATION_RATING_THRESHOLDS = {
-  CRITICAL: 90,  // 90-100: 嚴重威脅，必須阻擋
-  HIGH: 70,      // 70-89: 高風險攻擊
-  MEDIUM: 50,    // 50-69: 中風險
-  LOW: 30,       // 30-49: 低風險
-  SAFE: 0        // 0-29: 安全或無違規
+  CRITICAL: 5,   // 5: 嚴重威脅，必須阻擋
+  HIGH: 4,       // 4: 高風險攻擊
+  MEDIUM: 3,     // 3: 中風險
+  LOW: 2,        // 2: 低風險
+  SAFE: 0        // 0-1: 安全範圍或低違規
 };
 
 /**
  * 根據 violation_rating 分類威脅等級
+ * F5 violation_rating 範圍: 0-5
  */
 function classifyViolationRating(rating) {
   const score = parseFloat(rating);
@@ -150,7 +152,7 @@ function classifyViolationRating(rating) {
       severity: 'critical',
       displayName: '嚴重威脅',
       isThreat: true,
-      reason: `violation_rating = ${score} (≥ 90)，嚴重威脅`
+      reason: `violation_rating = ${score} (= 5)，嚴重威脅`
     };
   }
   
@@ -159,25 +161,25 @@ function classifyViolationRating(rating) {
       severity: 'high',
       displayName: '高風險',
       isThreat: true,
-      reason: `violation_rating = ${score} (≥ 70)，高風險攻擊`
+      reason: `violation_rating = ${score} (= 4)，高風險攻擊`
     };
   }
   
   if (score >= F5_VIOLATION_RATING_THRESHOLDS.MEDIUM) {
     return {
-    severity: 'medium',
+      severity: 'medium',
       displayName: '中風險',
       isThreat: true,
-      reason: `violation_rating = ${score} (≥ 50)，中風險`
+      reason: `violation_rating = ${score} (= 3)，中風險`
     };
   }
   
   if (score >= F5_VIOLATION_RATING_THRESHOLDS.LOW) {
     return {
-    severity: 'low',
+      severity: 'low',
       displayName: '低風險',
       isThreat: true,
-      reason: `violation_rating = ${score} (≥ 30)，低風險`
+      reason: `violation_rating = ${score} (= 2)，低風險`
     };
   }
   
@@ -185,7 +187,7 @@ function classifyViolationRating(rating) {
     severity: 'info',
     displayName: '安全範圍',
     isThreat: false,
-    reason: `violation_rating = ${score} (< 30)，安全範圍`
+    reason: `violation_rating = ${score} (= 1 或 0)，安全範圍`
   };
 }
 
