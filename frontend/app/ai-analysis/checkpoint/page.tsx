@@ -273,6 +273,131 @@ export default function CheckpointAIAnalysisPage() {
       ? `${format(customDateRange.start!, 'yyyy-MM-dd HH:mm')} 至 ${format(customDateRange.end!, 'yyyy-MM-dd HH:mm')}`
       : getTimeRangeLabel(selectedTimeRange)
     
+    // 寫入AI分析紀錄
+    const affectedRisk = wafRisks.find((r) => r.id === selectedAction?.issueId)
+    console.log(affectedRisk)
+    const openIssuesBefore = totalOpenIssues
+    const resolvedIssuesBefore = totalResolvedIssues
+    const issuesResolvedCount = Math.floor((affectedRisk?.openIssues || 0) * 0.35)
+    const openIssuesAfter = openIssuesBefore - issuesResolvedCount
+    const resolvedIssuesAfter = resolvedIssuesBefore + issuesResolvedCount
+    const riskLevel: "high" | "medium" | "low" =
+    affectedRisk?.severity === "critical" || affectedRisk?.severity === "high"
+      ? "high"
+      : affectedRisk?.severity === "medium"
+        ? "medium"
+        : "low"
+
+    const generateProtectionMethod = (actionTitle: string): string => {
+      if (actionTitle.includes("Threat Prevention") || actionTitle.includes("威脅防護")) return "Threat Prevention"
+      if (actionTitle.includes("SandBlast") || actionTitle.includes("沙箱")) return "SandBlast Zero-Day"
+      if (actionTitle.includes("IPS") || actionTitle.includes("簽名")) return "IPS 防護"
+      if (actionTitle.includes("Anti-Ransomware")) return "Anti-Ransomware"
+      if (actionTitle.includes("Anti-Bot")) return "Anti-Bot"
+      if (actionTitle.includes("Anti-Phishing")) return "Anti-Phishing"
+      if (actionTitle.includes("DLP")) return "Data Loss Prevention"
+      return "Check Point Security Policy"
+    }
+  
+    const generateResolvedIssues = (count: number, issueType: string) => {
+      const templates = [
+        { endpoint: "/api/enterprise/data", ratio: 0.4 },
+        { endpoint: "/api/financial/transactions", ratio: 0.35 },
+        { endpoint: "/api/user/authentication", ratio: 0.25 },
+      ]
+      return templates.map((t) => ({
+        endpoint: t.endpoint,
+        count: Math.floor(count * t.ratio),
+        description: `已成功防禦 ${issueType} 攻擊`,
+      }))
+    }
+  
+    const generateUnresolvedIssues = (count: number) => {
+      const unresolvedCount = Math.floor(count * 0.15)
+      const templates = [
+        {
+          endpoint: "/api/legacy/infrastructure",
+          ratio: 0.55,
+          reason: "需要系統層級修復",
+          recommendation: "更新底層系統並實施進階威脅防護",
+        },
+        {
+          endpoint: "/api/third-party/integration",
+          ratio: 0.45,
+          reason: "第三方服務限制",
+          recommendation: "與第三方供應商協調強化安全措施",
+        },
+      ]
+      return templates.map((t) => ({
+        endpoint: t.endpoint,
+        count: Math.floor(unresolvedCount * t.ratio),
+        reason: t.reason,
+        recommendation: t.recommendation,
+      }))
+    }
+    
+    const historyEntry: ExecutionHistory = {
+      id: `exec-${Date.now()}`,
+      timestamp: new Date(),
+      actionTitle: selectedAction?.title || '',
+      actionType: affectedRisk?.title || '',
+      riskLevel,
+      protectionMethod: generateProtectionMethod(selectedAction?.title || ''),
+      resolvedIssues: generateResolvedIssues(issuesResolvedCount, affectedRisk?.title || ''),
+      unresolvedIssues: generateUnresolvedIssues(issuesResolvedCount),
+      openIssuesBefore,
+      resolvedIssuesBefore,
+      openIssuesAfter,
+      resolvedIssuesAfter,
+      issuesResolved: issuesResolvedCount,
+      status: "success",
+      impactDescription: `成功解決 ${issuesResolvedCount} 個事件，已保護 ${Math.floor((affectedRisk?.affectedAssets || 0) * 0.75)} 個端點`,
+    }
+
+    setExecutionHistory((prev) => ({
+      ...prev,
+      [riskLevel]: [historyEntry, ...prev[riskLevel]],
+    }))
+
+    const actionRecord: ActionRecord = {
+      id: historyEntry.id,
+      timestamp: historyEntry.timestamp,
+      platform: "checkpoint",
+      pageSnapshot: {
+        totalEvents: openIssuesBefore + resolvedIssuesBefore,
+        openIssues: openIssuesBefore,
+        resolvedIssues: resolvedIssuesBefore,
+        affectedAssets: totalAffectedAssets,
+        riskLevel: riskLevel,
+      },
+      action: {
+        title: selectedAction?.title || '',
+        description: selectedAction?.description || '',
+        issueType: affectedRisk?.title || '',
+        protectionMethod: generateProtectionMethod(selectedAction?.title || ''),
+      },
+      results: {
+        resolvedCount: issuesResolvedCount,
+        unresolvedCount: Math.floor(issuesResolvedCount * 0.15),
+        resolvedIssues: historyEntry.resolvedIssues,
+        unresolvedIssues: historyEntry.unresolvedIssues,
+      },
+      beforeState: {
+        openIssues: openIssuesBefore,
+        resolvedIssues: resolvedIssuesBefore,
+      },
+      afterState: {
+        openIssues: openIssuesAfter,
+        resolvedIssues: resolvedIssuesAfter,
+      },
+      impact: historyEntry.impactDescription,
+      status: "success",
+    }
+
+    saveActionRecord(actionRecord)
+    setExecutedActions((prev) => new Set(prev).add(`${selectedAction?.issueId || ''}-${selectedAction?.title || ''}`))
+    //這段結束
+
     toast({
       title: "🚀 開始分析",
       description: `正在分析 ${timeRangeText} 的 Checkpoint WAF 日誌...`,
@@ -305,6 +430,131 @@ export default function CheckpointAIAnalysisPage() {
       ? `${format(customDateRange.start!, 'yyyy-MM-dd HH:mm')} 至 ${format(customDateRange.end!, 'yyyy-MM-dd HH:mm')}`
       : getTimeRangeLabel(selectedTimeRange)
     
+    // 寫入AI分析紀錄
+    const affectedRisk = wafRisks.find((r) => r.id === selectedAction?.issueId)
+    console.log(affectedRisk)
+    const openIssuesBefore = totalOpenIssues
+    const resolvedIssuesBefore = totalResolvedIssues
+    const issuesResolvedCount = Math.floor((affectedRisk?.openIssues || 0) * 0.35)
+    const openIssuesAfter = openIssuesBefore - issuesResolvedCount
+    const resolvedIssuesAfter = resolvedIssuesBefore + issuesResolvedCount
+    const riskLevel: "high" | "medium" | "low" =
+    affectedRisk?.severity === "critical" || affectedRisk?.severity === "high"
+      ? "high"
+      : affectedRisk?.severity === "medium"
+        ? "medium"
+        : "low"
+
+    const generateProtectionMethod = (actionTitle: string): string => {
+      if (actionTitle.includes("Threat Prevention") || actionTitle.includes("威脅防護")) return "Threat Prevention"
+      if (actionTitle.includes("SandBlast") || actionTitle.includes("沙箱")) return "SandBlast Zero-Day"
+      if (actionTitle.includes("IPS") || actionTitle.includes("簽名")) return "IPS 防護"
+      if (actionTitle.includes("Anti-Ransomware")) return "Anti-Ransomware"
+      if (actionTitle.includes("Anti-Bot")) return "Anti-Bot"
+      if (actionTitle.includes("Anti-Phishing")) return "Anti-Phishing"
+      if (actionTitle.includes("DLP")) return "Data Loss Prevention"
+      return "Check Point Security Policy"
+    }
+  
+    const generateResolvedIssues = (count: number, issueType: string) => {
+      const templates = [
+        { endpoint: "/api/enterprise/data", ratio: 0.4 },
+        { endpoint: "/api/financial/transactions", ratio: 0.35 },
+        { endpoint: "/api/user/authentication", ratio: 0.25 },
+      ]
+      return templates.map((t) => ({
+        endpoint: t.endpoint,
+        count: Math.floor(count * t.ratio),
+        description: `已成功防禦 ${issueType} 攻擊`,
+      }))
+    }
+  
+    const generateUnresolvedIssues = (count: number) => {
+      const unresolvedCount = Math.floor(count * 0.15)
+      const templates = [
+        {
+          endpoint: "/api/legacy/infrastructure",
+          ratio: 0.55,
+          reason: "需要系統層級修復",
+          recommendation: "更新底層系統並實施進階威脅防護",
+        },
+        {
+          endpoint: "/api/third-party/integration",
+          ratio: 0.45,
+          reason: "第三方服務限制",
+          recommendation: "與第三方供應商協調強化安全措施",
+        },
+      ]
+      return templates.map((t) => ({
+        endpoint: t.endpoint,
+        count: Math.floor(unresolvedCount * t.ratio),
+        reason: t.reason,
+        recommendation: t.recommendation,
+      }))
+    }
+    
+    const historyEntry: ExecutionHistory = {
+      id: `exec-${Date.now()}`,
+      timestamp: new Date(),
+      actionTitle: selectedAction?.title || '',
+      actionType: affectedRisk?.title || '',
+      riskLevel,
+      protectionMethod: generateProtectionMethod(selectedAction?.title || ''),
+      resolvedIssues: generateResolvedIssues(issuesResolvedCount, affectedRisk?.title || ''),
+      unresolvedIssues: generateUnresolvedIssues(issuesResolvedCount),
+      openIssuesBefore,
+      resolvedIssuesBefore,
+      openIssuesAfter,
+      resolvedIssuesAfter,
+      issuesResolved: issuesResolvedCount,
+      status: "success",
+      impactDescription: `成功解決 ${issuesResolvedCount} 個事件，已保護 ${Math.floor((affectedRisk?.affectedAssets || 0) * 0.75)} 個端點`,
+    }
+
+    setExecutionHistory((prev) => ({
+      ...prev,
+      [riskLevel]: [historyEntry, ...prev[riskLevel]],
+    }))
+
+    const actionRecord: ActionRecord = {
+      id: historyEntry.id,
+      timestamp: historyEntry.timestamp,
+      platform: "checkpoint",
+      pageSnapshot: {
+        totalEvents: openIssuesBefore + resolvedIssuesBefore,
+        openIssues: openIssuesBefore,
+        resolvedIssues: resolvedIssuesBefore,
+        affectedAssets: totalAffectedAssets,
+        riskLevel: riskLevel,
+      },
+      action: {
+        title: selectedAction?.title || '',
+        description: selectedAction?.description || '',
+        issueType: affectedRisk?.title || '',
+        protectionMethod: generateProtectionMethod(selectedAction?.title || ''),
+      },
+      results: {
+        resolvedCount: issuesResolvedCount,
+        unresolvedCount: Math.floor(issuesResolvedCount * 0.15),
+        resolvedIssues: historyEntry.resolvedIssues,
+        unresolvedIssues: historyEntry.unresolvedIssues,
+      },
+      beforeState: {
+        openIssues: openIssuesBefore,
+        resolvedIssues: resolvedIssuesBefore,
+      },
+      afterState: {
+        openIssues: openIssuesAfter,
+        resolvedIssues: resolvedIssuesAfter,
+      },
+      impact: historyEntry.impactDescription,
+      status: "success",
+    }
+
+    saveActionRecord(actionRecord)
+    setExecutedActions((prev) => new Set(prev).add(`${selectedAction?.issueId || ''}-${selectedAction?.title || ''}`))
+    //這段結束
+
     toast({
       title: "🔄 重新分析",
       description: `正在重新分析 ${timeRangeText} 的 Checkpoint WAF 日誌...`,
@@ -527,130 +777,7 @@ export default function CheckpointAIAnalysisPage() {
       newSet.delete(guideKey);
       return newSet;
     });
-
-    const affectedRisk = wafRisks.find((r) => r.id === selectedAction?.issueId)
-    console.log(affectedRisk)
-    const openIssuesBefore = totalOpenIssues
-    const resolvedIssuesBefore = totalResolvedIssues
-    const issuesResolvedCount = Math.floor((affectedRisk?.openIssues || 0) * 0.35)
-    const openIssuesAfter = openIssuesBefore - issuesResolvedCount
-    const resolvedIssuesAfter = resolvedIssuesBefore + issuesResolvedCount
-    const riskLevel: "high" | "medium" | "low" =
-    affectedRisk?.severity === "critical" || affectedRisk?.severity === "high"
-      ? "high"
-      : affectedRisk?.severity === "medium"
-        ? "medium"
-        : "low"
-
-    const generateProtectionMethod = (actionTitle: string): string => {
-      if (actionTitle.includes("Threat Prevention") || actionTitle.includes("威脅防護")) return "Threat Prevention"
-      if (actionTitle.includes("SandBlast") || actionTitle.includes("沙箱")) return "SandBlast Zero-Day"
-      if (actionTitle.includes("IPS") || actionTitle.includes("簽名")) return "IPS 防護"
-      if (actionTitle.includes("Anti-Ransomware")) return "Anti-Ransomware"
-      if (actionTitle.includes("Anti-Bot")) return "Anti-Bot"
-      if (actionTitle.includes("Anti-Phishing")) return "Anti-Phishing"
-      if (actionTitle.includes("DLP")) return "Data Loss Prevention"
-      return "Check Point Security Policy"
-    }
-  
-    const generateResolvedIssues = (count: number, issueType: string) => {
-      const templates = [
-        { endpoint: "/api/enterprise/data", ratio: 0.4 },
-        { endpoint: "/api/financial/transactions", ratio: 0.35 },
-        { endpoint: "/api/user/authentication", ratio: 0.25 },
-      ]
-      return templates.map((t) => ({
-        endpoint: t.endpoint,
-        count: Math.floor(count * t.ratio),
-        description: `已成功防禦 ${issueType} 攻擊`,
-      }))
-    }
-  
-    const generateUnresolvedIssues = (count: number) => {
-      const unresolvedCount = Math.floor(count * 0.15)
-      const templates = [
-        {
-          endpoint: "/api/legacy/infrastructure",
-          ratio: 0.55,
-          reason: "需要系統層級修復",
-          recommendation: "更新底層系統並實施進階威脅防護",
-        },
-        {
-          endpoint: "/api/third-party/integration",
-          ratio: 0.45,
-          reason: "第三方服務限制",
-          recommendation: "與第三方供應商協調強化安全措施",
-        },
-      ]
-      return templates.map((t) => ({
-        endpoint: t.endpoint,
-        count: Math.floor(unresolvedCount * t.ratio),
-        reason: t.reason,
-        recommendation: t.recommendation,
-      }))
-    }
     
-    const historyEntry: ExecutionHistory = {
-      id: `exec-${Date.now()}`,
-      timestamp: new Date(),
-      actionTitle: selectedAction?.title || '',
-      actionType: affectedRisk?.title || '',
-      riskLevel,
-      protectionMethod: generateProtectionMethod(selectedAction?.title || ''),
-      resolvedIssues: generateResolvedIssues(issuesResolvedCount, affectedRisk?.title || ''),
-      unresolvedIssues: generateUnresolvedIssues(issuesResolvedCount),
-      openIssuesBefore,
-      resolvedIssuesBefore,
-      openIssuesAfter,
-      resolvedIssuesAfter,
-      issuesResolved: issuesResolvedCount,
-      status: "success",
-      impactDescription: `成功解決 ${issuesResolvedCount} 個事件，已保護 ${Math.floor((affectedRisk?.affectedAssets || 0) * 0.75)} 個端點`,
-    }
-
-    setExecutionHistory((prev) => ({
-      ...prev,
-      [riskLevel]: [historyEntry, ...prev[riskLevel]],
-    }))
-
-    const actionRecord: ActionRecord = {
-      id: historyEntry.id,
-      timestamp: historyEntry.timestamp,
-      platform: "checkpoint",
-      pageSnapshot: {
-        totalEvents: openIssuesBefore + resolvedIssuesBefore,
-        openIssues: openIssuesBefore,
-        resolvedIssues: resolvedIssuesBefore,
-        affectedAssets: totalAffectedAssets,
-        riskLevel: riskLevel,
-      },
-      action: {
-        title: selectedAction?.title || '',
-        description: selectedAction?.description || '',
-        issueType: affectedRisk?.title || '',
-        protectionMethod: generateProtectionMethod(selectedAction?.title || ''),
-      },
-      results: {
-        resolvedCount: issuesResolvedCount,
-        unresolvedCount: Math.floor(issuesResolvedCount * 0.15),
-        resolvedIssues: historyEntry.resolvedIssues,
-        unresolvedIssues: historyEntry.unresolvedIssues,
-      },
-      beforeState: {
-        openIssues: openIssuesBefore,
-        resolvedIssues: resolvedIssuesBefore,
-      },
-      afterState: {
-        openIssues: openIssuesAfter,
-        resolvedIssues: resolvedIssuesAfter,
-      },
-      impact: historyEntry.impactDescription,
-      status: "success",
-    }
-
-    saveActionRecord(actionRecord)
-    setExecutedActions((prev) => new Set(prev).add(`${selectedAction?.issueId || ''}-${selectedAction?.title || ''}`))
-
     toast({
       title: "✅ 操作已完成",
       description: "已標記為完成，建議稍後檢查效果"
