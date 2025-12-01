@@ -29,74 +29,15 @@ export default function Home() {
   const whyChooseRef = useRef(null)
   const router = useRouter()
   const [isLoggedIn, setIsLoggedIn] = useState(false)
-  const hasDifyLoginTriggered = useRef(false)
-
-  const handleDifyLogin = async () => {
-    console.log('🚀 開始呼叫 Dify 登入 API...')
-    try {
-      const difyEmail = process.env.NEXT_PUBLIC_DIFY_EMAIL
-      const difyPassword = process.env.NEXT_PUBLIC_DIFY_PWD
-
-      console.log('🔑 環境變數檢查:', { 
-        hasEmail: !!difyEmail, 
-        hasPassword: !!difyPassword 
-      })
-
-      if (!difyEmail || !difyPassword) {
-        console.error('❌ 環境變數未配置')
-        return { success: false, error: 'Dify credentials not configured' }
-      }
-
-      console.log('🌐 直接呼叫 Dify API:', 'https://twister5.phison.com/dify/console/api/login')
-      
-      const response = await fetch('https://twister5.phison.com/dify/console/api/login', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        credentials: 'include',
-        body: JSON.stringify({
-          email: difyEmail,
-          language: 'zh-Hant',
-          password: difyPassword,
-          remember_me: true
-        })
-      })
-      
-      console.log('📡 收到 Dify API 響應，狀態碼:', response.status)
-      const data = await response.json()
-      console.log('📄 Dify API 返回數據:', data)
-      
-      if (response.ok) {
-        console.log('✅ Dify 登入成功', data)
-        return { success: true, data }
-      } else {
-        console.error('❌ Dify 登入失敗', data)
-        return { success: false, error: data.message || 'Dify login failed' }
-      }
-    } catch (error) {
-      console.error('⚠️ Dify API 調用錯誤', error)
-      return { success: false, error: 'API 調用失敗' }
-    }
-  }
 
   useEffect(() => {
-    console.log('🔄 頁面初始化，開始檢查登入狀態...')
-    
     // 檢查登入狀態
-    const checkLoginStatus = async () => {
+    const checkLoginStatus = () => {
       const auth = authenticator.authValue
       if (auth) {
         if (auth.user?.role === 'management' || auth.user?.role === 'reseller' || auth.user?.role === 'user') {
           setIsLoggedIn(true)
         }
-      }
-
-      // 第一次檢查登入狀態後，觸發 Dify 登入
-      if (!hasDifyLoginTriggered.current) {
-        console.log('🎯 第一次檢查完成，準備觸發 Dify 登入...')
-        hasDifyLoginTriggered.current = true
-        await handleDifyLogin()
       }
     }
     

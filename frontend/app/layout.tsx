@@ -10,6 +10,7 @@ import Footer from "@/components/footer"
 import ScrollToTop from "@/components/scroll-to-top"
 import { ToastContainer } from "react-toastify"
 import "react-toastify/dist/ReactToastify.css"
+import { Toaster } from "@/components/ui/toaster"
 
 const inter = Inter({ subsets: ["latin"] })
 
@@ -38,6 +39,7 @@ export default function RootLayout({
             <ConditionalFooter />
           </div>
           <ScrollToTop />
+          <Toaster />
           <ToastContainer
             position="top-right"
             autoClose={5000}

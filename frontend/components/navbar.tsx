@@ -150,7 +150,7 @@ export function Navbar() {
 
   return (
     <header className="sticky top-0 z-50 w-full border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
-      <div className="container flex h-16 items-center px-4 sm:px-6 lg:px-8 bg-[rgba(10,22,40,1)]">
+      <div className="w-full max-w-full flex h-16 items-center px-4 sm:px-6 lg:px-8 bg-[rgba(10,22,40,1)]">
         {
           auth?.user ? (            
           <Link href="/dashboard" className="flex items-center gap-2">
@@ -185,7 +185,12 @@ export function Navbar() {
             </NavigationMenuList>
           </NavigationMenu>
 
-          <Button asChild className="bg-[#EFC457] hover:bg-[#D4A947] text-black font-normal ml-4">
+          <Button
+            asChild
+            variant="ghost"
+            size="sm"
+            className="ml-4 text-[#45A4C0] hover:text-white hover:bg-transparent transition-colors"
+          >
             <a href="/contact">聯絡我們</a>
           </Button>
 
@@ -252,7 +257,8 @@ export function Navbar() {
                 </div>
                 <Button
                   asChild
-                  className="bg-[#EFC457] hover:bg-[#D4A947] text-black font-normal w-full mt-4"
+                  variant="ghost"
+                  className="text-[#45A4C0] hover:text-white hover:bg-transparent font-normal w-full mt-4 justify-start"
                   onClick={() => setIsOpen(false)}
                 >
                   <a href="/contact">聯絡我們</a>

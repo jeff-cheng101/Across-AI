@@ -162,18 +162,18 @@ export default function F5AIAnalysisPage() {
   const categoryStats = {
     high: {
       count: risksByCategory.high.length,
-      openIssues: risksByCategory.high.reduce((sum, r) => sum + r.openIssues, 0),
-      affectedAssets: risksByCategory.high.reduce((sum, r) => sum + r.affectedAssets, 0),
+      openIssues: risksByCategory.high.reduce((sum, r) => sum + (r.openIssues || 0), 0),
+      affectedAssets: risksByCategory.high.reduce((sum, r) => sum + (r.affectedAssets || 0), 0),
     },
     medium: {
       count: risksByCategory.medium.length,
-      openIssues: risksByCategory.medium.reduce((sum, r) => sum + r.openIssues, 0),
-      affectedAssets: risksByCategory.medium.reduce((sum, r) => sum + r.affectedAssets, 0),
+      openIssues: risksByCategory.medium.reduce((sum, r) => sum + (r.openIssues || 0), 0),
+      affectedAssets: risksByCategory.medium.reduce((sum, r) => sum + (r.affectedAssets || 0), 0),
     },
     low: {
       count: risksByCategory.low.length,
-      openIssues: risksByCategory.low.reduce((sum, r) => sum + r.openIssues, 0),
-      affectedAssets: risksByCategory.low.reduce((sum, r) => sum + r.affectedAssets, 0),
+      openIssues: risksByCategory.low.reduce((sum, r) => sum + (r.openIssues || 0), 0),
+      affectedAssets: risksByCategory.low.reduce((sum, r) => sum + (r.affectedAssets || 0), 0),
     },
   }
 
@@ -340,6 +340,131 @@ export default function F5AIAnalysisPage() {
       ? `${format(customDateRange.start!, 'yyyy-MM-dd HH:mm')} 至 ${format(customDateRange.end!, 'yyyy-MM-dd HH:mm')}`
       : getTimeRangeLabel(selectedTimeRange)
     
+    // 寫入AI分析紀錄
+    const affectedRisk = wafRisks.find((r) => r.id === selectedAction?.issueId)
+    console.log(affectedRisk)
+    const openIssuesBefore = totalOpenIssues
+    const resolvedIssuesBefore = totalResolvedIssues
+    const issuesResolvedCount = Math.floor((affectedRisk?.openIssues || 0) * 0.35)
+    const openIssuesAfter = openIssuesBefore - issuesResolvedCount
+    const resolvedIssuesAfter = resolvedIssuesBefore + issuesResolvedCount
+    const riskLevel: "high" | "medium" | "low" =
+    affectedRisk?.severity === "critical" || affectedRisk?.severity === "high"
+      ? "high"
+      : affectedRisk?.severity === "medium"
+        ? "medium"
+        : "low"
+
+    const generateProtectionMethod = (actionTitle: string): string => {
+      if (actionTitle.includes("Threat Prevention") || actionTitle.includes("威脅防護")) return "Threat Prevention"
+      if (actionTitle.includes("SandBlast") || actionTitle.includes("沙箱")) return "SandBlast Zero-Day"
+      if (actionTitle.includes("IPS") || actionTitle.includes("簽名")) return "IPS 防護"
+      if (actionTitle.includes("Anti-Ransomware")) return "Anti-Ransomware"
+      if (actionTitle.includes("Anti-Bot")) return "Anti-Bot"
+      if (actionTitle.includes("Anti-Phishing")) return "Anti-Phishing"
+      if (actionTitle.includes("DLP")) return "Data Loss Prevention"
+      return "Check Point Security Policy"
+    }
+  
+    const generateResolvedIssues = (count: number, issueType: string) => {
+      const templates = [
+        { endpoint: "/api/enterprise/data", ratio: 0.4 },
+        { endpoint: "/api/financial/transactions", ratio: 0.35 },
+        { endpoint: "/api/user/authentication", ratio: 0.25 },
+      ]
+      return templates.map((t) => ({
+        endpoint: t.endpoint,
+        count: Math.floor(count * t.ratio),
+        description: `已成功防禦 ${issueType} 攻擊`,
+      }))
+    }
+  
+    const generateUnresolvedIssues = (count: number) => {
+      const unresolvedCount = Math.floor(count * 0.15)
+      const templates = [
+        {
+          endpoint: "/api/legacy/infrastructure",
+          ratio: 0.55,
+          reason: "需要系統層級修復",
+          recommendation: "更新底層系統並實施進階威脅防護",
+        },
+        {
+          endpoint: "/api/third-party/integration",
+          ratio: 0.45,
+          reason: "第三方服務限制",
+          recommendation: "與第三方供應商協調強化安全措施",
+        },
+      ]
+      return templates.map((t) => ({
+        endpoint: t.endpoint,
+        count: Math.floor(unresolvedCount * t.ratio),
+        reason: t.reason,
+        recommendation: t.recommendation,
+      }))
+    }
+    
+    const historyEntry: ExecutionHistory = {
+      id: `exec-${Date.now()}`,
+      timestamp: new Date(),
+      actionTitle: selectedAction?.title || '',
+      actionType: affectedRisk?.title || '',
+      riskLevel,
+      protectionMethod: generateProtectionMethod(selectedAction?.title || ''),
+      resolvedIssues: generateResolvedIssues(issuesResolvedCount, affectedRisk?.title || ''),
+      unresolvedIssues: generateUnresolvedIssues(issuesResolvedCount),
+      openIssuesBefore,
+      resolvedIssuesBefore,
+      openIssuesAfter,
+      resolvedIssuesAfter,
+      issuesResolved: issuesResolvedCount,
+      status: "success",
+      impactDescription: `成功解決 ${issuesResolvedCount} 個事件，已保護 ${Math.floor((affectedRisk?.affectedAssets || 0) * 0.75)} 個端點`,
+    }
+
+    setExecutionHistory((prev) => ({
+      ...prev,
+      [riskLevel]: [historyEntry, ...prev[riskLevel]],
+    }))
+
+    const actionRecord: ActionRecord = {
+      id: historyEntry.id,
+      timestamp: historyEntry.timestamp,
+      platform: "f5",
+      pageSnapshot: {
+        totalEvents: openIssuesBefore + resolvedIssuesBefore,
+        openIssues: openIssuesBefore,
+        resolvedIssues: resolvedIssuesBefore,
+        affectedAssets: totalAffectedAssets,
+        riskLevel: riskLevel,
+      },
+      action: {
+        title: selectedAction?.title || '',
+        description: selectedAction?.description || '',
+        issueType: affectedRisk?.title || '',
+        protectionMethod: generateProtectionMethod(selectedAction?.title || ''),
+      },
+      results: {
+        resolvedCount: issuesResolvedCount,
+        unresolvedCount: Math.floor(issuesResolvedCount * 0.15),
+        resolvedIssues: historyEntry.resolvedIssues,
+        unresolvedIssues: historyEntry.unresolvedIssues,
+      },
+      beforeState: {
+        openIssues: openIssuesBefore,
+        resolvedIssues: resolvedIssuesBefore,
+      },
+      afterState: {
+        openIssues: openIssuesAfter,
+        resolvedIssues: resolvedIssuesAfter,
+      },
+      impact: historyEntry.impactDescription,
+      status: "success",
+    }
+
+    saveActionRecord(actionRecord)
+    setExecutedActions((prev) => new Set(prev).add(`${selectedAction?.issueId || ''}-${selectedAction?.title || ''}`))
+    // 這段結束
+
     toast({
       title: "🚀 開始分析",
       description: `正在分析 ${timeRangeText} 的 F5 WAF 日誌...`,
@@ -371,6 +496,131 @@ export default function F5AIAnalysisPage() {
     const timeRangeText = useCustomDate 
       ? `${format(customDateRange.start!, 'yyyy-MM-dd HH:mm')} 至 ${format(customDateRange.end!, 'yyyy-MM-dd HH:mm')}`
       : getTimeRangeLabel(selectedTimeRange)
+    
+    // 寫入AI分析紀錄
+    const affectedRisk = wafRisks.find((r) => r.id === selectedAction?.issueId)
+    console.log(affectedRisk)
+    const openIssuesBefore = totalOpenIssues
+    const resolvedIssuesBefore = totalResolvedIssues
+    const issuesResolvedCount = Math.floor((affectedRisk?.openIssues || 0) * 0.35)
+    const openIssuesAfter = openIssuesBefore - issuesResolvedCount
+    const resolvedIssuesAfter = resolvedIssuesBefore + issuesResolvedCount
+    const riskLevel: "high" | "medium" | "low" =
+    affectedRisk?.severity === "critical" || affectedRisk?.severity === "high"
+      ? "high"
+      : affectedRisk?.severity === "medium"
+        ? "medium"
+        : "low"
+
+    const generateProtectionMethod = (actionTitle: string): string => {
+      if (actionTitle.includes("Threat Prevention") || actionTitle.includes("威脅防護")) return "Threat Prevention"
+      if (actionTitle.includes("SandBlast") || actionTitle.includes("沙箱")) return "SandBlast Zero-Day"
+      if (actionTitle.includes("IPS") || actionTitle.includes("簽名")) return "IPS 防護"
+      if (actionTitle.includes("Anti-Ransomware")) return "Anti-Ransomware"
+      if (actionTitle.includes("Anti-Bot")) return "Anti-Bot"
+      if (actionTitle.includes("Anti-Phishing")) return "Anti-Phishing"
+      if (actionTitle.includes("DLP")) return "Data Loss Prevention"
+      return "Check Point Security Policy"
+    }
+  
+    const generateResolvedIssues = (count: number, issueType: string) => {
+      const templates = [
+        { endpoint: "/api/enterprise/data", ratio: 0.4 },
+        { endpoint: "/api/financial/transactions", ratio: 0.35 },
+        { endpoint: "/api/user/authentication", ratio: 0.25 },
+      ]
+      return templates.map((t) => ({
+        endpoint: t.endpoint,
+        count: Math.floor(count * t.ratio),
+        description: `已成功防禦 ${issueType} 攻擊`,
+      }))
+    }
+  
+    const generateUnresolvedIssues = (count: number) => {
+      const unresolvedCount = Math.floor(count * 0.15)
+      const templates = [
+        {
+          endpoint: "/api/legacy/infrastructure",
+          ratio: 0.55,
+          reason: "需要系統層級修復",
+          recommendation: "更新底層系統並實施進階威脅防護",
+        },
+        {
+          endpoint: "/api/third-party/integration",
+          ratio: 0.45,
+          reason: "第三方服務限制",
+          recommendation: "與第三方供應商協調強化安全措施",
+        },
+      ]
+      return templates.map((t) => ({
+        endpoint: t.endpoint,
+        count: Math.floor(unresolvedCount * t.ratio),
+        reason: t.reason,
+        recommendation: t.recommendation,
+      }))
+    }
+    
+    const historyEntry: ExecutionHistory = {
+      id: `exec-${Date.now()}`,
+      timestamp: new Date(),
+      actionTitle: selectedAction?.title || '',
+      actionType: affectedRisk?.title || '',
+      riskLevel,
+      protectionMethod: generateProtectionMethod(selectedAction?.title || ''),
+      resolvedIssues: generateResolvedIssues(issuesResolvedCount, affectedRisk?.title || ''),
+      unresolvedIssues: generateUnresolvedIssues(issuesResolvedCount),
+      openIssuesBefore,
+      resolvedIssuesBefore,
+      openIssuesAfter,
+      resolvedIssuesAfter,
+      issuesResolved: issuesResolvedCount,
+      status: "success",
+      impactDescription: `成功解決 ${issuesResolvedCount} 個事件，已保護 ${Math.floor((affectedRisk?.affectedAssets || 0) * 0.75)} 個端點`,
+    }
+
+    setExecutionHistory((prev) => ({
+      ...prev,
+      [riskLevel]: [historyEntry, ...prev[riskLevel]],
+    }))
+
+    const actionRecord: ActionRecord = {
+      id: historyEntry.id,
+      timestamp: historyEntry.timestamp,
+      platform: "f5",
+      pageSnapshot: {
+        totalEvents: openIssuesBefore + resolvedIssuesBefore,
+        openIssues: openIssuesBefore,
+        resolvedIssues: resolvedIssuesBefore,
+        affectedAssets: totalAffectedAssets,
+        riskLevel: riskLevel,
+      },
+      action: {
+        title: selectedAction?.title || '',
+        description: selectedAction?.description || '',
+        issueType: affectedRisk?.title || '',
+        protectionMethod: generateProtectionMethod(selectedAction?.title || ''),
+      },
+      results: {
+        resolvedCount: issuesResolvedCount,
+        unresolvedCount: Math.floor(issuesResolvedCount * 0.15),
+        resolvedIssues: historyEntry.resolvedIssues,
+        unresolvedIssues: historyEntry.unresolvedIssues,
+      },
+      beforeState: {
+        openIssues: openIssuesBefore,
+        resolvedIssues: resolvedIssuesBefore,
+      },
+      afterState: {
+        openIssues: openIssuesAfter,
+        resolvedIssues: resolvedIssuesAfter,
+      },
+      impact: historyEntry.impactDescription,
+      status: "success",
+    }
+
+    saveActionRecord(actionRecord)
+    setExecutedActions((prev) => new Set(prev).add(`${selectedAction?.issueId || ''}-${selectedAction?.title || ''}`))
+    // 這段結束
     
     toast({
       title: "🔄 重新分析",
@@ -482,10 +732,10 @@ export default function F5AIAnalysisPage() {
     }
   }
 
-  const totalOpenIssues = wafRisks.reduce((sum, risk) => sum + risk.openIssues, 0)
-  const totalResolvedIssues = wafRisks.reduce((sum, risk) => sum + risk.resolvedIssues, 0)
+  const totalOpenIssues = wafRisks.reduce((sum, risk) => sum + (risk.openIssues || 0), 0)
+  const totalResolvedIssues = wafRisks.reduce((sum, risk) => sum + (risk.resolvedIssues || 0), 0)
   const totalEvents = totalOpenIssues + totalResolvedIssues
-  const totalAffectedAssets = wafRisks.reduce((sum, risk) => sum + risk.affectedAssets, 0)
+  const totalAffectedAssets = wafRisks.reduce((sum, risk) => sum + (risk.affectedAssets || 0), 0)
 
   // 點擊「查看操作步驟」按鈕時的處理
   const handleExecuteAction = async (
@@ -514,6 +764,7 @@ export default function F5AIAnalysisPage() {
     
     // 載入操作指引
     setLoadingGuides(prev => new Set(prev).add(guideKey));
+    setSelectedAction({ title: actionTitle, description: actionDescription, issueId })
     
     try {
       const response = await fetch(`${API_BASE_URL}/api/f5/get-operation-guide`, {
@@ -1031,12 +1282,38 @@ export default function F5AIAnalysisPage() {
             <CardContent className="p-4">
               <div className="flex items-center gap-2 mb-2">
                 <Calendar className="w-4 h-4 text-cyan-400" />
-                <span className="text-sm font-semibold text-slate-300">時間範圍</span>
+                <span className="text-sm font-semibold text-slate-300">分析時間範圍</span>
               </div>
               <div className="text-2xl font-bold text-cyan-400 mb-1">
                 {getTimeRangeLabel(selectedTimeRange)}
               </div>
-              {analysisMetadata.timeRange.start && (
+              {analysisMetadata.timeRange.display?.start && (
+                <div className="text-xs text-slate-400 space-y-0.5">
+                  <div>{formatDateTime(analysisMetadata.timeRange.display.start)}</div>
+                  <div className="text-center">至</div>
+                  <div>{formatDateTime(analysisMetadata.timeRange.display.end)}</div>
+                  
+                  {/* 顯示實際日誌時間範圍（如果與預期不同） */}
+                  {analysisMetadata.timeRange.actual && analysisMetadata.timeRange.hasLogs && (
+                    <div className="mt-2 pt-2 border-t border-slate-700/50">
+                      <div className="text-[10px] text-slate-500 mb-1">實際日誌範圍</div>
+                      <div className="text-[10px]">{formatDateTime(analysisMetadata.timeRange.actual.start)}</div>
+                      <div className="text-center text-[10px]">至</div>
+                      <div className="text-[10px]">{formatDateTime(analysisMetadata.timeRange.actual.end)}</div>
+                    </div>
+                  )}
+                  
+                  {/* 顯示無日誌警告 */}
+                  {analysisMetadata.timeRange.hasLogs === false && (
+                    <div className="mt-2 text-[10px] text-amber-400 flex items-center gap-1">
+                      <span>⚠️</span>
+                      <span>此時間範圍內無日誌資料</span>
+                    </div>
+                  )}
+                </div>
+              )}
+              {/* 向後兼容：如果沒有 display 欄位，使用舊的 start/end */}
+              {!analysisMetadata.timeRange.display && analysisMetadata.timeRange.start && (
                 <div className="text-xs text-slate-400 space-y-0.5">
                   <div>{formatDateTime(analysisMetadata.timeRange.start)}</div>
                   <div className="text-center">至</div>
@@ -1621,7 +1898,7 @@ export default function F5AIAnalysisPage() {
                           </div>
                           <h3 className="text-xl font-semibold text-white mb-3">{assessment.title}</h3>
                           <div className="flex flex-wrap gap-2">
-                            {assessment.tags.map((tag, idx) => (
+                            {(assessment.tags || []).map((tag, idx) => (
                               <Badge
                                 key={idx}
                                 variant="outline"
@@ -1966,35 +2243,6 @@ export default function F5AIAnalysisPage() {
                             </div>
                           )
                         })}
-
-                        <div className="space-y-2 mt-6">
-                          <div className="text-xs text-slate-400 mb-2">其他可用操作</div>
-                          <Button
-                            variant="outline"
-                            className="w-full border-white/10 text-white hover:bg-white/5 bg-transparent"
-                          >
-                            生成詳細報告
-                          </Button>
-                          <Button
-                            variant="outline"
-                            className="w-full border-white/10 text-white hover:bg-white/5 bg-transparent"
-                          >
-                            創建工單
-                          </Button>
-                          <Button
-                            variant="outline"
-                            className="w-full border-white/10 text-white hover:bg-white/5 bg-transparent"
-                          >
-                            通知相關人員
-                          </Button>
-                          <Button
-                            variant="outline"
-                            className="w-full border-white/10 text-white hover:bg-white/5 bg-transparent"
-                            onClick={() => window.location.href = '/ai-analysis/history'}
-                          >
-                            查看歷史趨勢
-                          </Button>
-                        </div>
 
                         <div className="mt-6 p-3 rounded-lg bg-red-900/20 border border-red-500/30">
                           <div className="flex items-center justify-between mb-2">

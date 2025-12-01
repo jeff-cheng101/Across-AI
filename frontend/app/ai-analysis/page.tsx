@@ -307,34 +307,6 @@ export default function AIAnalysisPage() {
                           </div>
                         ))}
 
-                        <div className="space-y-2 mt-6">
-                          <div className="text-xs text-slate-400 mb-2">其他可用操作</div>
-                          <Button
-                            variant="outline"
-                            className="w-full border-white/10 text-white hover:bg-white/5 bg-transparent"
-                          >
-                            生成詳細報告
-                          </Button>
-                          <Button
-                            variant="outline"
-                            className="w-full border-white/10 text-white hover:bg-white/5 bg-transparent"
-                          >
-                            創建工單
-                          </Button>
-                          <Button
-                            variant="outline"
-                            className="w-full border-white/10 text-white hover:bg-white/5 bg-transparent"
-                          >
-                            通知相關人員
-                          </Button>
-                          <Button
-                            variant="outline"
-                            className="w-full border-white/10 text-white hover:bg-white/5 bg-transparent"
-                          >
-                            查看歷史趨勢
-                          </Button>
-                        </div>
-
                         <div className="mt-6 p-3 rounded-lg bg-red-900/20 border border-red-500/30">
                           <div className="flex items-center justify-between mb-2">
                             <span className="text-xs text-slate-400">風險等級</span>

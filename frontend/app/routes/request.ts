@@ -16,7 +16,7 @@ const getBaseURL = () => {
         const origin = window.location.origin;
 
         if (isDevelopment) {
-            return 'http://localhost:3001/api/internal';
+            return 'https://twister5poc.phison.com:3001/api/internal';
         }
         
         return `${origin}/api/internal`;
@@ -24,7 +24,7 @@ const getBaseURL = () => {
     
     // 伺服器端渲染：使用環境變數或預設值
     if (isDevelopment) {
-        return 'http://localhost:3001/api/internal';
+        return 'https://twister5poc.phison.com:3001/api/internal';
     }
     
     return process.env.NEXT_PUBLIC_API_URL || 'https://adas-one.twister5.cf/api/internal';

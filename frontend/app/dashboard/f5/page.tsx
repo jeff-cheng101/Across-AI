@@ -1,7 +1,7 @@
 "use client"
 
 import { motion } from "framer-motion"
-import { Activity } from "lucide-react"
+import { Activity, Calendar } from "lucide-react"
 import { useState, useEffect, useRef } from "react"
 import {
   AreaChart,
@@ -18,6 +18,9 @@ import {
   Cell,
   Legend,
 } from "recharts"
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
+import { Button } from "@/components/ui/button"
+import { CustomDatePicker } from "@/components/custom-date-picker"
 
 // ADDED CODE: 添加 MapLibre 地圖組件
 function AttackSourceMap() {
@@ -174,9 +177,11 @@ function AttackSourceMap() {
 
 export default function F5DashboardPage() {
   const [activeTab, setActiveTab] = useState("overview")
+  const [dateFrom, setDateFrom] = useState<Date | undefined>(new Date(Date.now() - 7 * 24 * 60 * 60 * 1000))
+  const [dateTo, setDateTo] = useState<Date | undefined>(new Date())
 
   const tabs = [
-    { id: "overview", label: "總覽(overview)" },
+    { id: "overview", label: "總覽" },
     { id: "waf", label: "WAF分析" },
     { id: "ltm", label: "LTM" },
   ]
@@ -1845,6 +1850,86 @@ export default function F5DashboardPage() {
     // Overview tab - F5 防護總覽
     return (
       <>
+        <motion.div
+          initial={{ y: -20, opacity: 0 }}
+          animate={{ y: 0, opacity: 1 }}
+          transition={{ duration: 0.3 }}
+          className="mb-6 flex items-center gap-4 bg-slate-900/40 backdrop-blur-md border border-white/10 p-4 rounded-md"
+        >
+          <div className="flex items-center gap-2 text-slate-300">
+            <Calendar className="w-4 h-4" />
+            <span className="text-sm font-medium">資料時間範圍：</span>
+          </div>
+
+          {/* 開始日期 */}
+          <div className="flex items-center gap-2">
+            <span className="text-sm text-slate-400">開始日期</span>
+            <Popover>
+              <PopoverTrigger asChild>
+                <Button variant="outline" className="bg-slate-800 border-slate-700 hover:bg-slate-700 text-white">
+                  {dateFrom ? dateFrom.toLocaleDateString("zh-TW") : "選擇日期"}
+                </Button>
+              </PopoverTrigger>
+              <PopoverContent className="w-auto p-0 bg-slate-900 border-slate-700">
+                <CustomDatePicker selected={dateFrom} onSelect={setDateFrom} />
+              </PopoverContent>
+            </Popover>
+          </div>
+
+          {/* 結束日期 */}
+          <div className="flex items-center gap-2">
+            <span className="text-sm text-slate-400">結束日期</span>
+            <Popover>
+              <PopoverTrigger asChild>
+                <Button variant="outline" className="bg-slate-800 border-slate-700 hover:bg-slate-700 text-white">
+                  {dateTo ? dateTo.toLocaleDateString("zh-TW") : "選擇日期"}
+                </Button>
+              </PopoverTrigger>
+              <PopoverContent className="w-auto p-0 bg-slate-900 border-slate-700">
+                <CustomDatePicker selected={dateTo} onSelect={setDateTo} />
+              </PopoverContent>
+            </Popover>
+          </div>
+
+          {/* 快速選擇按鈕 */}
+          <div className="flex items-center gap-2 ml-auto">
+            <span className="text-sm text-slate-400">快速選擇：</span>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="text-slate-300 hover:text-white hover:bg-slate-800"
+              onClick={() => {
+                setDateFrom(new Date(Date.now() - 24 * 60 * 60 * 1000))
+                setDateTo(new Date())
+              }}
+            >
+              近24小時
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="text-slate-300 hover:text-white hover:bg-slate-800"
+              onClick={() => {
+                setDateFrom(new Date(Date.now() - 7 * 24 * 60 * 60 * 1000))
+                setDateTo(new Date())
+              }}
+            >
+              近7天
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="text-slate-300 hover:text-white hover:bg-slate-800"
+              onClick={() => {
+                setDateFrom(new Date(Date.now() - 30 * 24 * 60 * 60 * 1000))
+                setDateTo(new Date())
+              }}
+            >
+              近30天
+            </Button>
+          </div>
+        </motion.div>
+
         {/* 頁面標題 */}
         <motion.div
           initial={{ y: -20, opacity: 0 }}
@@ -2198,35 +2283,114 @@ export default function F5DashboardPage() {
   }
 
   return (
-    <div className="min-h-screen bg-[#08131D] p-8 py-8 pb-[32] pt-8 my-0">
-      {/* Header */}
+    <div className="min-h-screen bg-[#08131D] p-8">
+      <motion.div
+        initial={{ y: -20, opacity: 0 }}
+        animate={{ y: 0, opacity: 1 }}
+        transition={{ duration: 0.3 }}
+        className="mb-6 flex items-center gap-4 bg-slate-900/40 backdrop-blur-md border border-white/10 p-4 rounded-md"
+      >
+        <div className="flex items-center gap-2 text-slate-300">
+          <Calendar className="w-4 h-4" />
+          <span className="text-sm font-medium">資料時間範圍：</span>
+        </div>
+
+        {/* 開始日期 */}
+        <div className="flex items-center gap-2">
+          <span className="text-sm text-slate-400">開始日期</span>
+          <Popover>
+            <PopoverTrigger asChild>
+              <Button variant="outline" className="bg-slate-800 border-slate-700 hover:bg-slate-700 text-white">
+                {dateFrom ? dateFrom.toLocaleDateString("zh-TW") : "選擇日期"}
+              </Button>
+            </PopoverTrigger>
+            <PopoverContent className="w-auto p-0 bg-slate-900 border-slate-700">
+              <CustomDatePicker selected={dateFrom} onSelect={setDateFrom} />
+            </PopoverContent>
+          </Popover>
+        </div>
+
+        {/* 結束日期 */}
+        <div className="flex items-center gap-2">
+          <span className="text-sm text-slate-400">結束日期</span>
+          <Popover>
+            <PopoverTrigger asChild>
+              <Button variant="outline" className="bg-slate-800 border-slate-700 hover:bg-slate-700 text-white">
+                {dateTo ? dateTo.toLocaleDateString("zh-TW") : "選擇日期"}
+              </Button>
+            </PopoverTrigger>
+            <PopoverContent className="w-auto p-0 bg-slate-900 border-slate-700">
+              <CustomDatePicker selected={dateTo} onSelect={setDateTo} />
+            </PopoverContent>
+          </Popover>
+        </div>
+
+        {/* 快速選擇按鈕 */}
+        <div className="flex items-center gap-2 ml-auto">
+          <span className="text-sm text-slate-400">快速選擇：</span>
+          <Button
+            variant="ghost"
+            size="sm"
+            className="text-slate-300 hover:text-white hover:bg-slate-800"
+            onClick={() => {
+              setDateFrom(new Date(Date.now() - 24 * 60 * 60 * 1000))
+              setDateTo(new Date())
+            }}
+          >
+            近24小時
+          </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            className="text-slate-300 hover:text-white hover:bg-slate-800"
+            onClick={() => {
+              setDateFrom(new Date(Date.now() - 7 * 24 * 60 * 60 * 1000))
+              setDateTo(new Date())
+            }}
+          >
+            近7天
+          </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            className="text-slate-300 hover:text-white hover:bg-slate-800"
+            onClick={() => {
+              setDateFrom(new Date(Date.now() - 30 * 24 * 60 * 60 * 1000))
+              setDateTo(new Date())
+            }}
+          >
+            近30天
+          </Button>
+        </div>
+      </motion.div>
+
       <motion.div
         initial={{ y: -20, opacity: 0 }}
         animate={{ y: 0, opacity: 1 }}
         transition={{ duration: 0.5 }}
-        className="mb-6"
-      ></motion.div>
-
-      {/* Top Navigation Tabs */}
-      <motion.div
-        initial={{ y: -20, opacity: 0 }}
-        animate={{ y: 0, opacity: 1 }}
-        transition={{ duration: 0.5, delay: 0.1 }}
-        className="flex gap-2 mb-6 rounded-md flex-row"
+        className="flex gap-2 mb-6 rounded-md"
       >
-        {tabs.map((tab) => (
-          <button
-            key={tab.id}
-            onClick={() => setActiveTab(tab.id)}
-            className={`px-6 py-2.5 text-sm font-medium transition-all duration-200 rounded-md ${
-              activeTab === tab.id
-                ? "bg-white text-black"
-                : "bg-slate-800/50 text-slate-400 hover:bg-slate-800 hover:text-white"
-            }`}
-          >
-            {tab.label}
-          </button>
-        ))}
+        {/* Top Navigation Tabs */}
+        <motion.div
+          initial={{ y: -20, opacity: 0 }}
+          animate={{ y: 0, opacity: 1 }}
+          transition={{ duration: 0.5, delay: 0.1 }}
+          className="flex gap-2 mb-6 rounded-md flex-row"
+        >
+          {tabs.map((tab) => (
+            <button
+              key={tab.id}
+              onClick={() => setActiveTab(tab.id)}
+              className={`px-6 py-2.5 text-sm font-medium transition-all duration-200 rounded-md ${
+                activeTab === tab.id
+                  ? "bg-white text-black"
+                  : "bg-slate-800/50 text-slate-400 hover:bg-slate-800 hover:text-white"
+              }`}
+            >
+              {tab.label}
+            </button>
+          ))}
+        </motion.div>
       </motion.div>
 
       {renderContent()}

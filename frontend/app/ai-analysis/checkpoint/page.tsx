@@ -2,7 +2,25 @@
 
 import { useState, useEffect } from "react"
 import { motion, AnimatePresence } from "framer-motion"
-import { Shield, TrendingUp, AlertTriangle, CheckCircle, XCircle, Globe, Clock, Sparkles, Calendar, Activity, RefreshCw, CalendarIcon, Loader2, ChevronDown, ChevronUp, FileText, ExternalLink } from "lucide-react"
+import {
+  Shield,
+  TrendingUp,
+  AlertTriangle,
+  CheckCircle,
+  XCircle,
+  Globe,
+  Clock,
+  Sparkles,
+  Calendar,
+  Activity,
+  RefreshCw,
+  CalendarIcon,
+  Loader2,
+  ChevronDown,
+  ChevronUp,
+  FileText,
+  ExternalLink,
+} from "lucide-react"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
@@ -42,7 +60,7 @@ interface ExecutionHistory {
   impactDescription: string
 }
 
-export default function CloudflareAIAnalysisPage() {
+export default function CheckpointAIAnalysisPage() {
   const [selectedIssue, setSelectedIssue] = useState<string | null>(null)
   const [selectedCategory, setSelectedCategory] = useState<string>("high")
   const [isLoading, setIsLoading] = useState(false)
@@ -55,17 +73,7 @@ export default function CloudflareAIAnalysisPage() {
   
   // 新增：時間範圍和分析資訊
   const [selectedTimeRange, setSelectedTimeRange] = useState('24h')
-  const [analysisMetadata, setAnalysisMetadata] = useState<{
-    totalEvents: number
-    timeRange: { 
-      start: string
-      end: string
-      display?: { start: string; end: string }
-      actual?: { start: string; end: string }
-      hasLogs?: boolean
-    }
-    analysisTimestamp: string
-  }>({
+  const [analysisMetadata, setAnalysisMetadata] = useState({
     totalEvents: 0,
     timeRange: { start: '', end: '' },
     analysisTimestamp: ''
@@ -102,9 +110,9 @@ export default function CloudflareAIAnalysisPage() {
   })
   const [executedActions, setExecutedActions] = useState<Set<string>>(new Set())
 
-  // 載入 Cloudflare WAF 風險分析資料
-  const loadCloudflareWAFRisks = async () => {
-    console.log('🔄 開始載入 Cloudflare WAF 風險分析...')
+  // 載入 Checkpoint WAF 風險分析資料
+  const loadCheckpointWAFRisks = async () => {
+    console.log('🔄 開始載入 Checkpoint WAF 風險分析...')
     setIsLoading(true)
     setError(null)
 
@@ -142,7 +150,7 @@ export default function CloudflareAIAnalysisPage() {
       }
 
       // 呼叫後端 API
-      const response = await fetch(`${API_BASE_URL}/api/cloudflare/analyze-waf-risks`, {
+      const response = await fetch(`${API_BASE_URL}/api/checkpoint/analyze-risks`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -160,7 +168,7 @@ export default function CloudflareAIAnalysisPage() {
       }
 
       const data = await response.json()
-      console.log('✅ 成功載入 Cloudflare WAF 風險資料:', data)
+      console.log('✅ 成功載入 Checkpoint WAF 風險資料:', data)
 
       // 保存分析 metadata
       if (data.metadata) {
@@ -188,7 +196,7 @@ export default function CloudflareAIAnalysisPage() {
       }
 
     } catch (err) {
-      console.error('❌ 載入 Cloudflare WAF 風險分析失敗:', err)
+      console.error('❌ 載入 Checkpoint WAF 風險分析失敗:', err)
       setError(err instanceof Error ? err.message : '未知錯誤')
       setWafRisks([])
     } finally {
@@ -200,7 +208,7 @@ export default function CloudflareAIAnalysisPage() {
   // 手動觸發分析
   useEffect(() => {
     if (analysisTriggered) {
-      loadCloudflareWAFRisks()
+      loadCheckpointWAFRisks()
       setAnalysisTriggered(false)
     }
   }, [analysisTriggered])
@@ -267,7 +275,6 @@ export default function CloudflareAIAnalysisPage() {
     
     // 寫入AI分析紀錄
     const affectedRisk = wafRisks.find((r) => r.id === selectedAction?.issueId)
-    console.log(selectedAction)
     console.log(affectedRisk)
     const openIssuesBefore = totalOpenIssues
     const resolvedIssuesBefore = totalResolvedIssues
@@ -355,7 +362,7 @@ export default function CloudflareAIAnalysisPage() {
     const actionRecord: ActionRecord = {
       id: historyEntry.id,
       timestamp: historyEntry.timestamp,
-      platform: "cloudflare",
+      platform: "checkpoint",
       pageSnapshot: {
         totalEvents: openIssuesBefore + resolvedIssuesBefore,
         openIssues: openIssuesBefore,
@@ -389,11 +396,11 @@ export default function CloudflareAIAnalysisPage() {
 
     saveActionRecord(actionRecord)
     setExecutedActions((prev) => new Set(prev).add(`${selectedAction?.issueId || ''}-${selectedAction?.title || ''}`))
-    // 這段結束
+    //這段結束
 
     toast({
       title: "🚀 開始分析",
-      description: `正在分析 ${timeRangeText} 的 Cloudflare WAF 日誌...`,
+      description: `正在分析 ${timeRangeText} 的 Checkpoint WAF 日誌...`,
     })
   }
 
@@ -422,10 +429,9 @@ export default function CloudflareAIAnalysisPage() {
     const timeRangeText = useCustomDate 
       ? `${format(customDateRange.start!, 'yyyy-MM-dd HH:mm')} 至 ${format(customDateRange.end!, 'yyyy-MM-dd HH:mm')}`
       : getTimeRangeLabel(selectedTimeRange)
-
+    
     // 寫入AI分析紀錄
     const affectedRisk = wafRisks.find((r) => r.id === selectedAction?.issueId)
-    console.log(selectedAction)
     console.log(affectedRisk)
     const openIssuesBefore = totalOpenIssues
     const resolvedIssuesBefore = totalResolvedIssues
@@ -513,7 +519,7 @@ export default function CloudflareAIAnalysisPage() {
     const actionRecord: ActionRecord = {
       id: historyEntry.id,
       timestamp: historyEntry.timestamp,
-      platform: "cloudflare",
+      platform: "checkpoint",
       pageSnapshot: {
         totalEvents: openIssuesBefore + resolvedIssuesBefore,
         openIssues: openIssuesBefore,
@@ -547,11 +553,11 @@ export default function CloudflareAIAnalysisPage() {
 
     saveActionRecord(actionRecord)
     setExecutedActions((prev) => new Set(prev).add(`${selectedAction?.issueId || ''}-${selectedAction?.title || ''}`))
-    // 這段結束
-      
+    //這段結束
+
     toast({
       title: "🔄 重新分析",
-      description: `正在重新分析 ${timeRangeText} 的 Cloudflare WAF 日誌...`,
+      description: `正在重新分析 ${timeRangeText} 的 Checkpoint WAF 日誌...`,
     })
   }
 
@@ -687,6 +693,7 @@ export default function CloudflareAIAnalysisPage() {
   const totalOpenIssues = wafRisks.reduce((sum, risk) => sum + (risk.openIssues || 0), 0)
   const totalResolvedIssues = wafRisks.reduce((sum, risk) => sum + (risk.resolvedIssues || 0), 0)
   const totalAffectedAssets = wafRisks.reduce((sum, risk) => sum + (risk.affectedAssets || 0), 0)
+  console.log(wafRisks)
 
   // 點擊「查看操作步驟」按鈕時的處理
   const handleExecuteAction = async (
@@ -718,7 +725,7 @@ export default function CloudflareAIAnalysisPage() {
     setSelectedAction({ title: actionTitle, description: actionDescription, issueId })
     
     try {
-      const response = await fetch(`${API_BASE_URL}/api/cloudflare/get-operation-guide`, {
+      const response = await fetch(`${API_BASE_URL}/api/checkpoint/get-operation-guide`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -728,7 +735,7 @@ export default function CloudflareAIAnalysisPage() {
       });
       
       const data = await response.json();
-      
+
       if (data.success && data.guide) {
         setOperationGuides(prev => ({
           ...prev,
@@ -787,7 +794,7 @@ export default function CloudflareAIAnalysisPage() {
         className="mb-8"
       >
         <div className="flex items-center gap-3 mb-2">
-          <h1 className="text-3xl font-bold text-white">AI Cyber Security Analysis - Cloudflare</h1>
+          <h1 className="text-3xl font-bold text-white">AI Cyber Security Analysis - Checkpoint</h1>
           {isLoading && (
             <div className="flex items-center gap-2 text-cyan-400 text-sm">
               <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-cyan-400"></div>
@@ -822,7 +829,7 @@ export default function CloudflareAIAnalysisPage() {
           </Button>
         </div>
         <p className="text-slate-400">
-          基於 Cloudflare 安全數據的智能分析與建議 | 總計 {totalOpenIssues} 個開放問題，影響 {totalAffectedAssets}{" "}
+          基於 Checkpoint 安全數據的智能分析與建議 | 總計 {totalOpenIssues} 個開放問題，影響 {totalAffectedAssets}{" "}
           個資產
         </p>
         {error && (
@@ -1107,9 +1114,9 @@ export default function CloudflareAIAnalysisPage() {
                     </h3>
                     <p className="text-slate-400 text-base leading-relaxed">
                       {error?.includes('ELK 中沒有足夠的日誌數據')
-                        ? 'ELK 中沒有足夠的 Cloudflare WAF 日誌數據進行分析。請確認日誌來源配置正確，並持續觀察監控。建議檢查 Cloudflare 日誌是否正常推送到 ELK，或調整時間範圍以包含更多數據。'
+                        ? 'ELK 中沒有足夠的 Checkpoint WAF 日誌數據進行分析。請確認日誌來源配置正確，並持續觀察監控。建議檢查 Checkpoint 日誌是否正常推送到 ELK，或調整時間範圍以包含更多數據。'
                         : error?.includes('未檢測到任何安全威脅')
-                          ? '在指定時間範圍內，Cloudflare WAF 已成功分析日誌數據，未檢測到任何安全威脅。這表示系統目前運行正常，所有請求均通過安全檢查。請繼續保持監控。'
+                          ? '在指定時間範圍內，Checkpoint WAF 已成功分析日誌數據，未檢測到任何安全威脅。這表示系統目前運行正常，所有請求均通過安全檢查。請繼續保持監控。'
                           : error}
                     </p>
                   </div>
@@ -1135,7 +1142,7 @@ export default function CloudflareAIAnalysisPage() {
                       準備開始 AI 安全分析
                     </h3>
                     <p className="text-slate-400 text-base leading-relaxed">
-                      選擇時間範圍後，點擊右上角「開始 AI 分析」按鈕，系統將使用 Cloudflare WAF 日誌進行分析並生成安全報告
+                      選擇時間範圍後，點擊右上角「開始 AI 分析」按鈕，系統將使用 Checkpoint WAF 日誌進行分析並生成安全報告
                     </p>
                   </div>
                   
