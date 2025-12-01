@@ -408,6 +408,89 @@ const CHECKPOINT_FIELD_MAPPING = {
     description: "此聚合紀錄中的實際連線數量 (connections)",
     ai_context: "被此日誌條目聚合的實際連線總數",
     example: 2
+  },
+
+  // === Threat Prevention 欄位（威脅防護）===
+  threat_severity: {
+    elk_field: "threat_severity",
+    data_type: "keyword",
+    description: "威脅嚴重程度 (High, Medium, Low)",
+    ai_context: "由 Check Point Threat Prevention 評估的威脅嚴重等級，用於判斷攻擊的危險程度",
+    example: "High, Medium, Low"
+  },
+
+  threat_name: {
+    elk_field: "threat_name",
+    data_type: "text",
+    description: "威脅名稱 (如病毒、木馬名稱)",
+    ai_context: "從 Threat Prevention 組件獲取的威脅名稱，用於識別具體的攻擊類型（SQL Injection, XSS, Botnet 等）",
+    example: "SQL Injection, XSS Attack, Botnet C&C Communication"
+  },
+
+  threat_category: {
+    elk_field: "threat_category",
+    data_type: "keyword",
+    description: "威脅類別 (Exploit, Botnet, DDoS 等)",
+    ai_context: "威脅的分類類別，用於將攻擊歸類到特定的威脅類型",
+    example: "Exploit, Botnet, DDoS, Malware, SQL Injection"
+  },
+
+  burst_count: {
+    elk_field: "burst_count",
+    data_type: "integer",
+    description: "連續攻擊嘗試次數或快速爆發連線次數",
+    ai_context: "在短時間內快速連線或攻擊的次數，用於識別 DDoS 攻擊或暴力破解行為",
+    example: 100
+  },
+
+  count: {
+    elk_field: "count",
+    data_type: "integer",
+    description: "事件計數（通用）",
+    ai_context: "事件發生的次數，可用於統計攻擊頻率",
+    example: 50
+  },
+
+  // === HTTP 相關欄位 ===
+  http_user_agent: {
+    elk_field: "http_user_agent",
+    data_type: "text",
+    description: "HTTP User-Agent (來自 HTTP 流量的應用程式訊息)",
+    ai_context: "用於識別攻擊工具、爬蟲和偽造的 User-Agent，檢測自動化攻擊（sqlmap, nikto, nmap 等掃描工具）",
+    example: "Mozilla/5.0, sqlmap/1.0, curl/7.68.0, Go-http-client/1.1"
+  },
+
+  http_url: {
+    elk_field: "http_url",
+    data_type: "text",
+    description: "HTTP URL 完整路徑",
+    ai_context: "HTTP 請求的完整 URL，用於匹配 OWASP TOP 10 攻擊模式（SQL Injection, XSS, Path Traversal 等）",
+    example: "/admin/login.php?id=1' OR '1'='1, /wp-admin/, /../../../etc/passwd"
+  },
+
+  http_method: {
+    elk_field: "http_method",
+    data_type: "keyword",
+    description: "HTTP 請求方法",
+    ai_context: "HTTP 方法（GET/POST/PUT/DELETE），用於分析攻擊類型（GET 通常用於探測，POST 用於注入攻擊）",
+    example: "GET, POST, PUT, DELETE"
+  },
+
+  // === URL Filtering 欄位 ===
+  url_category: {
+    elk_field: "url_category",
+    data_type: "keyword",
+    description: "URL 分類 (來自 URL Filtering，用來判斷訪問的網站安全性類別)",
+    ai_context: "由 Check Point URL Filtering 判定的網站類別，用於識別可疑或惡意網站瀏覽嘗試（Malicious Sites, Phishing, Pornography, Gambling 等）",
+    example: "Malicious Sites, Phishing, Social Media, Pornography, Gambling, Business"
+  },
+
+  url_reputation: {
+    elk_field: "url_reputation",
+    data_type: "keyword",
+    description: "URL 聲譽評級",
+    ai_context: "URL 的安全聲譽等級，用於判斷網站的可信度",
+    example: "Malicious, Suspicious, Trusted"
   }
 };
 

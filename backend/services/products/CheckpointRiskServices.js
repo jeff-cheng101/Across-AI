@@ -1,42 +1,45 @@
 // backend/services/products/CheckpointRiskServices.js
-// Check Point 防火牆風險分析服務
-// 整合三層判斷模型：應用程式風險評估 + 封鎖流量分析 + 政策違規檢測
+// Check Point 防火牆風險分析服務（重構版 - 五層判斷模型）
+// 整合：Firewall Action + Threat Prevention + App Risk + URI/UA Analysis + URL Filtering
 
 const { elkMCPClient } = require('../elkMCPClient');
 const { CHECKPOINT_FIELD_MAPPING } = require('../../config/products/checkpoint/chcekpointFieldMapping');
 const {
   CHECKPOINT_APP_RISK_MAPPING,
   CHECKPOINT_ACTION_MAPPING,
-  POLICY_VIOLATION_CATEGORIES,
-  CHECKPOINT_THRESHOLDS,
-  SECURITY_ZONE_RISK_MATRIX,
-  isRealSecurityThreat,
+  THREAT_PREVENTION_MAPPING,
+  URL_CATEGORY_MAPPING,
+  OWASP_TOP10_PATTERNS,
+  MALICIOUS_USER_AGENT_PATTERNS,
+  analyzeThreatLevel,
+  classifyAction,
+  analyzeURIPattern,
+  analyzeUserAgent,
   calculateThreatScore,
   classifyByThreatScore,
   isHighRiskThreat,
-  analyzeLogEntry,
-  getPolicyViolationInfo,
-  getAppRiskInfo,
-  evaluateSecurityZoneRisk
+  analyzeLogEntry
 } = require('../../config/products/checkpoint/checkpointStandards');
 const checkpointELKConfig = require('../../config/products/checkpoint/checkpointELKConfig');
 
 class CheckpointRiskServices {
   constructor() {
-    console.log('🔧 初始化 Check Point 防火牆風險分析服務（三層判斷模型）...');
+    console.log('🔧 初始化 Check Point 防火牆風險分析服務（五層判斷模型）...');
     this.elkClient = elkMCPClient;
     this.fieldMapping = CHECKPOINT_FIELD_MAPPING;
     this.elkConfig = checkpointELKConfig;
   }
   
   /**
-   * ⭐ 主要方法：分析 Check Point 防火牆風險（三層判斷模型）
-   * Layer 1: 應用程式風險評估 (app_risk)
-   * Layer 2: 被封鎖的流量分析 (action)
-   * Layer 3: 違反公司政策的行為 (app_category)
+   * ⭐ 主要方法：分析 Check Point 防火牆風險（五層判斷模型）
+   * Layer 1: Firewall Action (Drop/Reject/Accept/Alert/Info)
+   * Layer 2: Threat Prevention (threat_severity/threat_name/burst_count)
+   * Layer 3: Application Risk (app_risk 0-5)
+   * Layer 4: URI/UA Analysis (OWASP TOP 10)
+   * Layer 5: URL Filtering (url_category)
    */
   async analyzeCheckPoint(timeRange = '24h') {
-    console.log(`\n🔍 ===== 開始 Check Point 防火牆風險分析（三層模型）=====`);
+    console.log(`\n🔍 ===== 開始 Check Point 防火牆風險分析（五層模型）=====`);
     console.log(`📅 時間範圍: ${timeRange}`);
     console.log(`📊 索引: ${this.elkConfig.index}`);
     
@@ -53,27 +56,21 @@ class CheckpointRiskServices {
         return this.getEmptyAnalysisResult();
       }
       
-      // Step 2: 解析 Check Point 日誌
+      // Step 2: 解析 Check Point 日誌（包含時間修正）
       console.log(`\n⭐ Step 2: 解析 ${elkData.hits.length} 筆日誌...`);
-      
-      // 過濾掉無效的記錄（source 為 undefined 或 null）
-      const validHits = elkData.hits.filter(hit => hit && hit.source);
-      console.log(`   有效記錄: ${validHits.length} / ${elkData.hits.length}`);
-      
-      if (validHits.length === 0) {
-        console.log('⚠️ 沒有有效的日誌資料');
-        return this.getEmptyAnalysisResult();
-      }
-      
-      const logEntries = validHits
-        .map(hit => this.parseCheckPointLog(hit.source))
-        .filter(log => log !== null);  // 過濾掉解析失敗的記錄
+      const logEntries = elkData.hits.map(hit => this.parseCheckPointLog(hit.source));
       console.log(`✅ 成功解析 ${logEntries.length} 筆日誌`);
+      
+      // 計算實際日誌時間範圍
+      const actualTimeRange = this.calculateActualTimeRange(logEntries);
+      console.log(`📅 實際日誌時間範圍（UTC+8）:`);
+      console.log(`   開始: ${this.formatTimeTaipei(actualTimeRange.start)}`);
+      console.log(`   結束: ${this.formatTimeTaipei(actualTimeRange.end)}`);
       
       // 診斷：顯示前 3 筆日誌的基本資訊
       console.log('\n📊 日誌診斷（前 3 筆）:');
       logEntries.slice(0, 3).forEach((log, index) => {
-        console.log(`  ${index + 1}. App: ${log.appi_name} | Risk: ${log.app_risk} | Action: ${log.action} | Category: ${log.app_category}`);
+        console.log(`  ${index + 1}. App: ${log.appi_name} | Risk: ${log.app_risk} | Action: ${log.action} | Threat: ${log.threat_severity || 'N/A'}`);
       });
       
       // 統計動作分佈
@@ -87,20 +84,18 @@ class CheckpointRiskServices {
         console.log(`  - ${action}: ${count} 筆 (${(count/logEntries.length*100).toFixed(1)}%)`);
       });
       
-      // Step 3: 使用三層判斷模型分析威脅
-      console.log('\n⭐ Step 3: 使用三層判斷模型分析威脅...');
+      // Step 3: 使用五層判斷模型分析威脅
+      console.log('\n⭐ Step 3: 使用五層判斷模型分析威脅...');
       const analysisResults = logEntries.map(log => analyzeLogEntry(log));
       
       // 過濾出真實威脅
       const realThreats = analysisResults.filter(result => result.isThreat);
-      const realAttacks = analysisResults.filter(result => result.isAttack);
       console.log(`   檢測到 ${realThreats.length} 個真實威脅（共 ${logEntries.length} 筆日誌）`);
-      console.log(`   其中 ${realAttacks.length} 個為確定攻擊`);
       
       // 統計各層判斷結果
       const layerStats = {};
       analysisResults.filter(r => r.isThreat).forEach(result => {
-        const layer = result.judgmentLayer || 'UNKNOWN';
+        const layer = result.layer || 'UNKNOWN';
         layerStats[layer] = (layerStats[layer] || 0) + 1;
       });
       console.log('\n📊 判斷層級統計:');
@@ -108,500 +103,519 @@ class CheckpointRiskServices {
         console.log(`  - ${layer}: ${count} 次`);
       });
       
-      // Step 4: 分析各類型威脅（基於三層判斷）
+      // Step 4: 分析各類型威脅（基於五層判斷）
+      console.log('\n⭐ Step 4: 分析各類型威脅...');
       const blockedTraffic = this.analyzeBlockedTraffic(logEntries, analysisResults);
       const highRiskApps = this.analyzeHighRiskApps(logEntries, analysisResults);
-      const policyViolations = this.analyzePolicyViolations(logEntries, analysisResults);
-      const suspiciousBehavior = this.analyzeSuspiciousBehavior(logEntries, analysisResults);
-      const zoneRisks = this.analyzeSecurityZones(logEntries, analysisResults);
+      const threatPrevention = this.analyzeThreatPrevention(logEntries, analysisResults);
+      const urlFiltering = this.analyzeURLFiltering(logEntries, analysisResults);
+      const owaspAttacks = this.analyzeOWASPAttacks(logEntries, analysisResults);
       
-      console.log(`\n📊 威脅類型統計:`);
-      console.log(`   被封鎖的流量: ${blockedTraffic.count} 次`);
-      console.log(`   高風險應用: ${highRiskApps.count} 次`);
-      console.log(`   政策違規: ${policyViolations.count} 次`);
-      console.log(`   可疑行為: ${suspiciousBehavior.count} 次`);
-      console.log(`   安全區域風險: ${zoneRisks.count} 次`);
+      // Step 5: 地理位置分析（Top 5 來源國家）
+      const geoDistribution = this.analyzeGeoDistribution(logEntries);
       
-      // Step 5: 生成統計資料
-      const geoAnalysis = this.analyzeGeoDistribution(logEntries);
-      const assetAnalysis = this.analyzeAffectedAssets(logEntries);
-      const appAnalysis = this.analyzeApplications(logEntries);
+      // Step 6: 資產分析（Top 5 受攻擊資產）
+      const assetAnalysis = this.analyzeTopTargetedAssets(logEntries, realThreats);
       
-      // 計算時間範圍
-      const timestamps = logEntries
-        .map(log => log.timestamp)
-        .filter(t => t)
-        .map(t => new Date(t).getTime());
-      
-      const timeRange_result = {
-        start: timestamps.length > 0 ? new Date(Math.min(...timestamps)).toISOString() : new Date().toISOString(),
-        end: timestamps.length > 0 ? new Date(Math.max(...timestamps)).toISOString() : new Date().toISOString()
-      };
-      
-      console.log('\n✅ ===== Check Point 防火牆風險分析完成 =====\n');
-      
-      return {
-        blockedTraffic,
-        highRiskApps,
-        policyViolations,
-        suspiciousBehavior,
-        zoneRisks,
-        geoAnalysis,
-        assetAnalysis,
-        appAnalysis,
+      // 綜合分析結果
+      const analysisData = {
+        timeRange: actualTimeRange,
         totalEvents: logEntries.length,
-        realThreats: realThreats.length,
-        realAttacks: realAttacks.length,
-        timeRange: timeRange_result,
-        layerStats: layerStats
+        totalThreats: realThreats.length,
+        layerStats: layerStats,
+        blockedTraffic: blockedTraffic,
+        highRiskApps: highRiskApps,
+        threatPrevention: threatPrevention,
+        urlFiltering: urlFiltering,
+        owaspAttacks: owaspAttacks,
+        geoDistribution: geoDistribution,
+        topAssets: assetAnalysis,
+        analysisResults: analysisResults
       };
+      
+      console.log('\n✅ 分析完成！');
+      return analysisData;
       
     } catch (error) {
-      console.error('❌ Check Point 風險分析失敗:', error);
+      console.error('❌ Check Point 分析過程發生錯誤:', error);
       throw error;
     }
   }
   
   /**
-   * 解析 Check Point 日誌
-   * 使用 checkpointFieldMapping.js 的欄位對應
+   * 解析 Check Point 日誌（包含時間處理修正）
    */
   parseCheckPointLog(rawLog) {
-    // 防護檢查：確保 rawLog 不是 undefined 或 null
-    if (!rawLog) {
-      console.warn('⚠️ 警告: 收到空的日誌記錄，跳過');
-      return null;
-    }
-    
-    // 提取基本欄位
-    const log = {
-      // 時間戳記
-      timestamp: rawLog[this.fieldMapping['@timestamp'].elk_field] || rawLog.time,
+    // 安全獲取欄位值的輔助函數（優先使用直接欄位名，再嘗試映射）
+    const safeGet = (fieldName, alternativeFields = []) => {
+      // 優先使用映射配置的欄位名
+      const fieldConfig = this.fieldMapping[fieldName];
+      if (fieldConfig && fieldConfig.elk_field && rawLog[fieldConfig.elk_field] !== undefined) {
+        return rawLog[fieldConfig.elk_field];
+      }
       
-      // 日誌識別
-      loguid: rawLog[this.fieldMapping.loguid.elk_field],
-      logid: rawLog[this.fieldMapping.logid.elk_field],
+      // 嘗試直接使用欄位名
+      if (rawLog[fieldName] !== undefined) {
+        return rawLog[fieldName];
+      }
       
-      // 網路位址
-      src: rawLog[this.fieldMapping.src.elk_field],
-      dst: rawLog[this.fieldMapping.dst.elk_field],
-      origin: rawLog[this.fieldMapping.origin?.elk_field],
-      dst_domain_name: rawLog[this.fieldMapping.dst_domain_name?.elk_field],
+      // 嘗試備用欄位名
+      for (const altField of alternativeFields) {
+        if (rawLog[altField] !== undefined) {
+          return rawLog[altField];
+        }
+      }
       
-      // 服務與協定
-      service: rawLog[this.fieldMapping.service.elk_field],
-      service_id: rawLog[this.fieldMapping.service_id?.elk_field],
-      protocol: rawLog[this.fieldMapping.protocol?.elk_field],
-      proto: rawLog[this.fieldMapping.proto?.elk_field],
-      
-      // ⭐ 核心欄位：防火牆動作（Layer 1）
-      action: rawLog[this.fieldMapping.action.elk_field],
-      
-      // ⭐ 核心欄位：應用程式風險（Layer 2）
-      app_risk: rawLog[this.fieldMapping.app_risk?.elk_field] || 0,
-      appi_name: rawLog[this.fieldMapping.appi_name?.elk_field],
-      
-      // ⭐ 核心欄位：應用程式類別（Layer 3）
-      app_category: rawLog[this.fieldMapping.app_category?.elk_field],
-      matched_category: rawLog[this.fieldMapping.matched_category?.elk_field],
-      
-      // 應用程式詳細資訊
-      app_id: rawLog[this.fieldMapping.app_id?.elk_field],
-      app_sig_id: rawLog[this.fieldMapping.app_sig_id?.elk_field],
-      app_desc: rawLog[this.fieldMapping.app_desc?.elk_field],
-      app_properties: rawLog[this.fieldMapping.app_properties?.elk_field],
-      
-      // 連線屬性
-      conn_direction: rawLog[this.fieldMapping.conn_direction?.elk_field],
-      duration: rawLog[this.fieldMapping.duration?.elk_field],
-      bytes: rawLog[this.fieldMapping.bytes?.elk_field],
-      
-      // 安全區域
-      security_inzone: rawLog[this.fieldMapping.security_inzone?.elk_field],
-      security_outzone: rawLog[this.fieldMapping.security_outzone?.elk_field],
-      inzone: rawLog[this.fieldMapping.inzone?.elk_field],
-      outzone: rawLog[this.fieldMapping.outzone?.elk_field],
-      
-      // 規則與使用者
-      rule_name: rawLog[this.fieldMapping.rule_name?.elk_field],
-      user: rawLog[this.fieldMapping.user?.elk_field],
-      src_user_dn: rawLog[this.fieldMapping.src_user_dn?.elk_field],
-      src_machine_name: rawLog[this.fieldMapping.src_machine_name?.elk_field],
-      
-      // 流量統計
-      client_inbound_bytes: rawLog[this.fieldMapping.client_inbound_bytes?.elk_field],
-      client_outbound_bytes: rawLog[this.fieldMapping.client_outbound_bytes?.elk_field],
-      client_inbound_packets: rawLog[this.fieldMapping.client_inbound_packets?.elk_field],
-      client_outbound_packets: rawLog[this.fieldMapping.client_outbound_packets?.elk_field],
-      
-      // 網路介面
-      ifname: rawLog[this.fieldMapping.ifname?.elk_field],
-      ifdir: rawLog[this.fieldMapping.ifdir?.elk_field],
-      
-      // 聚合資訊
-      aggregated_log_count: rawLog[this.fieldMapping.aggregated_log_count?.elk_field],
-      connection_count: rawLog[this.fieldMapping.connection_count?.elk_field],
-      
-      // HTTPS 檢查
-      https_inspection_action: rawLog[this.fieldMapping.https_inspection_action?.elk_field],
-      
-      // 原始日誌（供參考）
-      _raw: rawLog
+      return undefined;
     };
     
-    // 地理位置資訊（如果有 geoip）
-    if (rawLog.geoip) {
-      log.country = rawLog.geoip.country_name || rawLog.geoip.country_code2 || 'Unknown';
-      log.city = rawLog.geoip.city_name;
-      log.location = rawLog.geoip.location;
+    // 處理時間戳記（支援 Unix timestamp 和 ISO 8601）
+    const rawTimestamp = safeGet('@timestamp', ['time', 'timestamp']);
+    
+    let timestamp;
+    if (typeof rawTimestamp === 'number') {
+      // Unix timestamp (秒或毫秒)
+      timestamp = new Date(rawTimestamp > 10000000000 ? rawTimestamp : rawTimestamp * 1000).toISOString();
+    } else if (typeof rawTimestamp === 'string') {
+      // ISO 8601 格式
+      timestamp = new Date(rawTimestamp).toISOString();
     } else {
-      log.country = 'Unknown';
+      // 預設當前時間
+      timestamp = new Date().toISOString();
     }
     
-    return log;
+    return {
+      // 基本欄位
+      timestamp: timestamp,
+      log_uid: safeGet('loguid', ['log_uid', 'uid']),
+      action: safeGet('action'),
+      rule_uid: safeGet('rule_uid', ['ruleuid']),
+      rule_name: safeGet('rule_name'),
+      
+      // 來源/目的地
+      src_ip: safeGet('src', ['src_ip', 'origin']),
+      dst_ip: safeGet('dst', ['dst_ip']),
+      src_country: safeGet('src_country', ['origin_sic_name', 's_location']),
+      dst_country: safeGet('dst_country', ['xlatedst_country', 'd_location']),
+      src_machine_name: safeGet('src_machine_name', ['src_host']),
+      dst_machine_name: safeGet('dst_machine_name', ['dst_host', 'dst_domain_name']),
+      
+      // 應用程式
+      appi_name: safeGet('appi_name', ['app_name', 'application']),
+      app_category: safeGet('app_category', ['category']),
+      app_risk: safeGet('app_risk', ['risk']),
+      app_id: safeGet('app_id'),
+      
+      // Threat Prevention 欄位（新增）
+      threat_severity: safeGet('threat_severity', ['severity']),
+      threat_name: safeGet('threat_name'),
+      threat_category: safeGet('threat_category'),
+      burst_count: safeGet('burst_count'),
+      count: safeGet('count'),
+      
+      // HTTP 欄位（新增）
+      http_user_agent: safeGet('http_user_agent', ['user_agent']),
+      http_url: safeGet('http_url', ['url']),
+      http_method: safeGet('http_method', ['method']),
+      
+      // URL Filtering 欄位（新增）
+      url_category: safeGet('url_category'),
+      url_reputation: safeGet('url_reputation', ['reputation']),
+      
+      // 網路層
+      protocol: safeGet('protocol', ['proto']),
+      service: safeGet('service', ['service_id']),
+      dst_port: safeGet('service', ['dst_port', 'port']),
+      
+      // 原始數據
+      rawLog: rawLog
+    };
   }
   
   /**
-   * Layer 1 分析：被封鎖的流量（action = Drop/Reject）
+   * 計算實際日誌時間範圍
+   */
+  calculateActualTimeRange(logEntries) {
+    if (!logEntries || logEntries.length === 0) {
+      const now = new Date().toISOString();
+      return { start: now, end: now };
+    }
+    
+    const timestamps = logEntries
+      .map(log => new Date(log.timestamp).getTime())
+      .filter(t => !isNaN(t));
+    
+    if (timestamps.length === 0) {
+      const now = new Date().toISOString();
+      return { start: now, end: now };
+    }
+    
+    const start = new Date(Math.min(...timestamps)).toISOString();
+    const end = new Date(Math.max(...timestamps)).toISOString();
+    
+    return { start, end };
+  }
+  
+  /**
+   * 格式化時間（台灣時區 UTC+8）
+   */
+  formatTimeTaipei(isoString) {
+    return new Date(isoString).toLocaleString('zh-TW', {
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+      timeZone: 'Asia/Taipei',
+      hour12: false
+    });
+  }
+  
+  /**
+   * 格式化日期（台灣時區）
+   */
+  formatDateTaipei(isoString) {
+    return new Date(isoString).toLocaleDateString('zh-TW', {
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      timeZone: 'Asia/Taipei'
+    });
+  }
+  
+  /**
+   * 分析被封鎖的流量（Layer 1: Action = Drop/Reject）
    */
   analyzeBlockedTraffic(logEntries, analysisResults) {
-    const blockedLogs = logEntries.filter((log, index) => {
-      const result = analysisResults[index];
-      return result.judgmentLayer === 'FIREWALL_ACTION' && 
-             (log.action === 'Drop' || log.action === 'Reject');
-    });
+    const blocked = analysisResults.filter(
+      result => result.isBlocked && result.layer === 'FIREWALL_ACTION'
+    );
     
-    const dropLogs = blockedLogs.filter(log => log.action === 'Drop');
-    const rejectLogs = blockedLogs.filter(log => log.action === 'Reject');
-    
-    return {
-      count: blockedLogs.length,
-      drop: dropLogs.length,
-      reject: rejectLogs.length,
-      topApps: this.getTopN(blockedLogs, 'appi_name', 5),
-      topIPs: this.getTopN(blockedLogs, 'src', 10),
-      topCountries: this.getTopN(blockedLogs, 'country', 10),
-      topTargets: this.getTopN(blockedLogs, 'dst', 5),
-      topRules: this.getTopN(blockedLogs, 'rule_name', 5),
-      affectedAssets: new Set(blockedLogs.map(log => log.dst).filter(Boolean)).size,
-      examples: blockedLogs.slice(0, 3).map(log => ({
-        timestamp: log.timestamp,
-        src: log.src,
-        dst: log.dst,
-        appi_name: log.appi_name,
-        app_category: log.app_category,
-        action: log.action,
-        rule_name: log.rule_name
-      }))
-    };
-  }
-  
-  /**
-   * Layer 2 分析：高風險應用程式（app_risk >= 4）
-   */
-  analyzeHighRiskApps(logEntries, analysisResults) {
-    const highRiskLogs = logEntries.filter((log, index) => {
-      const result = analysisResults[index];
-      return result.judgmentLayer === 'APP_RISK_ASSESSMENT' && 
-             (parseInt(log.app_risk) >= 4);
-    });
-    
-    const criticalRiskLogs = highRiskLogs.filter(log => parseInt(log.app_risk) === 5);
-    const highRiskOnlyLogs = highRiskLogs.filter(log => parseInt(log.app_risk) === 4);
-    
-    return {
-      count: highRiskLogs.length,
-      critical: criticalRiskLogs.length,  // app_risk = 5
-      high: highRiskOnlyLogs.length,      // app_risk = 4
-      topApps: this.getTopN(highRiskLogs, 'appi_name', 10),
-      topCategories: this.getTopN(highRiskLogs, 'app_category', 5),
-      topIPs: this.getTopN(highRiskLogs, 'src', 10),
-      topCountries: this.getTopN(highRiskLogs, 'country', 10),
-      affectedAssets: new Set(highRiskLogs.map(log => log.dst).filter(Boolean)).size,
-      examples: highRiskLogs.slice(0, 3).map(log => ({
-        timestamp: log.timestamp,
-        src: log.src,
-        appi_name: log.appi_name,
-        app_risk: log.app_risk,
-        app_category: log.app_category,
-        action: log.action
-      }))
-    };
-  }
-  
-  /**
-   * Layer 3 分析：違反公司政策的行為（app_category）
-   */
-  analyzePolicyViolations(logEntries, analysisResults) {
-    const violationLogs = logEntries.filter((log, index) => {
-      const result = analysisResults[index];
-      return result.judgmentLayer === 'POLICY_VIOLATION';
-    });
-    
-    // 按嚴重程度分類
-    const criticalViolations = violationLogs.filter((log, index) => {
-      const result = analysisResults.find(r => r.originalData?.appi_name === log.appi_name);
-      return result?.severity === 'critical';
-    });
-    
-    const highViolations = violationLogs.filter((log, index) => {
-      const result = analysisResults.find(r => r.originalData?.appi_name === log.appi_name);
-      return result?.severity === 'high';
-    });
-    
-    const mediumViolations = violationLogs.filter((log, index) => {
-      const result = analysisResults.find(r => r.originalData?.appi_name === log.appi_name);
-      return result?.severity === 'medium';
-    });
-    
-    // 按違規類型分類
-    const violationTypes = {};
-    violationLogs.forEach(log => {
-      const category = log.app_category || 'Unknown';
-      const policyInfo = getPolicyViolationInfo(category);
-      const violationType = policyInfo?.violation_type || 'UNKNOWN';
-      
-      if (!violationTypes[violationType]) {
-        violationTypes[violationType] = {
-          type: violationType,
-          displayName: policyInfo?.displayName || category,
-          count: 0,
-          logs: []
-        };
-      }
-      violationTypes[violationType].count++;
-      if (violationTypes[violationType].logs.length < 3) {
-        violationTypes[violationType].logs.push(log);
-      }
-    });
-    
-    return {
-      count: violationLogs.length,
-      critical: criticalViolations.length,
-      high: highViolations.length,
-      medium: mediumViolations.length,
-      byType: Object.values(violationTypes).sort((a, b) => b.count - a.count),
-      topCategories: this.getTopN(violationLogs, 'app_category', 10),
-      topApps: this.getTopN(violationLogs, 'appi_name', 10),
-      topUsers: this.getTopN(violationLogs, 'user', 5),
-      topIPs: this.getTopN(violationLogs, 'src', 10),
-      topCountries: this.getTopN(violationLogs, 'country', 10),
-      affectedAssets: new Set(violationLogs.map(log => log.dst).filter(Boolean)).size,
-      examples: violationLogs.slice(0, 5).map(log => ({
-        timestamp: log.timestamp,
-        src: log.src,
-        user: log.user,
-        appi_name: log.appi_name,
-        app_category: log.app_category,
-        action: log.action
-      }))
-    };
-  }
-  
-  /**
-   * Layer 4 分析：可疑行為（多因素組合）
-   */
-  analyzeSuspiciousBehavior(logEntries, analysisResults) {
-    const suspiciousLogs = logEntries.filter((log, index) => {
-      const result = analysisResults[index];
-      return result.judgmentLayer === 'COMBINED_ANALYSIS';
-    });
-    
-    return {
-      count: suspiciousLogs.length,
-      topFactors: this.extractRiskFactors(suspiciousLogs, analysisResults),
-      topIPs: this.getTopN(suspiciousLogs, 'src', 10),
-      topCountries: this.getTopN(suspiciousLogs, 'country', 10),
-      topApps: this.getTopN(suspiciousLogs, 'appi_name', 5),
-      affectedAssets: new Set(suspiciousLogs.map(log => log.dst).filter(Boolean)).size,
-      examples: suspiciousLogs.slice(0, 3).map(log => ({
-        timestamp: log.timestamp,
-        src: log.src,
-        appi_name: log.appi_name,
-        app_risk: log.app_risk,
-        conn_direction: log.conn_direction,
-        security_inzone: log.security_inzone,
-        security_outzone: log.security_outzone
-      }))
-    };
-  }
-  
-  /**
-   * 分析安全區域風險
-   */
-  analyzeSecurityZones(logEntries, analysisResults) {
-    const zoneRiskLogs = logEntries.filter(log => {
-      if (!log.security_inzone || !log.security_outzone) return false;
-      return evaluateSecurityZoneRisk(log.security_inzone, log.security_outzone) !== null;
-    });
-    
-    const zoneRiskTypes = {};
-    zoneRiskLogs.forEach(log => {
-      const zoneRisk = evaluateSecurityZoneRisk(log.security_inzone, log.security_outzone);
-      if (zoneRisk) {
-        const key = zoneRisk.riskType;
-        if (!zoneRiskTypes[key]) {
-          zoneRiskTypes[key] = {
-            type: key,
-            description: zoneRisk.description,
-            riskScore: zoneRisk.riskScore,
+    // 統計被封鎖的應用程式
+    const blockedApps = {};
+    blocked.forEach(result => {
+      const originalLog = logEntries.find(log => log.log_uid === result.originalData?.log_uid);
+      if (originalLog) {
+        const appName = originalLog.appi_name || 'Unknown';
+        if (!blockedApps[appName]) {
+          blockedApps[appName] = {
+            appName: appName,
             count: 0,
-            logs: []
+            action: originalLog.action,
+            app_risk: originalLog.app_risk,
+            app_category: originalLog.app_category,
+            ips: new Set()
           };
         }
-        zoneRiskTypes[key].count++;
-        if (zoneRiskTypes[key].logs.length < 3) {
-          zoneRiskTypes[key].logs.push(log);
+        blockedApps[appName].count++;
+        blockedApps[appName].ips.add(originalLog.src_ip);
+      }
+    });
+    
+    // 轉換為陣列並排序
+    const topBlockedApps = Object.values(blockedApps)
+      .map(app => ({
+        ...app,
+        uniqueIPs: app.ips.size,
+        ips: undefined
+      }))
+      .sort((a, b) => b.count - a.count)
+      .slice(0, 10);
+    
+    return {
+      totalBlocked: blocked.length,
+      topBlockedApps: topBlockedApps
+    };
+  }
+  
+  /**
+   * 分析高風險應用程式（Layer 3: app_risk >= 4）
+   */
+  analyzeHighRiskApps(logEntries, analysisResults) {
+    const highRisk = analysisResults.filter(
+      result => result.layer === 'APP_RISK_ASSESSMENT' && result.isThreat
+    );
+    
+    const appStats = {};
+    highRisk.forEach(result => {
+      const originalLog = logEntries.find(log => log.log_uid === result.originalData?.log_uid);
+      if (originalLog) {
+        const appName = originalLog.appi_name || 'Unknown';
+        if (!appStats[appName]) {
+          appStats[appName] = {
+            appName: appName,
+            app_risk: originalLog.app_risk,
+            app_category: originalLog.app_category,
+            count: 0,
+            allowedCount: 0,
+            blockedCount: 0,
+            ips: new Set()
+          };
+        }
+        appStats[appName].count++;
+        appStats[appName].ips.add(originalLog.src_ip);
+        
+        if (result.isBlocked) {
+          appStats[appName].blockedCount++;
+        } else {
+          appStats[appName].allowedCount++;
         }
       }
     });
     
-    return {
-      count: zoneRiskLogs.length,
-      byType: Object.values(zoneRiskTypes).sort((a, b) => b.riskScore - a.riskScore),
-      topIPs: this.getTopN(zoneRiskLogs, 'src', 10),
-      topZonePairs: this.getTopZonePairs(zoneRiskLogs, 5),
-      affectedAssets: new Set(zoneRiskLogs.map(log => log.dst).filter(Boolean)).size
-    };
-  }
-  
-  /**
-   * 地理分佈分析
-   */
-  analyzeGeoDistribution(logEntries) {
-    return {
-      topCountries: this.getTopN(logEntries, 'country', 20),
-      topIPs: this.getTopN(logEntries, 'src', 20),
-      uniqueCountries: new Set(logEntries.map(log => log.country).filter(Boolean)).size,
-      uniqueIPs: new Set(logEntries.map(log => log.src).filter(Boolean)).size
-    };
-  }
-  
-  /**
-   * 受影響資產分析
-   */
-  analyzeAffectedAssets(logEntries) {
-    const assets = logEntries.map(log => log.dst).filter(Boolean);
-    const uniqueAssets = new Set(assets);
+    const topHighRiskApps = Object.values(appStats)
+      .map(app => ({
+        ...app,
+        uniqueIPs: app.ips.size,
+        ips: undefined
+      }))
+      .sort((a, b) => b.app_risk - a.app_risk || b.count - a.count)
+      .slice(0, 10);
     
     return {
-      totalAssets: uniqueAssets.size,
-      topAssets: this.getTopN(logEntries, 'dst', 10),
-      topDomains: this.getTopN(logEntries, 'dst_domain_name', 10)
+      totalHighRiskEvents: highRisk.length,
+      topHighRiskApps: topHighRiskApps
     };
   }
   
   /**
-   * 應用程式分析
+   * 分析 Threat Prevention 檢測（Layer 2: threat_severity）
    */
-  analyzeApplications(logEntries) {
-    const appRiskDistribution = {};
-    logEntries.forEach(log => {
-      const risk = parseInt(log.app_risk) || 0;
-      appRiskDistribution[risk] = (appRiskDistribution[risk] || 0) + 1;
+  analyzeThreatPrevention(logEntries, analysisResults) {
+    const threats = analysisResults.filter(
+      result => result.layer === 'THREAT_PREVENTION' && result.isThreat
+    );
+    
+    const threatStats = {};
+    threats.forEach(result => {
+      const originalLog = logEntries.find(log => log.log_uid === result.originalData?.log_uid);
+      if (originalLog && originalLog.threat_name) {
+        const threatName = originalLog.threat_name;
+        if (!threatStats[threatName]) {
+          threatStats[threatName] = {
+            threatName: threatName,
+            threat_severity: originalLog.threat_severity,
+            threat_category: originalLog.threat_category,
+            count: 0,
+            ips: new Set(),
+            actions: {}
+          };
+        }
+        threatStats[threatName].count++;
+        threatStats[threatName].ips.add(originalLog.src_ip);
+        
+        const action = originalLog.action || 'Unknown';
+        threatStats[threatName].actions[action] = (threatStats[threatName].actions[action] || 0) + 1;
+      }
     });
     
+    const topThreats = Object.values(threatStats)
+      .map(threat => ({
+        ...threat,
+        uniqueIPs: threat.ips.size,
+        ips: undefined
+      }))
+      .sort((a, b) => b.count - a.count)
+      .slice(0, 10);
+    
     return {
-      topApps: this.getTopN(logEntries, 'appi_name', 20),
-      topCategories: this.getTopN(logEntries, 'app_category', 15),
-      riskDistribution: appRiskDistribution,
-      uniqueApps: new Set(logEntries.map(log => log.appi_name).filter(Boolean)).size
+      totalThreatPreventionEvents: threats.length,
+      topThreats: topThreats
     };
   }
   
   /**
-   * 生成 AI Prompt（針對 Check Point 三層判斷模型）
+   * 分析 URL Filtering 違規（Layer 5: url_category）
+   */
+  analyzeURLFiltering(logEntries, analysisResults) {
+    const violations = analysisResults.filter(
+      result => result.layer === 'URL_FILTERING' && result.isThreat
+    );
+    
+    const categoryStats = {};
+    violations.forEach(result => {
+      const originalLog = logEntries.find(log => log.log_uid === result.originalData?.log_uid);
+      if (originalLog && originalLog.url_category) {
+        const category = originalLog.url_category;
+        if (!categoryStats[category]) {
+          categoryStats[category] = {
+            category: category,
+            count: 0,
+            ips: new Set(),
+            actions: {}
+          };
+        }
+        categoryStats[category].count++;
+        categoryStats[category].ips.add(originalLog.src_ip);
+        
+        const action = originalLog.action || 'Unknown';
+        categoryStats[category].actions[action] = (categoryStats[category].actions[action] || 0) + 1;
+      }
+    });
+    
+    const topCategories = Object.values(categoryStats)
+      .map(cat => ({
+        ...cat,
+        uniqueIPs: cat.ips.size,
+        ips: undefined
+      }))
+      .sort((a, b) => b.count - a.count)
+      .slice(0, 10);
+    
+    return {
+      totalURLFilteringViolations: violations.length,
+      topCategories: topCategories
+    };
+  }
+  
+  /**
+   * 分析 OWASP 攻擊模式（Layer 4: URI/UA Analysis）
+   */
+  analyzeOWASPAttacks(logEntries, analysisResults) {
+    const owaspAttacks = analysisResults.filter(
+      result => (result.layer === 'URI_UA_ANALYSIS') && result.isThreat
+    );
+    
+    const attackTypeStats = {};
+    owaspAttacks.forEach(result => {
+      const attackType = result.uriAnalysis?.attackType || result.uaAnalysis?.attackType || 'UNKNOWN';
+      const owaspCategory = result.uriAnalysis?.owaspCategory || 'Unknown';
+      
+      if (!attackTypeStats[attackType]) {
+        attackTypeStats[attackType] = {
+          attackType: attackType,
+          owaspCategory: owaspCategory,
+          count: 0,
+          ips: new Set()
+        };
+      }
+      attackTypeStats[attackType].count++;
+      
+      const originalLog = logEntries.find(log => log.log_uid === result.originalData?.log_uid);
+      if (originalLog) {
+        attackTypeStats[attackType].ips.add(originalLog.src_ip);
+      }
+    });
+    
+    const topAttackTypes = Object.values(attackTypeStats)
+      .map(attack => ({
+        ...attack,
+        uniqueIPs: attack.ips.size,
+        ips: undefined
+      }))
+      .sort((a, b) => b.count - a.count)
+      .slice(0, 10);
+    
+    return {
+      totalOWASPAttacks: owaspAttacks.length,
+      topAttackTypes: topAttackTypes
+    };
+  }
+  
+  /**
+   * 地理位置分析（Top 5 來源國家）
+   */
+  analyzeGeoDistribution(logEntries) {
+    const countryStats = {};
+    
+    logEntries.forEach(log => {
+      const country = log.src_country || 'Unknown';
+      if (!countryStats[country]) {
+        countryStats[country] = {
+          country: country,
+          count: 0,
+          ips: new Set()
+        };
+      }
+      countryStats[country].count++;
+      countryStats[country].ips.add(log.src_ip);
+    });
+    
+    const topCountries = Object.values(countryStats)
+      .map(stat => ({
+        ...stat,
+        uniqueIPs: stat.ips.size,
+        ips: undefined
+      }))
+      .sort((a, b) => b.count - a.count)
+      .slice(0, 5);
+    
+    return topCountries;
+  }
+  
+  /**
+   * 資產分析（Top 5 受攻擊資產）
+   */
+  analyzeTopTargetedAssets(logEntries, threats) {
+    const assetStats = {};
+    
+    threats.forEach(threat => {
+      const originalLog = logEntries.find(log => log.log_uid === threat.originalData?.log_uid);
+      if (originalLog) {
+        const asset = originalLog.dst_ip || originalLog.dst_machine_name || 'Unknown';
+        if (!assetStats[asset]) {
+          assetStats[asset] = {
+            asset: asset,
+            dst_ip: originalLog.dst_ip,
+            dst_machine_name: originalLog.dst_machine_name,
+            attackCount: 0,
+            attackers: new Set(),
+            severityDistribution: { critical: 0, high: 0, medium: 0, low: 0 }
+          };
+        }
+        assetStats[asset].attackCount++;
+        assetStats[asset].attackers.add(originalLog.src_ip);
+        
+        const severity = threat.severity || 'low';
+        assetStats[asset].severityDistribution[severity] = 
+          (assetStats[asset].severityDistribution[severity] || 0) + 1;
+      }
+    });
+    
+    const topAssets = Object.values(assetStats)
+      .map(asset => ({
+        ...asset,
+        uniqueAttackers: asset.attackers.size,
+        attackers: undefined
+      }))
+      .sort((a, b) => b.attackCount - a.attackCount)
+      .slice(0, 5);
+    
+    return topAssets;
+  }
+  
+  /**
+   * Top 5 來源 IP（含國家資訊）
+   */
+  getTopIPsWithCountry(logEntries, n = 5) {
+    const ipStats = {};
+    
+    logEntries.forEach(log => {
+      const ip = log.src_ip;
+      if (!ip) return;
+      
+      if (!ipStats[ip]) {
+        ipStats[ip] = {
+          ip: ip,
+          country: log.src_country || 'Unknown',
+          count: 0
+        };
+      }
+      ipStats[ip].count++;
+    });
+    
+    return Object.values(ipStats)
+      .sort((a, b) => b.count - a.count)
+      .slice(0, n);
+  }
+  
+  /**
+   * 產生 AI 分析提示詞
    */
   generateAIPrompt(analysisData) {
-    const {
-      blockedTraffic,
-      highRiskApps,
-      policyViolations,
-      suspiciousBehavior,
-      zoneRisks,
-      geoAnalysis,
-      assetAnalysis,
-      appAnalysis,
-      totalEvents,
-      realThreats,
-      realAttacks,
-      timeRange,
-      layerStats
-    } = analysisData;
+    const { timeRange, totalEvents, totalThreats } = analysisData;
     
-    // 構建威脅統計文字
-    const threatSections = [];
-    
-    // 1. 被封鎖的流量
-    if (blockedTraffic.count > 0) {
-      threatSections.push({
-        type: '被封鎖的流量（Layer 1: 防火牆動作）',
-        data: blockedTraffic,
-        description: `防火牆已封鎖的流量（Drop: ${blockedTraffic.drop}, Reject: ${blockedTraffic.reject}）`
-      });
-    }
-    
-    // 2. 高風險應用程式
-    if (highRiskApps.count > 0) {
-      threatSections.push({
-        type: '高風險應用程式（Layer 2: 應用風險評估）',
-        data: highRiskApps,
-        description: `app_risk >= 4 的高風險應用（Critical: ${highRiskApps.critical}, High: ${highRiskApps.high}）`
-      });
-    }
-    
-    // 3. 政策違規
-    if (policyViolations.count > 0) {
-      threatSections.push({
-        type: '違反公司政策（Layer 3: 政策合規）',
-        data: policyViolations,
-        description: `違反公司政策的行為（Critical: ${policyViolations.critical}, High: ${policyViolations.high}, Medium: ${policyViolations.medium}）`
-      });
-    }
-    
-    // 4. 可疑行為
-    if (suspiciousBehavior.count > 0) {
-      threatSections.push({
-        type: '可疑行為（Layer 4: 多因素分析）',
-        data: suspiciousBehavior,
-        description: '多個風險因素組合的可疑行為'
-      });
-    }
-    
-    // 5. 安全區域風險
-    if (zoneRisks.count > 0) {
-      threatSections.push({
-        type: '安全區域風險',
-        data: zoneRisks,
-        description: '可疑的安全區域流向'
-      });
-    }
-    
-    // 構建威脅統計文字
-    let threatStatisticsText = '';
-    if (threatSections.length === 0) {
-      threatStatisticsText = '✅ **未檢測到明顯威脅**';
-    } else {
-      threatStatisticsText = threatSections.map((section, index) => {
-        const { type, data, description } = section;
-        
-        return `
-${index + 1}. **${type}**
-   - 檢測方式: ${description}
-   - 檢測次數: ${data.count}
-   ${data.critical !== undefined ? `- 嚴重等級: ${data.critical}` : ''}
-   ${data.high !== undefined ? `- 高風險: ${data.high}` : ''}
-   ${data.medium !== undefined ? `- 中風險: ${data.medium}` : ''}
-   - 受影響資產: ${data.affectedAssets || 0}
-   - Top 5 應用程式: ${data.topApps ? data.topApps.slice(0, 5).map(app => `${app.item} (${app.count}次)`).join(', ') : '無'}
-   - Top 5 來源IP: ${data.topIPs ? data.topIPs.slice(0, 5).map(ip => `${ip.item} (${ip.count}次)`).join(', ') : '無'}
-   - Top 5 來源國家: ${data.topCountries ? data.topCountries.slice(0, 5).map(c => `${c.item} (${c.count}次)`).join(', ') : '無'}
-   ${data.topCategories ? `- Top 5 應用類別: ${data.topCategories.slice(0, 5).map(cat => `${cat.item} (${cat.count}次)`).join(', ')}` : ''}
-   ${data.topUsers ? `- Top 3 使用者: ${data.topUsers.slice(0, 3).map(u => `${u.item} (${u.count}次)`).join(', ')}` : ''}
-`.trim();
-      }).join('\n\n');
-    }
-
     const promptTemplate = `
 你是一位資深的網路安全分析專家，專精於 Check Point 防火牆日誌分析和威脅識別。
 
@@ -609,354 +623,238 @@ ${index + 1}. **${type}**
 
 請根據以下 Check Point 防火牆日誌數據，**自動識別並分類所有威脅類型**，生成完整的風險評估報告。
 
-**重要：請基於三層判斷模型（應用風險評估、封鎖流量分析、政策違規檢測）進行分析。**
+**重要：請不要使用預設的威脅類型清單。所有威脅類型都應該從日誌數據中自動識別。**
 
 ---
 
 ### 【資料來源】
 
 - **索引名稱**: ${this.elkConfig.index}
-- **時間範圍**: ${timeRange.start} ~ ${timeRange.end}
+- **分析時間範圍（台灣時間 UTC+8）**: 
+  - 開始: ${this.formatTimeTaipei(timeRange.start)}
+  - 結束: ${this.formatTimeTaipei(timeRange.end)}
 - **總日誌數**: ${totalEvents.toLocaleString()} 筆
-- **真實威脅數**: ${realThreats.toLocaleString()} 筆（經三層判斷模型驗證）
-- **確定攻擊數**: ${realAttacks.toLocaleString()} 筆
-- **分析時間**: ${new Date().toISOString()}
-- **產品**: Check Point Firewall
-- **判斷模型**: 三層判斷系統
+- **檢測到的威脅數**: ${totalThreats.toLocaleString()} 筆
+- **分析時間**: ${this.formatTimeTaipei(new Date().toISOString())}
 
 ---
 
-### 【Check Point 三層判斷模型】
+### 【Check Point 五層判斷模型】
 
-**判斷邏輯分為 3 個主要層次 + 1 個輔助層次**：
+**Layer 1: Firewall Action (防火牆動作)**
+- Drop/Reject: 已封鎖的威脅
+- Accept/Allow: 需要深度分析
+- Alert: 告警事件
 
-**Layer 1 - 被封鎖的流量（最高優先級）**
-- action === 'Drop' → 確定威脅（嚴重攻擊）
-- action === 'Reject' → 確定威脅（政策限制或攻擊）
-- 檢測次數: ${layerStats.FIREWALL_ACTION || 0} 次
+**Layer 2: Threat Prevention (威脅防護)**
+- threat_severity: High/Medium/Low
+- threat_name: SQL Injection, XSS, Botnet, Exploit 等
+- burst_count: 連線爆發次數
 
-**Layer 2 - 應用程式風險評估**
-- app_risk === 5 → 嚴重風險應用
-- app_risk === 4 → 高風險應用
-- app_risk === 3 → 中風險應用（需監控）
-- 檢測次數: ${layerStats.APP_RISK_ASSESSMENT || 0} 次
+**Layer 3: Application Risk (應用程式風險)**
+- app_risk = 5: 嚴重風險
+- app_risk = 4: 高風險
+- app_risk = 3: 中風險
 
-**Layer 3 - 違反公司政策的行為**
-- 嚴重違規: Anonymizer（匿名代理）, Cryptocurrency Mining（挖礦）
-- 高風險違規: Pornography（色情）, Gambling（賭博）, Remote Administration（遠端管理）
-- 中風險違規: Social Media（社交媒體）, Streaming Media（串流）, Cloud Storage（雲端儲存）
-- 檢測次數: ${layerStats.POLICY_VIOLATION || 0} 次
+**Layer 4: URI/UA Analysis (OWASP TOP 10 攻擊模式)**
+- SQL Injection: union select, or 1=1, exec(
+- XSS: <script>, javascript:, onerror=
+- Command Injection: |cat, ;ls, $(
+- Path Traversal: ../, /etc/passwd
+- 惡意 User-Agent: sqlmap, nikto, nmap
 
-**Layer 4 - 綜合分析（多因素組合）**
-- 中等風險應用 + 外部進入連線 (Inbound)
-- 不信任區域 → 信任區域 (untrust → trust)
-- 長時間連線 (> 1小時)
-- 大量資料傳輸 (> 100MB)
-- 檢測次數: ${layerStats.COMBINED_ANALYSIS || 0} 次
-
-**威脅分數系統**（0-100，分數越低風險越高）：
-- 0-30: 嚴重威脅 (Critical)
-- 31-50: 高風險 (High)
-- 51-70: 中風險 (Medium)
-- 71-85: 低風險 (Low)
-- 86-100: 正常流量 (Clean)
+**Layer 5: URL Filtering (URL 分類)**
+- Malicious Sites: 惡意網站
+- Phishing: 釣魚網站
+- Pornography/Gambling: 政策違規
 
 ---
 
-### 【威脅統計（基於真實 Check Point 日誌與三層判斷）】
+### 【分析數據】
 
-${threatStatisticsText}
-
----
-
-### 【地理與資產分析】⭐ 真實數據區塊 ⭐
-
-⚠️ **重要指示**：以下是從 Check Point 日誌中提取的真實威脅數據，在生成 aiInsight 和 description 時，**必須優先使用這些實際數據**。
-
-- **Top 10 攻擊來源國家（真實）**: ${geoAnalysis.topCountries.slice(0, 10).map(c => `${c.item} (${c.count}次)`).join(', ') || '無'}
-- **Top 10 攻擊來源IP（真實）**: ${geoAnalysis.topIPs.slice(0, 10).map(ip => `${ip.item} (${ip.count}次)`).join(', ') || '無'}
-- **受影響資產總數**: ${assetAnalysis.totalAssets}
-- **Top 5 被攻擊資產（真實）**: ${assetAnalysis.topAssets.slice(0, 5).map(a => `${a.item} (${a.count}次)`).join(', ') || '無'}
-- **Top 10 應用程式（真實）**: ${appAnalysis.topApps.slice(0, 10).map(app => `${app.item} (${app.count}次)`).join(', ') || '無'}
-- **Top 5 應用類別（真實）**: ${appAnalysis.topCategories.slice(0, 5).map(cat => `${cat.item} (${cat.count}次)`).join(', ') || '無'}
+${JSON.stringify(analysisData, null, 2)}
 
 ---
 
 ### 【輸出格式要求】
 
-請生成 **嚴格的 JSON 格式** 風險報告：
+請使用 JSON 格式輸出，必須包含以下結構：
 
 \`\`\`json
 {
   "risks": [
     {
-      "id": "威脅類型-唯一識別碼-時間戳",
-      "title": "威脅標題（簡潔明確，例如：高風險應用存取、政策違規行為、被封鎖的惡意流量）",
-      "severity": "critical | high | medium | low",
-      "openIssues": 檢測次數（數字）,
-      "resolvedIssues": 0,
-      "affectedAssets": 受影響的唯一主機數量（數字）,
-      "tags": ["Check Point", "Policy Violation", "High Risk App", "Blocked Traffic"],
-      "description": "詳細描述（200-300字），必須包含三層判斷結果和具體的防火牆動作",
-      "aiInsight": "AI 深度分析（150-250字），必須包含以下內容：
-        1. 具體檢測數字（威脅總次數、高風險次數、防火牆封鎖次數）和時間範圍
-        2. Check Point 三層判斷模型的分析結果（Layer 1: 防火牆動作、Layer 2: app_risk 評估、Layer 3: 政策違規檢測、Layer 4: 多因素分析）
-        3. Check Point 特定指標（app_risk 等級、action 動作、app_category 類別、安全區域流向）
-        4. 主要威脅來源（Top 3 國家及其次數、Top 3 IP 及其次數）
-        5. 主要應用程式（Top 3 應用及其使用次數、app_risk 等級）
-        6. 主要目標資產（Top 3 目標及其被存取次數）
-        7. 政策影響分析（違反的政策類型、業務影響、法律風險）
-        8. 具體建議（基於三層判斷結果的 Check Point 防火牆規則配置建議）
-        
-        範例格式參考：
-        在 [開始時間] 至 [結束時間] 期間，Check Point 防火牆三層判斷模型檢測到 [總次數] 次 [威脅類型]，其中 [高風險次數] 次被 Layer 1 封鎖（action: [Drop/Reject]），[次數] 次被 Layer 2 評估為 app_risk=[等級]，[次數] 次違反 Layer 3 公司政策（[政策類型]）。主要威脅來自 [國家1]（[次數1] 次，IP [實際IP1]）、[國家2]（[次數2] 次，IP [實際IP2]）、[國家3]（[次數3] 次，IP [實際IP3]）。涉及應用程式包含 [應用1]（[次數1] 次，app_risk=[等級]）、[應用2]（[次數2] 次）。攻擊目標為 [目標1]（[次數1] 次）、[目標2]（[次數2] 次）。共影響 [資產數] 個資產。建議 [具體的 Check Point 規則配置措施]。
-        
-        ⚠️ **關鍵要求**：
-        - 必須使用上方【威脅統計】和【地理與資產分析】中的真實數據
-        - 禁止使用測試 IP（如 1.2.3.4、5.6.7.8、192.168.x.x、10.0.x.x 等）
-        - IP 地址必須與【地理與資產分析】中列出的完全一致
-        - 國家、應用程式、次數都必須使用真實統計數據",
-      "createdDate": "${new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}",
-      "updatedDate": "${new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}",
-      "exploitInWild": true | false,
-      "internetExposed": true,
-      "confirmedExploitable": true | false,
-      "cveId": null,
+      "id": "risk_001",
+      "title": "威脅標題（從日誌中自動識別）",
+      "severity": "critical/high/medium/low",
+      "category": "BLOCKED_ATTACK/THREAT_PREVENTION/HIGH_RISK_APP/URI_ATTACK/URL_FILTERING",
+      "layer": "FIREWALL_ACTION/THREAT_PREVENTION/APP_RISK_ASSESSMENT/URI_UA_ANALYSIS/URL_FILTERING",
+      "description": "威脅詳細描述",
+      "affectedAssets": ["資產1", "資產2"],
+      "attackCount": 數量,
+      "uniqueIPs": 唯一 IP 數量,
+      "topCountries": ["國家1", "國家2"],
+      "aiInsight": "AI 深度洞察分析",
       "recommendations": [
         {
-          "title": "建議標題",
-          "description": "建議描述（150-200字），針對 Check Point 防火牆的具體規則配置建議",
-          "priority": "high | medium | low"
+          "priority": "high/medium/low",
+          "action": "建議操作",
+          "reason": "原因說明"
         }
       ]
     }
-  ]
+  ],
+  "summary": {
+    "totalRisks": 風險總數,
+    "criticalCount": 嚴重風險數,
+    "highCount": 高風險數,
+    "mediumCount": 中風險數,
+    "lowCount": 低風險數
+  }
 }
 \`\`\`
 
----
+### 【分析要點】
 
-### 【輸出規則】
+1. **自動識別威脅**：從日誌數據中自動識別威脅類型，不要使用預設清單
+2. **多層判斷**：根據五層判斷模型分類威脅
+3. **優先級排序**：按照威脅嚴重程度排序
+4. **可操作建議**：提供具體的緩解措施
+5. **關聯分析**：識別相關聯的攻擊模式
 
-1. ⚠️ **關鍵規則**：只生成上面「威脅統計」中明確列出的威脅類型
-2. ⚠️ **絕對禁止**：不要生成任何在「威脅統計」中未列出的威脅類型
-3. ⚠️ **Check Point 專屬**：建議必須針對 Check Point 防火牆的規則和功能
-4. ⚠️ **CVE 編號規則**：將 cveId 設為 null
-5. ⚠️ **三層判斷**：description 中必須說明判斷依據（Layer 1-3）
-6. 每個風險至少提供 2-3 個具體建議
-7. ⚠️ **aiInsight 必須包含**：
-   - 具體數字（威脅總次數、高風險次數、受影響資產數）
-   - Check Point 三層判斷模型的 Layer 1-3 分析結果
-   - Check Point 技術指標（app_risk、action、app_category、security zones）
-   - Top 3 來源國家、Top 3 IP、Top 3 應用程式、Top 3 目標（包含次數）
-   - **IP 地址必須使用【地理與資產分析】中列出的真實 IP，嚴格禁止使用測試或私有 IP**
-   - 政策影響與法律風險分析
-   - 基於實際數據的 Check Point 防火牆具體規則建議
-8. 如果沒有威脅，必須輸出空的 risks 陣列
-9. ⚠️ **禁止使用模糊語言**：避免「可能」、「或許」、「建議檢查」等不確定性描述，必須基於實際數據提供明確的分析和建議
-10. ⚠️ **重點關注**：
-    - Layer 1（被封鎖流量）為最高優先級威脅
-    - Layer 2（高風險應用）需要特別關注 app_risk >= 4 的應用
-    - Layer 3（政策違規）需要明確指出違反的政策類型和業務影響
-
----
-
-請以繁體中文回答，**務必輸出純 JSON 格式**，不要有 markdown 或其他格式符號。
-`;
-
-    return promptTemplate.trim();
+請開始分析。
+    `.trim();
+    
+    return promptTemplate;
   }
   
   /**
-   * 生成 Fallback 風險資料（AI 解析失敗時使用）
+   * 產生備用風險報告（當 AI 無法使用時）
    */
   generateFallbackRisks(analysisData) {
+    const { timeRange, totalEvents, totalThreats, blockedTraffic, highRiskApps, threatPrevention, urlFiltering, owaspAttacks } = analysisData;
+    
     const risks = [];
-    const { blockedTraffic, highRiskApps, policyViolations } = analysisData;
+    let riskId = 1;
     
-    // 1. 被封鎖的流量
-    if (blockedTraffic.count > 0) {
-      const topCountry = blockedTraffic.topCountries?.[0];
-      const topIP = blockedTraffic.topIPs?.[0];
-      const topApp = blockedTraffic.topApps?.[0];
-      
+    // Risk 1: 被封鎖的流量
+    if (blockedTraffic.totalBlocked > 0) {
       risks.push({
-        id: `blocked-traffic-${Date.now()}`,
-        title: '被封鎖的惡意流量（防火牆動作）',
+        id: `risk_${String(riskId++).padStart(3, '0')}`,
+        title: '防火牆已封鎖的威脅流量',
         severity: 'critical',
-        openIssues: blockedTraffic.count,
-        resolvedIssues: 0,
-        affectedAssets: blockedTraffic.affectedAssets,
-        tags: ['Check Point', 'Blocked Traffic', 'Layer 1'],
-        description: `Check Point 防火牆已封鎖 ${blockedTraffic.count} 次惡意流量嘗試（Drop: ${blockedTraffic.drop}, Reject: ${blockedTraffic.reject}），這些流量已被 Layer 1 判定為確定威脅。`,
-        aiInsight: `在分析時間範圍內，Check Point 防火牆 Layer 1 判斷檢測到 ${blockedTraffic.count} 次被封鎖的流量，其中 ${blockedTraffic.drop} 次被靜默丟棄（Drop），${blockedTraffic.reject} 次被明確拒絕（Reject）。主要攻擊來自 ${topCountry?.item || '未知地區'}（${topCountry?.count || 0} 次），Top 攻擊 IP 為 ${topIP?.item || '未知'}（${topIP?.count || 0} 次）。涉及應用程式包含 ${topApp?.item || '未知應用'}（${topApp?.count || 0} 次）。共影響 ${blockedTraffic.affectedAssets} 個資產。建議檢查防火牆規則配置，確認是否需要調整封鎖策略。`,
-        createdDate: new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }),
-        updatedDate: new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }),
-        exploitInWild: true,
-        internetExposed: true,
-        confirmedExploitable: false,
-        cveId: null,
+        category: 'BLOCKED_ATTACK',
+        layer: 'FIREWALL_ACTION',
+        description: `防火牆檢測並封鎖了 ${blockedTraffic.totalBlocked} 筆威脅流量`,
+        affectedAssets: blockedTraffic.topBlockedApps.slice(0, 5).map(app => app.appName),
+        attackCount: blockedTraffic.totalBlocked,
+        uniqueIPs: blockedTraffic.topBlockedApps.reduce((sum, app) => sum + app.uniqueIPs, 0),
+        topApps: blockedTraffic.topBlockedApps.slice(0, 5),
+        aiInsight: '這些流量已被防火牆成功封鎖，表示安全規則正在發揮作用。',
         recommendations: [
-          {
-            title: topIP?.item ? `持續封鎖來源 IP ${topIP.item}` : '持續封鎖攻擊來源 IP',
-            description: topIP?.item 
-              ? `該 IP (${topIP.item}) 已發起 ${topIP.count} 次攻擊，建議在 Check Point 中維持封鎖規則並加入黑名單` 
-              : '維持 Check Point 防火牆封鎖規則並定期檢查',
-            priority: 'high'
-          },
-          {
-            title: '檢查防火牆規則配置',
-            description: '審查 Check Point 防火牆規則，確認封鎖策略是否需要優化',
-            priority: 'medium'
-          }
-        ]
+          { priority: 'medium', action: '檢查封鎖規則是否過於嚴格', reason: '避免誤封正常流量' },
+          { priority: 'low', action: '定期審查封鎖日誌', reason: '持續優化安全規則' }
+        ],
+        createdDate: this.formatDateTaipei(timeRange.start),
+        updatedDate: this.formatDateTaipei(timeRange.end)
       });
     }
     
-    // 2. 高風險應用程式
-    if (highRiskApps.count > 0) {
-      const topCountry = highRiskApps.topCountries?.[0];
-      const topIP = highRiskApps.topIPs?.[0];
-      const topApp = highRiskApps.topApps?.[0];
-      
+    // Risk 2: 高風險應用程式
+    if (highRiskApps.totalHighRiskEvents > 0) {
       risks.push({
-        id: `high-risk-apps-${Date.now()}`,
-        title: '高風險應用程式存取',
-        severity: highRiskApps.critical > 0 ? 'critical' : 'high',
-        openIssues: highRiskApps.count,
-        resolvedIssues: 0,
-        affectedAssets: highRiskApps.affectedAssets,
-        tags: ['Check Point', 'High Risk App', 'Layer 2'],
-        description: `Check Point 檢測到 ${highRiskApps.count} 次高風險應用程式存取（app_risk >= 4），其中 ${highRiskApps.critical} 次為嚴重風險應用（app_risk=5）。`,
-        aiInsight: `在分析時間範圍內，Check Point Layer 2 應用風險評估檢測到 ${highRiskApps.count} 次高風險應用程式存取，其中 ${highRiskApps.critical} 次為嚴重風險等級（app_risk=5），${highRiskApps.high} 次為高風險等級（app_risk=4）。主要來源為 ${topCountry?.item || '未知地區'}（${topCountry?.count || 0} 次），Top IP 為 ${topIP?.item || '未知'}（${topIP?.count || 0} 次）。涉及應用程式包含 ${topApp?.item || '未知應用'}（${topApp?.count || 0} 次）。共影響 ${highRiskApps.affectedAssets} 個資產。建議檢查這些應用程式是否符合公司使用政策，並考慮在 Check Point 中配置應用控制規則。`,
-        createdDate: new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }),
-        updatedDate: new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }),
-        exploitInWild: false,
-        internetExposed: true,
-        confirmedExploitable: false,
-        cveId: null,
+        id: `risk_${String(riskId++).padStart(3, '0')}`,
+        title: '高風險應用程式活動',
+        severity: 'high',
+        category: 'HIGH_RISK_APPLICATION',
+        layer: 'APP_RISK_ASSESSMENT',
+        description: `檢測到 ${highRiskApps.totalHighRiskEvents} 筆高風險應用程式（app_risk >= 4）活動`,
+        affectedAssets: highRiskApps.topHighRiskApps.slice(0, 5).map(app => app.appName),
+        attackCount: highRiskApps.totalHighRiskEvents,
+        topApps: highRiskApps.topHighRiskApps.slice(0, 5),
+        aiInsight: '這些應用程式具有高安全風險，建議限制或監控其使用。',
         recommendations: [
-          {
-            title: '配置應用控制規則',
-            description: `在 Check Point Application Control 中配置規則，封鎖或限制 app_risk >= 4 的應用程式`,
-            priority: 'high'
-          },
-          {
-            title: '審查應用程式使用政策',
-            description: '檢查這些高風險應用是否符合公司使用政策，並向使用者宣導風險',
-            priority: 'medium'
-          }
-        ]
+          { priority: 'high', action: '審查高風險應用程式使用政策', reason: '降低安全風險' },
+          { priority: 'high', action: '考慮封鎖或限制高風險應用', reason: '保護企業資產' }
+        ],
+        createdDate: this.formatDateTaipei(timeRange.start),
+        updatedDate: this.formatDateTaipei(timeRange.end)
       });
     }
     
-    // 3. 政策違規
-    if (policyViolations.count > 0) {
-      const topCategory = policyViolations.topCategories?.[0];
-      const topUser = policyViolations.topUsers?.[0];
-      const topIP = policyViolations.topIPs?.[0];
-      
+    // Risk 3: Threat Prevention 檢測
+    if (threatPrevention.totalThreatPreventionEvents > 0) {
       risks.push({
-        id: `policy-violations-${Date.now()}`,
-        title: '違反公司政策行為',
-        severity: policyViolations.critical > 0 ? 'critical' : (policyViolations.high > 0 ? 'high' : 'medium'),
-        openIssues: policyViolations.count,
-        resolvedIssues: 0,
-        affectedAssets: policyViolations.affectedAssets,
-        tags: ['Check Point', 'Policy Violation', 'Layer 3'],
-        description: `Check Point 檢測到 ${policyViolations.count} 次違反公司政策的行為（嚴重: ${policyViolations.critical}, 高風險: ${policyViolations.high}, 中風險: ${policyViolations.medium}）。`,
-        aiInsight: `在分析時間範圍內，Check Point Layer 3 政策合規檢測發現 ${policyViolations.count} 次違反公司政策的行為，其中 ${policyViolations.critical} 次為嚴重違規，${policyViolations.high} 次為高風險違規，${policyViolations.medium} 次為中風險違規。主要違規類別為 ${topCategory?.item || '未知類別'}（${topCategory?.count || 0} 次）。主要違規使用者為 ${topUser?.item || '未知使用者'}（${topUser?.count || 0} 次），來源 IP 為 ${topIP?.item || '未知'}（${topIP?.count || 0} 次）。共影響 ${policyViolations.affectedAssets} 個資產。建議立即檢查這些違規行為，並向相關使用者進行安全宣導。`,
-        createdDate: new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }),
-        updatedDate: new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }),
-        exploitInWild: false,
-        internetExposed: true,
-        confirmedExploitable: false,
-        cveId: null,
+        id: `risk_${String(riskId++).padStart(3, '0')}`,
+        title: 'Threat Prevention 檢測到的威脅',
+        severity: 'critical',
+        category: 'THREAT_PREVENTION_DETECTED',
+        layer: 'THREAT_PREVENTION',
+        description: `Threat Prevention 檢測到 ${threatPrevention.totalThreatPreventionEvents} 筆威脅`,
+        topThreats: threatPrevention.topThreats.slice(0, 5),
+        attackCount: threatPrevention.totalThreatPreventionEvents,
+        aiInsight: 'Check Point Threat Prevention 檢測到多種威脅，需要立即調查。',
         recommendations: [
-          {
-            title: '配置 URL Filtering 規則',
-            description: '在 Check Point URL Filtering 中配置規則，封鎖違反政策的應用程式類別',
-            priority: 'high'
-          },
-          {
-            title: '使用者安全宣導',
-            description: topUser?.item 
-              ? `向 ${topUser.item}（${topUser.count} 次違規）等使用者進行安全宣導，說明公司政策` 
-              : '向違規使用者進行安全宣導，說明公司政策',
-            priority: 'high'
-          },
-          {
-            title: '啟用 UserCheck 通知',
-            description: '配置 Check Point UserCheck，當使用者違反政策時即時通知',
-            priority: 'medium'
-          }
-        ]
+          { priority: 'critical', action: '立即調查威脅來源', reason: '防止攻擊擴散' },
+          { priority: 'high', action: '更新 IPS 簽章', reason: '提升檢測能力' }
+        ],
+        createdDate: this.formatDateTaipei(timeRange.start),
+        updatedDate: this.formatDateTaipei(timeRange.end)
       });
     }
     
-    return { risks };
-  }
-  
-  // ========== 輔助工具方法 ==========
-  
-  /**
-   * 取得 Top N
-   */
-  getTopN(logs, field, n) {
-    const counts = new Map();
-    logs.forEach(log => {
-      const value = log[field];
-      if (value !== undefined && value !== null && value !== '' && value !== 'N/A') {
-        counts.set(value, (counts.get(value) || 0) + 1);
-      }
-    });
+    // Risk 4: URL Filtering 違規
+    if (urlFiltering.totalURLFilteringViolations > 0) {
+      risks.push({
+        id: `risk_${String(riskId++).padStart(3, '0')}`,
+        title: 'URL Filtering 政策違規',
+        severity: 'high',
+        category: 'URL_FILTERING_VIOLATION',
+        layer: 'URL_FILTERING',
+        description: `檢測到 ${urlFiltering.totalURLFilteringViolations} 筆 URL Filtering 違規`,
+        topCategories: urlFiltering.topCategories.slice(0, 5),
+        attackCount: urlFiltering.totalURLFilteringViolations,
+        aiInsight: '使用者嘗試訪問違反公司政策的網站類別。',
+        recommendations: [
+          { priority: 'medium', action: '加強員工安全意識培訓', reason: '減少政策違規' },
+          { priority: 'medium', action: '審查 URL Filtering 政策', reason: '確保政策合理性' }
+        ],
+        createdDate: this.formatDateTaipei(timeRange.start),
+        updatedDate: this.formatDateTaipei(timeRange.end)
+      });
+    }
     
-    return Array.from(counts.entries())
-      .sort((a, b) => b[1] - a[1])
-      .slice(0, n)
-      .map(([item, count]) => ({ item, count }));
-  }
-  
-  /**
-   * 提取風險因素
-   */
-  extractRiskFactors(logs, analysisResults) {
-    const factors = new Map();
+    // Risk 5: OWASP 攻擊模式
+    if (owaspAttacks.totalOWASPAttacks > 0) {
+      risks.push({
+        id: `risk_${String(riskId++).padStart(3, '0')}`,
+        title: 'OWASP TOP 10 攻擊模式檢測',
+        severity: 'critical',
+        category: 'URI_ATTACK_PATTERN',
+        layer: 'URI_UA_ANALYSIS',
+        description: `檢測到 ${owaspAttacks.totalOWASPAttacks} 筆符合 OWASP TOP 10 的攻擊模式`,
+        topAttackTypes: owaspAttacks.topAttackTypes.slice(0, 5),
+        attackCount: owaspAttacks.totalOWASPAttacks,
+        aiInsight: '檢測到多種 OWASP TOP 10 攻擊模式，包括 SQL 注入、XSS、命令注入等。',
+        recommendations: [
+          { priority: 'critical', action: '立即調查攻擊來源和目標', reason: '防止資料洩露或系統入侵' },
+          { priority: 'high', action: '檢查 Web 應用程式安全性', reason: '修補已知漏洞' },
+          { priority: 'high', action: '啟用 WAF 防護', reason: '攔截 Web 應用攻擊' }
+        ],
+        createdDate: this.formatDateTaipei(timeRange.start),
+        updatedDate: this.formatDateTaipei(timeRange.end)
+      });
+    }
     
-    logs.forEach(log => {
-      const result = analysisResults.find(r => 
-        r.originalData?.src === log.src && 
-        r.originalData?.timestamp === log.timestamp
-      );
-      
-      if (result && result.riskFactors) {
-        result.riskFactors.forEach(factor => {
-          factors.set(factor, (factors.get(factor) || 0) + 1);
-        });
-      }
-    });
+    const summary = {
+      totalRisks: risks.length,
+      criticalCount: risks.filter(r => r.severity === 'critical').length,
+      highCount: risks.filter(r => r.severity === 'high').length,
+      mediumCount: risks.filter(r => r.severity === 'medium').length,
+      lowCount: risks.filter(r => r.severity === 'low').length
+    };
     
-    return Array.from(factors.entries())
-      .sort((a, b) => b[1] - a[1])
-      .map(([factor, count]) => ({ factor, count }));
-  }
-  
-  /**
-   * 取得 Top 安全區域配對
-   */
-  getTopZonePairs(logs, n) {
-    const pairs = new Map();
-    logs.forEach(log => {
-      if (log.security_inzone && log.security_outzone) {
-        const pair = `${log.security_inzone} → ${log.security_outzone}`;
-        pairs.set(pair, (pairs.get(pair) || 0) + 1);
-      }
-    });
-    
-    return Array.from(pairs.entries())
-      .sort((a, b) => b[1] - a[1])
-      .slice(0, n)
-      .map(([pair, count]) => ({ pair, count }));
+    return { risks, summary };
   }
   
   /**
@@ -964,22 +862,20 @@ ${threatStatisticsText}
    */
   getEmptyAnalysisResult() {
     return {
-      blockedTraffic: { count: 0, drop: 0, reject: 0, topApps: [], topIPs: [], topCountries: [], topTargets: [], affectedAssets: 0 },
-      highRiskApps: { count: 0, critical: 0, high: 0, topApps: [], topCategories: [], topIPs: [], topCountries: [], affectedAssets: 0 },
-      policyViolations: { count: 0, critical: 0, high: 0, medium: 0, byType: [], topCategories: [], topApps: [], topUsers: [], topIPs: [], topCountries: [], affectedAssets: 0 },
-      suspiciousBehavior: { count: 0, topFactors: [], topIPs: [], topCountries: [], topApps: [], affectedAssets: 0 },
-      zoneRisks: { count: 0, byType: [], topIPs: [], topZonePairs: [], affectedAssets: 0 },
-      geoAnalysis: { topCountries: [], topIPs: [], uniqueCountries: 0, uniqueIPs: 0 },
-      assetAnalysis: { totalAssets: 0, topAssets: [], topDomains: [] },
-      appAnalysis: { topApps: [], topCategories: [], riskDistribution: {}, uniqueApps: 0 },
-      totalEvents: 0,
-      realThreats: 0,
-      realAttacks: 0,
       timeRange: { start: new Date().toISOString(), end: new Date().toISOString() },
-      layerStats: {}
+      totalEvents: 0,
+      totalThreats: 0,
+      layerStats: {},
+      blockedTraffic: { totalBlocked: 0, topBlockedApps: [] },
+      highRiskApps: { totalHighRiskEvents: 0, topHighRiskApps: [] },
+      threatPrevention: { totalThreatPreventionEvents: 0, topThreats: [] },
+      urlFiltering: { totalURLFilteringViolations: 0, topCategories: [] },
+      owaspAttacks: { totalOWASPAttacks: 0, topAttackTypes: [] },
+      geoDistribution: [],
+      topAssets: [],
+      analysisResults: []
     };
   }
 }
 
 module.exports = CheckpointRiskServices;
-
