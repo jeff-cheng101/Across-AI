@@ -2,6 +2,10 @@
 
 import { useState } from "react"
 import { motion } from "framer-motion"
+import { Calendar } from "lucide-react"
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
+import { Button } from "@/components/ui/button"
+import { CustomDatePicker } from "@/components/custom-date-picker"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import {
   LineChart,
@@ -18,6 +22,8 @@ import {
 
 export default function PaloAltoPage() {
   const [activeTab, setActiveTab] = useState("firewall")
+  const [dateFrom, setDateFrom] = useState<Date | undefined>(new Date(Date.now() - 7 * 24 * 60 * 60 * 1000))
+  const [dateTo, setDateTo] = useState<Date | undefined>(new Date())
 
   const tabs = [
     { id: "overview", label: "總覽", sublabel: "Overview" },
@@ -446,37 +452,112 @@ export default function PaloAltoPage() {
 
   return (
     <div className="min-h-screen bg-background">
-      <div className="border-b border-border bg-card/40 backdrop-blur-md">
-        <div className="px-6 py-4">
-          <div className="flex items-center justify-between">
-            <div>
-              <h1 className="text-2xl font-semibold text-foreground">Palo Alto Networks</h1>
-              <p className="text-sm text-muted-foreground mt-1">防火牆監控與分析</p>
-            </div>
-            <div className="text-sm text-muted-foreground">最後更新: 2024-11-24 19:00:00</div>
-          </div>
+      {/* Time Range Picker Section */}
+      <motion.div
+        initial={{ y: -20, opacity: 0 }}
+        animate={{ y: 0, opacity: 1 }}
+        transition={{ duration: 0.3 }}
+        className="mb-6 flex items-center gap-4 bg-slate-900/40 backdrop-blur-md border border-white/10 p-4 rounded-md mx-6 mt-6"
+      >
+        <div className="flex items-center gap-2 text-slate-300">
+          <Calendar className="w-4 h-4" />
+          <span className="text-sm font-medium">資料時間範圍：</span>
         </div>
 
-        <motion.div className="flex gap-2 px-6 pb-4 flex-row">
-          {tabs.map((tab) => (
-            <button
-              key={tab.id}
-              onClick={() => {
-                if (tab.id !== "overview") {
-                  setActiveTab(tab.id)
-                }
-              }}
-              className={`px-6 py-2.5 text-sm font-medium transition-all duration-200 rounded-md ${
-                activeTab === tab.id
-                  ? "bg-white text-black"
-                  : "bg-slate-800/50 text-slate-400 hover:bg-slate-800 hover:text-white"
-              }`}
-            >
-              {tab.label}
-            </button>
-          ))}
-        </motion.div>
-      </div>
+        {/* 開始日期 */}
+        <div className="flex items-center gap-2">
+          <span className="text-sm text-slate-400">開始日期</span>
+          <Popover>
+            <PopoverTrigger asChild>
+              <Button variant="outline" className="bg-slate-800 border-slate-700 hover:bg-slate-700 text-white">
+                {dateFrom ? dateFrom.toLocaleDateString("zh-TW") : "選擇日期"}
+              </Button>
+            </PopoverTrigger>
+            <PopoverContent className="w-auto p-0 bg-slate-900 border-slate-700">
+              <CustomDatePicker selected={dateFrom} onSelect={setDateFrom} />
+            </PopoverContent>
+          </Popover>
+        </div>
+
+        {/* 結束日期 */}
+        <div className="flex items-center gap-2">
+          <span className="text-sm text-slate-400">結束日期</span>
+          <Popover>
+            <PopoverTrigger asChild>
+              <Button variant="outline" className="bg-slate-800 border-slate-700 hover:bg-slate-700 text-white">
+                {dateTo ? dateTo.toLocaleDateString("zh-TW") : "選擇日期"}
+              </Button>
+            </PopoverTrigger>
+            <PopoverContent className="w-auto p-0 bg-slate-900 border-slate-700">
+              <CustomDatePicker selected={dateTo} onSelect={setDateTo} />
+            </PopoverContent>
+          </Popover>
+        </div>
+
+        {/* 快速選擇按鈕 */}
+        <div className="flex items-center gap-2 ml-auto">
+          <span className="text-sm text-slate-400">快速選擇：</span>
+          <Button
+            variant="ghost"
+            size="sm"
+            className="text-slate-300 hover:text-white hover:bg-slate-800"
+            onClick={() => {
+              setDateFrom(new Date(Date.now() - 24 * 60 * 60 * 1000))
+              setDateTo(new Date())
+            }}
+          >
+            近24小時
+          </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            className="text-slate-300 hover:text-white hover:bg-slate-800"
+            onClick={() => {
+              setDateFrom(new Date(Date.now() - 7 * 24 * 60 * 60 * 1000))
+              setDateTo(new Date())
+            }}
+          >
+            近7天
+          </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            className="text-slate-300 hover:text-white hover:bg-slate-800"
+            onClick={() => {
+              setDateFrom(new Date(Date.now() - 30 * 24 * 60 * 60 * 1000))
+              setDateTo(new Date())
+            }}
+          >
+            近30天
+          </Button>
+        </div>
+      </motion.div>
+
+      {/* Tab Navigation */}
+      <motion.div
+        initial={{ y: -20, opacity: 0 }}
+        animate={{ y: 0, opacity: 1 }}
+        transition={{ duration: 0.5, delay: 0.1 }}
+        className="flex gap-2 mb-6 rounded-md flex-row px-6 pt-6"
+      >
+        {tabs.map((tab) => (
+          <button
+            key={tab.id}
+            onClick={() => {
+              if (tab.id !== "overview") {
+                setActiveTab(tab.id)
+              }
+            }}
+            className={`px-6 py-2.5 text-sm font-medium transition-all duration-200 rounded-md ${
+              activeTab === tab.id
+                ? "bg-white text-black"
+                : "bg-slate-800/50 text-slate-400 hover:bg-slate-800 hover:text-white"
+            }`}
+          >
+            {tab.label}
+          </button>
+        ))}
+      </motion.div>
 
       {/* Content */}
       {renderContent()}

@@ -2,52 +2,36 @@
 
 import { useState, useEffect } from "react"
 import { motion, AnimatePresence } from "framer-motion"
-import { Shield, TrendingUp, AlertTriangle, CheckCircle, XCircle, Globe, Clock, Sparkles, CalendarIcon, ChevronDown, ChevronUp, Loader2, Calendar, Activity, RefreshCw, FileText, ExternalLink } from 'lucide-react'
+import {
+  Shield,
+  TrendingUp,
+  AlertTriangle,
+  CheckCircle,
+  XCircle,
+  Globe,
+  Clock,
+  Sparkles,
+  Calendar,
+  Activity,
+  RefreshCw,
+  CalendarIcon,
+  Loader2,
+  ChevronDown,
+  ChevronUp,
+  FileText,
+  ExternalLink,
+} from "lucide-react"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { CustomDatePicker } from "@/components/custom-date-picker"
 import { format } from "date-fns"
-import { cn } from "@/lib/utils"
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from "@/components/ui/alert-dialog"
+import { useWAFData } from "@/app/dashboard/waf-data-context"
 import { useToast } from "@/hooks/use-toast"
 import { saveActionRecord, type ActionRecord } from "@/lib/action-records"
 
 // API 基礎 URL - 從環境變數讀取，預設為 localhost
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:8081'
-
-interface WAFRisk {
-  id: string
-  title: string
-  severity: "critical" | "high" | "medium" | "low"
-  openIssues: number
-  resolvedIssues: number
-  affectedAssets: number
-  tags: string[]
-  description: string
-  aiInsight?: string
-  createdDate: string
-  updatedDate: string
-  exploitInWild: boolean
-  internetExposed: boolean
-  confirmedExploitable: boolean
-  cveId?: string
-  recommendations: Array<{
-    title: string
-    description: string
-    priority: "high" | "medium" | "low"
-  }>
-}
 
 interface ExecutionHistory {
   id: string
@@ -76,15 +60,18 @@ interface ExecutionHistory {
   impactDescription: string
 }
 
-export default function F5AIAnalysisPage() {
+export default function CheckpointAIAnalysisPage() {
   const [selectedIssue, setSelectedIssue] = useState<string | null>(null)
   const [selectedCategory, setSelectedCategory] = useState<string>("high")
-  
-  // API 調用與載入狀態
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [hasAttemptedLoad, setHasAttemptedLoad] = useState(false)
-  const [forceReload, setForceReload] = useState(0)
+  const [forceReload, setForceReload] = useState(0) // 強制重新載入計數器
+  const [hasAttemptedLoad, setHasAttemptedLoad] = useState(false) // 防止無限循環
+  const [selectedAction, setSelectedAction] = useState<{ title: string; description: string; issueId: string } | null>(
+    null,
+  ) // 操作步驟選擇的項目
+  
+  // 新增：時間範圍和分析資訊
   const [selectedTimeRange, setSelectedTimeRange] = useState('24h')
   const [analysisMetadata, setAnalysisMetadata] = useState({
     totalEvents: 0,
@@ -104,13 +91,14 @@ export default function F5AIAnalysisPage() {
   const [useCustomDate, setUseCustomDate] = useState(false)
   const [customDateExpanded, setCustomDateExpanded] = useState(false)
 
+  const { wafRisks, setWafRisks } = useWAFData()
   const { toast } = useToast()
 
-  const [confirmDialogOpen, setConfirmDialogOpen] = useState(false)
-  const [selectedAction, setSelectedAction] = useState<{ title: string; description: string; issueId: string } | null>(
-    null,
-  )
-  const [executing, setExecuting] = useState(false)
+  // 操作指引相關狀態
+  const [expandedGuides, setExpandedGuides] = useState<Set<string>>(new Set())
+  const [operationGuides, setOperationGuides] = useState<{[key: string]: any}>({})
+  const [loadingGuides, setLoadingGuides] = useState<Set<string>>(new Set())
+
   const [executionHistory, setExecutionHistory] = useState<{
     high: ExecutionHistory[]
     medium: ExecutionHistory[]
@@ -121,72 +109,17 @@ export default function F5AIAnalysisPage() {
     low: [],
   })
   const [executedActions, setExecutedActions] = useState<Set<string>>(new Set())
-  const [historyExpanded, setHistoryExpanded] = useState<{
-    high: boolean
-    medium: boolean
-    low: boolean
-  }>({
-    high: true,
-    medium: true,
-    low: true,
-  })
 
-  const [itemsExpanded, setItemsExpanded] = useState<{
-    [key: string]: { resolved: boolean; unresolved: boolean }
-  }>({})
-
-  // 操作指引相關狀態
-  const [expandedGuides, setExpandedGuides] = useState<Set<string>>(new Set())
-  const [operationGuides, setOperationGuides] = useState<{[key: string]: any}>({})
-  const [loadingGuides, setLoadingGuides] = useState<Set<string>>(new Set())
-
-  const toggleItemsExpanded = (historyId: string, type: "resolved" | "unresolved") => {
-    setItemsExpanded((prev) => ({
-      ...prev,
-      [historyId]: {
-        resolved: type === "resolved" ? !prev[historyId]?.resolved : prev[historyId]?.resolved || false,
-        unresolved: type === "unresolved" ? !prev[historyId]?.unresolved : prev[historyId]?.unresolved || false,
-      },
-    }))
-  }
-
-  // WAF 風險資料（從 API 載入）
-  const [wafRisks, setWafRisks] = useState<WAFRisk[]>([])
-
-  const risksByCategory = {
-    high: wafRisks.filter((r) => r.severity === "critical" || r.severity === "high"),
-    medium: wafRisks.filter((r) => r.severity === "medium"),
-    low: wafRisks.filter((r) => r.severity === "low"),
-  }
-
-  const categoryStats = {
-    high: {
-      count: risksByCategory.high.length,
-      openIssues: risksByCategory.high.reduce((sum, r) => sum + r.openIssues, 0),
-      affectedAssets: risksByCategory.high.reduce((sum, r) => sum + r.affectedAssets, 0),
-    },
-    medium: {
-      count: risksByCategory.medium.length,
-      openIssues: risksByCategory.medium.reduce((sum, r) => sum + r.openIssues, 0),
-      affectedAssets: risksByCategory.medium.reduce((sum, r) => sum + r.affectedAssets, 0),
-    },
-    low: {
-      count: risksByCategory.low.length,
-      openIssues: risksByCategory.low.reduce((sum, r) => sum + r.openIssues, 0),
-      affectedAssets: risksByCategory.low.reduce((sum, r) => sum + r.affectedAssets, 0),
-    },
-  }
-
-  // 載入 F5 WAF 風險分析資料
-  const loadF5WAFRisks = async () => {
-    console.log('🔄 開始載入 F5 WAF 風險分析...')
+  // 載入 Checkpoint WAF 風險分析資料
+  const loadCheckpointWAFRisks = async () => {
+    console.log('🔄 開始載入 Checkpoint WAF 風險分析...')
     setIsLoading(true)
     setError(null)
 
     try {
       // 從 localStorage 讀取配置
       const aiProvider = localStorage.getItem('aiProvider') || 'ollama'
-      const apiKey = localStorage.getItem('geminiApiKey') || ''
+      const apiKey = localStorage.getItem('geminiApiKey') || process.env.NEXT_PUBLIC_GEMINI_API_KEY || ''
       const aiModel = aiProvider === 'ollama' 
         ? (localStorage.getItem('ollamaModel') || 'gpt-oss:20b')
         : 'gemini-2.0-flash-exp'
@@ -217,7 +150,7 @@ export default function F5AIAnalysisPage() {
       }
 
       // 呼叫後端 API
-      const response = await fetch(`${API_BASE_URL}/api/f5/analyze-waf-risks`, {
+      const response = await fetch(`${API_BASE_URL}/api/checkpoint/analyze-risks`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -235,7 +168,7 @@ export default function F5AIAnalysisPage() {
       }
 
       const data = await response.json()
-      console.log('✅ 成功載入 F5 WAF 風險資料:', data)
+      console.log('✅ 成功載入 Checkpoint WAF 風險資料:', data)
 
       // 保存分析 metadata
       if (data.metadata) {
@@ -263,7 +196,7 @@ export default function F5AIAnalysisPage() {
       }
 
     } catch (err) {
-      console.error('❌ 載入 F5 WAF 風險分析失敗:', err)
+      console.error('❌ 載入 Checkpoint WAF 風險分析失敗:', err)
       setError(err instanceof Error ? err.message : '未知錯誤')
       setWafRisks([])
     } finally {
@@ -275,7 +208,7 @@ export default function F5AIAnalysisPage() {
   // 手動觸發分析
   useEffect(() => {
     if (analysisTriggered) {
-      loadF5WAFRisks()
+      loadCheckpointWAFRisks()
       setAnalysisTriggered(false)
     }
   }, [analysisTriggered])
@@ -342,7 +275,7 @@ export default function F5AIAnalysisPage() {
     
     toast({
       title: "🚀 開始分析",
-      description: `正在分析 ${timeRangeText} 的 F5 WAF 日誌...`,
+      description: `正在分析 ${timeRangeText} 的 Checkpoint WAF 日誌...`,
     })
   }
 
@@ -374,7 +307,7 @@ export default function F5AIAnalysisPage() {
     
     toast({
       title: "🔄 重新分析",
-      description: `正在重新分析 ${timeRangeText} 的 F5 WAF 日誌...`,
+      description: `正在重新分析 ${timeRangeText} 的 Checkpoint WAF 日誌...`,
     })
   }
 
@@ -385,12 +318,12 @@ export default function F5AIAnalysisPage() {
     setUseCustomDate(false)
   }
 
-  // 格式化數字
+  // 格式化數字（添加千分位）
   const formatNumber = (num: number) => {
     return num.toLocaleString('zh-TW')
   }
 
-  // 時間範圍標籤
+  // 格式化時間範圍顯示
   const getTimeRangeLabel = (timeRange: string) => {
     const labels: { [key: string]: string } = {
       '1h': '過去 1 小時',
@@ -418,17 +351,42 @@ export default function F5AIAnalysisPage() {
     })
   }
 
-  // 相對時間顯示
+  // 格式化相對時間
   const getRelativeTime = (isoString: string) => {
     if (!isoString) return ''
     const now = new Date().getTime()
     const then = new Date(isoString).getTime()
-    const diff = Math.floor((now - then) / 1000)
+    const diff = Math.floor((now - then) / 1000) // 秒
 
     if (diff < 60) return '剛剛'
     if (diff < 3600) return `${Math.floor(diff / 60)} 分鐘前`
     if (diff < 86400) return `${Math.floor(diff / 3600)} 小時前`
+    if (diff < 604800) return `${Math.floor(diff / 86400)} 天前`
     return formatDateTime(isoString)
+  }
+
+  const risksByCategory = {
+    high: wafRisks.filter((r) => r.severity === "critical" || r.severity === "high"),
+    medium: wafRisks.filter((r) => r.severity === "medium"),
+    low: wafRisks.filter((r) => r.severity === "low"),
+  }
+
+  const categoryStats = {
+    high: {
+      count: risksByCategory.high.length,
+      openIssues: risksByCategory.high.reduce((sum, r) => sum + r.openIssues, 0),
+      affectedAssets: risksByCategory.high.reduce((sum, r) => sum + r.affectedAssets, 0),
+    },
+    medium: {
+      count: risksByCategory.medium.length,
+      openIssues: risksByCategory.medium.reduce((sum, r) => sum + r.openIssues, 0),
+      affectedAssets: risksByCategory.medium.reduce((sum, r) => sum + r.affectedAssets, 0),
+    },
+    low: {
+      count: risksByCategory.low.length,
+      openIssues: risksByCategory.low.reduce((sum, r) => sum + r.openIssues, 0),
+      affectedAssets: risksByCategory.low.reduce((sum, r) => sum + r.affectedAssets, 0),
+    },
   }
 
   useEffect(() => {
@@ -484,8 +442,8 @@ export default function F5AIAnalysisPage() {
 
   const totalOpenIssues = wafRisks.reduce((sum, risk) => sum + risk.openIssues, 0)
   const totalResolvedIssues = wafRisks.reduce((sum, risk) => sum + risk.resolvedIssues, 0)
-  const totalEvents = totalOpenIssues + totalResolvedIssues
   const totalAffectedAssets = wafRisks.reduce((sum, risk) => sum + risk.affectedAssets, 0)
+  console.log(wafRisks)
 
   // 點擊「查看操作步驟」按鈕時的處理
   const handleExecuteAction = async (
@@ -517,7 +475,7 @@ export default function F5AIAnalysisPage() {
     setSelectedAction({ title: actionTitle, description: actionDescription, issueId })
     
     try {
-      const response = await fetch(`${API_BASE_URL}/api/f5/get-operation-guide`, {
+      const response = await fetch(`${API_BASE_URL}/api/checkpoint/get-operation-guide`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -527,7 +485,7 @@ export default function F5AIAnalysisPage() {
       });
       
       const data = await response.json();
-      
+
       if (data.success && data.guide) {
         setOperationGuides(prev => ({
           ...prev,
@@ -658,7 +616,7 @@ export default function F5AIAnalysisPage() {
     const actionRecord: ActionRecord = {
       id: historyEntry.id,
       timestamp: historyEntry.timestamp,
-      platform: "f5",
+      platform: "checkpoint",
       pageSnapshot: {
         totalEvents: openIssuesBefore + resolvedIssuesBefore,
         openIssues: openIssuesBefore,
@@ -692,401 +650,12 @@ export default function F5AIAnalysisPage() {
 
     saveActionRecord(actionRecord)
     setExecutedActions((prev) => new Set(prev).add(`${selectedAction?.issueId || ''}-${selectedAction?.title || ''}`))
-    
+
     toast({
       title: "✅ 操作已完成",
       description: "已標記為完成，建議稍後檢查效果"
     });
   };
-
-  const confirmExecution = async () => {
-    if (!selectedAction) return
-
-    setConfirmDialogOpen(false)
-    setExecuting(true)
-
-    const affectedRisk = wafRisks.find((r) => r.id === selectedAction.issueId)
-    if (!affectedRisk) {
-      setExecuting(false)
-      return
-    }
-
-    const openIssuesBefore = totalOpenIssues
-    const resolvedIssuesBefore = totalResolvedIssues
-
-    toast({
-      title: "正在執行操作",
-      description: selectedAction.title,
-    })
-
-    await new Promise((resolve) => setTimeout(resolve, 1500))
-
-    const issuesResolvedCount = Math.floor(affectedRisk.openIssues * 0.3)
-
-    const updatedRisks = wafRisks.map((risk) => {
-      if (risk.id === selectedAction.issueId) {
-        return {
-          ...risk,
-          openIssues: Math.max(0, risk.openIssues - issuesResolvedCount),
-          resolvedIssues: risk.resolvedIssues + issuesResolvedCount,
-        }
-      }
-      return risk
-    })
-
-    setWafRisks(updatedRisks)
-
-    const openIssuesAfter = openIssuesBefore - issuesResolvedCount
-    const resolvedIssuesAfter = resolvedIssuesBefore + issuesResolvedCount
-
-    const riskLevel: "high" | "medium" | "low" =
-      affectedRisk.severity === "critical" || affectedRisk.severity === "high"
-        ? "high"
-        : affectedRisk.severity === "medium"
-          ? "medium"
-          : "low"
-
-    const generateProtectionMethod = (actionTitle: string): string => {
-      if (actionTitle.includes("WAF") || actionTitle.includes("防護") || actionTitle.includes("簽名"))
-        return "WAF 防護策略"
-      if (actionTitle.includes("速率") || actionTitle.includes("限制")) return "速率限制"
-      if (actionTitle.includes("會話") || actionTitle.includes("Session")) return "會話保護"
-      if (actionTitle.includes("訪問控制") || actionTitle.includes("URL")) return "URL 訪問控制"
-      return "F5 安全規則"
-    }
-
-    const generateResolvedIssues = (count: number, issueType: string) => {
-      const templates = [
-        { endpoint: "/api/user/profile", ratio: 0.4 },
-        { endpoint: "/api/data/search", ratio: 0.35 },
-        { endpoint: "/api/admin/config", ratio: 0.25 },
-      ]
-      return templates.map((t) => ({
-        endpoint: t.endpoint,
-        count: Math.floor(count * t.ratio),
-        description: `已成功防禦 ${issueType} 攻擊`,
-      }))
-    }
-
-    const generateUnresolvedIssues = (count: number) => {
-      const unresolvedCount = Math.floor(count * 0.2)
-      const templates = [
-        {
-          endpoint: "/api/legacy/system",
-          ratio: 0.55,
-          reason: "需要應用層修復",
-          recommendation: "更新應用程式代碼並實施輸入驗證",
-        },
-        {
-          endpoint: "/api/external/webhook",
-          ratio: 0.45,
-          reason: "複雜攻擊模式",
-          recommendation: "配置進階 F5 WAF 學習模式",
-        },
-      ]
-      return templates.map((t) => ({
-        endpoint: t.endpoint,
-        count: Math.floor(unresolvedCount * t.ratio),
-        reason: t.reason,
-        recommendation: t.recommendation,
-      }))
-    }
-
-    const historyEntry: ExecutionHistory = {
-      id: `exec-${Date.now()}`,
-      timestamp: new Date(),
-      actionTitle: selectedAction.title,
-      actionType: affectedRisk.title,
-      riskLevel,
-      protectionMethod: generateProtectionMethod(selectedAction.title),
-      resolvedIssues: generateResolvedIssues(issuesResolvedCount, affectedRisk.title),
-      unresolvedIssues: generateUnresolvedIssues(issuesResolvedCount),
-      openIssuesBefore,
-      resolvedIssuesBefore,
-      openIssuesAfter,
-      resolvedIssuesAfter,
-      issuesResolved: issuesResolvedCount,
-      status: "success",
-      impactDescription: `成功解決 ${issuesResolvedCount} 個事件，已保護 ${Math.floor(affectedRisk.affectedAssets * 0.7)} 個端點`,
-    }
-
-    setExecutionHistory((prev) => ({
-      ...prev,
-      [riskLevel]: [historyEntry, ...prev[riskLevel]],
-    }))
-
-    const actionRecord: ActionRecord = {
-      id: historyEntry.id,
-      timestamp: historyEntry.timestamp,
-      platform: "f5",
-      pageSnapshot: {
-        totalEvents: openIssuesBefore + resolvedIssuesBefore,
-        openIssues: openIssuesBefore,
-        resolvedIssues: resolvedIssuesBefore,
-        affectedAssets: totalAffectedAssets,
-        riskLevel: riskLevel,
-      },
-      action: {
-        title: selectedAction.title,
-        description: selectedAction.description,
-        issueType: affectedRisk.title,
-        protectionMethod: generateProtectionMethod(selectedAction.title),
-      },
-      results: {
-        resolvedCount: issuesResolvedCount,
-        unresolvedCount: Math.floor(issuesResolvedCount * 0.2),
-        resolvedIssues: historyEntry.resolvedIssues,
-        unresolvedIssues: historyEntry.unresolvedIssues,
-      },
-      beforeState: {
-        openIssues: openIssuesBefore,
-        resolvedIssues: resolvedIssuesBefore,
-      },
-      afterState: {
-        openIssues: openIssuesAfter,
-        resolvedIssues: resolvedIssuesAfter,
-      },
-      impact: historyEntry.impactDescription,
-      status: "success",
-    }
-
-    saveActionRecord(actionRecord)
-
-
-    setExecutedActions((prev) => new Set(prev).add(`${selectedAction.issueId}-${selectedAction.title}`))
-
-    toast({
-      title: "✅ 操作執行成功",
-      description: `${selectedAction.title} - 已解決 ${issuesResolvedCount} 個事件`,
-    })
-
-    setExecuting(false)
-    setSelectedAction(null)
-  }
-
-  const toggleHistoryExpanded = (level: "high" | "medium" | "low") => {
-    setHistoryExpanded((prev) => ({
-      ...prev,
-      [level]: !prev[level],
-    }))
-  }
-
-  const renderExecutionHistory = (level: "high" | "medium" | "low") => {
-    const history = executionHistory[level]
-    if (history.length === 0) return null
-
-    const levelColors = {
-      high: { bg: "bg-red-500/20", border: "border-red-500/30", text: "text-red-400" },
-      medium: { bg: "bg-yellow-500/20", border: "border-yellow-500/30", text: "text-yellow-400" },
-      low: { bg: "bg-blue-500/20", border: "border-blue-500/30", text: "text-blue-400" },
-    }
-
-    const colors = levelColors[level]
-    const levelLabel = level === "high" ? "高風險" : level === "medium" ? "中風險" : "低風險"
-
-    return (
-      <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="mt-6">
-        <Card className={`bg-slate-800/50 ${colors.border}`}>
-          <CardHeader className="pb-3">
-            <div className="flex items-center justify-between">
-              <CardTitle className="text-white text-lg flex items-center gap-2">
-                <Clock className={`w-5 h-5 ${colors.text}`} />
-                {levelLabel} - 執行操作歷史記錄
-              </CardTitle>
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => toggleHistoryExpanded(level)}
-                className="text-slate-400 hover:text-white"
-              >
-                {historyExpanded[level] ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
-              </Button>
-            </div>
-          </CardHeader>
-          <AnimatePresence>
-            {historyExpanded[level] && (
-              <motion.div
-                initial={{ height: 0, opacity: 0 }}
-                animate={{ height: "auto", opacity: 1 }}
-                exit={{ height: 0, opacity: 0 }}
-                transition={{ duration: 0.3 }}
-              >
-                <CardContent className="space-y-3 max-h-96 overflow-y-auto">
-                  {history.map((historyItem) => {
-                    const isResolvedExpanded = itemsExpanded[historyItem.id]?.resolved || false
-                    const isUnresolvedExpanded = itemsExpanded[historyItem.id]?.unresolved || false
-                    const totalResolved = historyItem.resolvedIssues.reduce((sum, item) => sum + item.count, 0)
-                    const totalUnresolved = historyItem.unresolvedIssues.reduce((sum, item) => sum + item.count, 0)
-                    const resolveRate = Math.round((totalResolved / (totalResolved + totalUnresolved)) * 100)
-
-                    return (
-                      <motion.div
-                        key={historyItem.id}
-                        initial={{ opacity: 0, x: -20 }}
-                        animate={{ opacity: 1, x: 0 }}
-                        className="p-4 bg-slate-900/50 border border-white/10 rounded-lg"
-                      >
-                        <div className="flex items-start justify-between mb-2">
-                          <div className="flex-1">
-                            <div className="flex items-center gap-2 mb-1">
-                              <CheckCircle className="w-4 h-4 text-green-400" />
-                              <span className="text-white font-medium text-sm">{historyItem.actionTitle}</span>
-                              <Badge className="bg-green-500/20 text-green-400 border-green-500/50 text-xs">成功</Badge>
-                            </div>
-                            <div className="text-xs text-slate-400">
-                              {format(historyItem.timestamp, "yyyy年M月d日 HH:mm:ss")}
-                            </div>
-                          </div>
-                        </div>
-
-                        <div className="flex items-center gap-2 mb-2">
-                          <Badge className="bg-cyan-500/20 text-cyan-400 border-cyan-500/50 text-xs">
-                            {historyItem.protectionMethod}
-                          </Badge>
-                          <span className="text-xs text-slate-400">解決率: {resolveRate}%</span>
-                        </div>
-
-                        <div className="text-xs text-slate-300 mb-2">{historyItem.actionType}</div>
-
-                        <div className="grid grid-cols-2 gap-3 p-3 bg-slate-800/50 rounded">
-                          <div>
-                            <div className="text-xs text-slate-400 mb-1">未解決事件</div>
-                            <div className="flex items-center gap-2">
-                              <span className="text-red-400 font-semibold">
-                                {historyItem.openIssuesBefore.toLocaleString()}
-                              </span>
-                              <span className="text-slate-500">→</span>
-                              <span className="text-green-400 font-semibold">
-                                {historyItem.openIssuesAfter.toLocaleString()}
-                              </span>
-                            </div>
-                          </div>
-                          <div>
-                            <div className="text-xs text-slate-400 mb-1">已解決事件</div>
-                            <div className="flex items-center gap-2">
-                              <span className="text-slate-400 font-semibold">
-                                {historyItem.resolvedIssuesBefore.toLocaleString()}
-                              </span>
-                              <span className="text-slate-500">→</span>
-                              <span className="text-green-400 font-semibold">
-                                {historyItem.resolvedIssuesAfter.toLocaleString()}
-                              </span>
-                            </div>
-                          </div>
-                        </div>
-
-                        <div className="mt-2 text-xs text-green-400">✓ {historyItem.impactDescription}</div>
-
-                        <div className="mt-4 space-y-2">
-                          <div
-                            className="flex items-center justify-between p-2 bg-green-900/20 border border-green-500/30 rounded cursor-pointer hover:bg-green-900/30 transition-colors"
-                            onClick={() => toggleItemsExpanded(historyItem.id, "resolved")}
-                          >
-                            <div className="flex items-center gap-2">
-                              <CheckCircle className="w-4 h-4 text-green-400" />
-                              <span className="text-sm text-green-400 font-medium">
-                                已解決事件 ({totalResolved} 個)
-                              </span>
-                            </div>
-                            {isResolvedExpanded ? (
-                              <ChevronUp className="w-4 h-4 text-green-400" />
-                            ) : (
-                              <ChevronDown className="w-4 h-4 text-green-400" />
-                            )}
-                          </div>
-
-                          <AnimatePresence>
-                            {isResolvedExpanded && (
-                              <motion.div
-                                initial={{ height: 0, opacity: 0 }}
-                                animate={{ height: "auto", opacity: 1 }}
-                                exit={{ height: 0, opacity: 0 }}
-                                transition={{ duration: 0.2 }}
-                                className="space-y-2 pl-4"
-                              >
-                                {historyItem.resolvedIssues.map((issue, idx) => (
-                                  <div
-                                    key={idx}
-                                    className="p-3 bg-slate-800/50 border border-green-500/20 rounded text-xs"
-                                  >
-                                    <div className="flex items-center justify-between mb-1">
-                                      <span className="text-cyan-400 font-mono">{issue.endpoint}</span>
-                                      <Badge className="bg-green-500/20 text-green-400 border-green-500/50 text-xs">
-                                        {issue.count} 個
-                                      </Badge>
-                                    </div>
-                                    <div className="text-slate-400">{issue.description}</div>
-                                  </div>
-                                ))}
-                              </motion.div>
-                            )}
-                          </AnimatePresence>
-
-                          <div
-                            className="flex items-center justify-between p-2 bg-red-900/20 border border-red-500/30 rounded cursor-pointer hover:bg-red-900/30 transition-colors"
-                            onClick={() => toggleItemsExpanded(historyItem.id, "unresolved")}
-                          >
-                            <div className="flex items-center gap-2">
-                              <XCircle className="w-4 h-4 text-red-400" />
-                              <span className="text-sm text-red-400 font-medium">
-                                未解決事件 ({totalUnresolved} 個)
-                              </span>
-                            </div>
-                            {isUnresolvedExpanded ? (
-                              <ChevronUp className="w-4 h-4 text-red-400" />
-                            ) : (
-                              <ChevronDown className="w-4 h-4 text-red-400" />
-                            )}
-                          </div>
-
-                          <AnimatePresence>
-                            {isUnresolvedExpanded && (
-                              <motion.div
-                                initial={{ height: 0, opacity: 0 }}
-                                animate={{ height: "auto", opacity: 1 }}
-                                exit={{ height: 0, opacity: 0 }}
-                                transition={{ duration: 0.2 }}
-                                className="space-y-2 pl-4"
-                              >
-                                {historyItem.unresolvedIssues.map((issue, idx) => (
-                                  <div
-                                    key={idx}
-                                    className="p-3 bg-slate-800/50 border border-red-500/20 rounded text-xs space-y-2"
-                                  >
-                                    <div className="flex items-center justify-between">
-                                      <span className="text-cyan-400 font-mono">{issue.endpoint}</span>
-                                      <Badge className="bg-red-500/20 text-red-400 border-red-500/50 text-xs">
-                                        {issue.count} 個
-                                      </Badge>
-                                    </div>
-                                    <div className="text-slate-400">
-                                      <span className="text-slate-500">原因：</span>
-                                      {issue.reason}
-                                    </div>
-                                    <div className="flex items-start gap-2 p-2 bg-yellow-900/20 border border-yellow-500/30 rounded">
-                                      <AlertTriangle className="w-3 h-3 text-yellow-400 mt-0.5 flex-shrink-0" />
-                                      <div>
-                                        <div className="text-yellow-400 font-medium mb-1">建議行動</div>
-                                        <div className="text-slate-300">{issue.recommendation}</div>
-                                      </div>
-                                    </div>
-                                  </div>
-                                ))}
-                              </motion.div>
-                            )}
-                          </AnimatePresence>
-                        </div>
-                      </motion.div>
-                    )
-                  })}
-                </CardContent>
-              </motion.div>
-            )}
-          </AnimatePresence>
-        </Card>
-      </motion.div>
-    )
-  }
 
   return (
     <div className="min-h-screen bg-[#08131D] p-6">
@@ -1098,7 +667,7 @@ export default function F5AIAnalysisPage() {
         className="mb-8"
       >
         <div className="flex items-center gap-3 mb-2">
-          <h1 className="text-3xl font-bold text-white">AI Cyber Security Analysis - F5</h1>
+          <h1 className="text-3xl font-bold text-white">AI Cyber Security Analysis - Checkpoint</h1>
           {isLoading && (
             <div className="flex items-center gap-2 text-cyan-400 text-sm">
               <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-cyan-400"></div>
@@ -1133,7 +702,8 @@ export default function F5AIAnalysisPage() {
           </Button>
         </div>
         <p className="text-slate-400">
-          基於 F5 WAF 安全數據的智能分析與建議 | 總計 {totalOpenIssues} 個開放問題，影響 {totalAffectedAssets} 個資產
+          基於 Checkpoint 安全數據的智能分析與建議 | 總計 {totalOpenIssues} 個開放問題，影響 {totalAffectedAssets}{" "}
+          個資產
         </p>
         {error && (
           <div className="mt-2 p-3 bg-red-900/20 border border-red-500/50 rounded-lg text-red-400 text-sm">
@@ -1417,9 +987,9 @@ export default function F5AIAnalysisPage() {
                     </h3>
                     <p className="text-slate-400 text-base leading-relaxed">
                       {error?.includes('ELK 中沒有足夠的日誌數據')
-                        ? 'ELK 中沒有足夠的 F5 WAF 日誌數據進行分析。請確認日誌來源配置正確，並持續觀察監控。建議檢查 F5 日誌是否正常推送到 ELK，或調整時間範圍以包含更多數據。'
+                        ? 'ELK 中沒有足夠的 Checkpoint WAF 日誌數據進行分析。請確認日誌來源配置正確，並持續觀察監控。建議檢查 Checkpoint 日誌是否正常推送到 ELK，或調整時間範圍以包含更多數據。'
                         : error?.includes('未檢測到任何安全威脅')
-                          ? '在指定時間範圍內，F5 WAF 已成功分析日誌數據，未檢測到任何安全威脅。這表示系統目前運行正常，所有請求均通過安全檢查。請繼續保持監控。'
+                          ? '在指定時間範圍內，Checkpoint WAF 已成功分析日誌數據，未檢測到任何安全威脅。這表示系統目前運行正常，所有請求均通過安全檢查。請繼續保持監控。'
                           : error}
                     </p>
                   </div>
@@ -1445,7 +1015,7 @@ export default function F5AIAnalysisPage() {
                       準備開始 AI 安全分析
                     </h3>
                     <p className="text-slate-400 text-base leading-relaxed">
-                      選擇時間範圍後，點擊右上角「開始 AI 分析」按鈕，系統將使用 F5 多層次判斷模型分析 WAF 日誌並生成安全報告
+                      選擇時間範圍後，點擊右上角「開始 AI 分析」按鈕，系統將使用 Checkpoint WAF 日誌進行分析並生成安全報告
                     </p>
                   </div>
                   
@@ -1494,68 +1064,10 @@ export default function F5AIAnalysisPage() {
         </motion.div>
       )}
 
-      {/* Executing Overlay */}
-      <AnimatePresence>
-        {executing && (
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center"
-          >
-            <div className="bg-slate-900 p-8 rounded-lg border border-cyan-500/30 flex flex-col items-center gap-4">
-              <Loader2 className="w-12 h-12 text-cyan-400 animate-spin" />
-              <div className="text-white font-semibold">正在執行操作...</div>
-              <div className="text-slate-400 text-sm">{selectedAction?.title}</div>
-            </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
-
-      {/* Confirmation Dialog */}
-      <AlertDialog open={confirmDialogOpen} onOpenChange={setConfirmDialogOpen}>
-        <AlertDialogContent className="bg-slate-900 border-cyan-500/30">
-          <AlertDialogHeader>
-            <AlertDialogTitle className="text-white flex items-center gap-2">
-              <AlertTriangle className="w-5 h-5 text-yellow-400" />
-              確認執行操作
-            </AlertDialogTitle>
-            <AlertDialogDescription className="text-slate-300">
-              <div className="space-y-3 mt-4">
-                <div>
-                  <div className="text-sm font-semibold text-white mb-1">操作名稱</div>
-                  <div className="text-sm">{selectedAction?.title}</div>
-                </div>
-                <div>
-                  <div className="text-sm font-semibold text-white mb-1">操作說明</div>
-                  <div className="text-sm">{selectedAction?.description}</div>
-                </div>
-                <div className="p-3 bg-yellow-900/20 border border-yellow-500/30 rounded-lg">
-                  <div className="text-sm font-semibold text-yellow-400 mb-1">預期影響</div>
-                  <div className="text-xs text-slate-300">
-                    此操作預計將解決約{" "}
-                    {Math.floor((wafRisks.find((r) => r.id === selectedAction?.issueId)?.openIssues || 0) * 0.3)}{" "}
-                    個相關事件
-                  </div>
-                </div>
-              </div>
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel className="bg-slate-800 text-white border-white/10 hover:bg-slate-700">
-              取消
-            </AlertDialogCancel>
-            <AlertDialogAction onClick={confirmExecution} className="bg-cyan-600 hover:bg-cyan-700 text-white">
-              確認執行
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
-
-      {/* Three Column Layout - 只在有風險資料時顯示 */}
+      {/* Three Column Layout */}
       {wafRisks.length > 0 && (
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-        {/* Column 1: Risk Assessment */}
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+        {/* Column 1: 風險評估 (Risk Assessment) - Category Cards */}
         <motion.div
           initial={{ opacity: 0, x: -20 }}
           animate={{ opacity: 1, x: 0 }}
@@ -1571,7 +1083,6 @@ export default function F5AIAnalysisPage() {
               <CardDescription className="text-slate-400">依嚴重程度分類</CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
-              {/* High Risk */}
               <motion.div
                 initial={{ opacity: 0, y: 10 }}
                 animate={{ opacity: 1, y: 0 }}
@@ -1612,7 +1123,6 @@ export default function F5AIAnalysisPage() {
                 </div>
               </motion.div>
 
-              {/* Medium Risk */}
               <motion.div
                 initial={{ opacity: 0, y: 10 }}
                 animate={{ opacity: 1, y: 0 }}
@@ -1653,7 +1163,6 @@ export default function F5AIAnalysisPage() {
                 </div>
               </motion.div>
 
-              {/* Low Risk */}
               <motion.div
                 initial={{ opacity: 0, y: 10 }}
                 animate={{ opacity: 1, y: 0 }}
@@ -1694,7 +1203,6 @@ export default function F5AIAnalysisPage() {
                 </div>
               </motion.div>
 
-              {/* Risk Items List */}
               {risksByCategory[selectedCategory as keyof typeof risksByCategory].length > 0 && (
                 <div className="pt-4 border-t border-white/10">
                   <div className="text-xs text-slate-400 mb-3">
@@ -1731,7 +1239,7 @@ export default function F5AIAnalysisPage() {
           </Card>
         </motion.div>
 
-        {/* Column 2: Trend Analysis */}
+        {/* Column 2: 趨勢分析 (Trend Analysis) */}
         <motion.div
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
@@ -1762,6 +1270,7 @@ export default function F5AIAnalysisPage() {
                         key={assessment.id}
                         className={`p-6 rounded-lg border ${getSeverityColor(assessment.severity)}`}
                       >
+                        {/* Header */}
                         <div className="mb-4">
                           <div className="flex items-center gap-2 text-xs text-slate-400 mb-2">
                             <Clock className="w-3 h-3" />
@@ -1813,10 +1322,10 @@ export default function F5AIAnalysisPage() {
                         <div className="mt-6 p-4 bg-cyan-900/20 border border-cyan-500/30 rounded-lg">
                           <div className="flex items-center gap-2 mb-3">
                             <Sparkles className="w-5 h-5 text-cyan-400" />
-                            <h4 className="text-white font-semibold text-base">AI 深度分析</h4>
+                            <h4 className="text-white font-semibold">AI 深度分析</h4>
                           </div>
                           <p className="text-slate-300 leading-relaxed text-sm">
-                            {assessment.aiInsight || `根據 F5 WAF 威脅情報分析，檢測到 ${assessment.openIssues} 次攻擊事件，共影響 ${assessment.affectedAssets} 個資產。建議立即採取 F5 Advanced WAF 防護措施並啟用學習模式，優先處理高風險端點。`}
+                            {assessment.aiInsight || `根據威脅情報分析，檢測到 ${assessment.openIssues} 次攻擊事件，共影響 ${assessment.affectedAssets} 個資產。建議立即採取防護措施並監控相關日誌。`}
                           </p>
                         </div>
                       </div>
@@ -1828,15 +1337,11 @@ export default function F5AIAnalysisPage() {
                   <p className="text-lg">請從左側選擇一個風險項目查看詳細分析</p>
                 </div>
               )}
-
-              {selectedCategory === "high" && renderExecutionHistory("high")}
-              {selectedCategory === "medium" && renderExecutionHistory("medium")}
-              {selectedCategory === "low" && renderExecutionHistory("low")}
             </CardContent>
           </Card>
         </motion.div>
 
-        {/* Column 3: Action Recommendations */}
+        {/* Column 3: 執行建議按鈕 (Action Recommendations) */}
         <motion.div
           initial={{ opacity: 0, x: 20 }}
           animate={{ opacity: 1, x: 0 }}
@@ -1882,7 +1387,7 @@ export default function F5AIAnalysisPage() {
                                 <div className="flex items-start gap-3 mb-4">
                                   <div className="flex-1">
                                     <div className="flex items-center gap-2 mb-1">
-                                      <h4 className="text-white font-medium text-sm">{rec.title}</h4>
+                                      <h4 className="text-white font-medium">{rec.title}</h4>
                                       {rec.priority && (
                                         <Badge
                                           className={
@@ -2147,4 +1652,3 @@ export default function F5AIAnalysisPage() {
     </div>
   )
 }
-
