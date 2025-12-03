@@ -13,6 +13,7 @@ const cloudflareRoutes = require('./routes/cloudflare.routes');
 const f5Routes = require('./routes/f5.routes');
 const checkpointRoutes = require('./routes/checkpoint.routes');
 const commonRoutes = require('./routes/common.routes');
+const reportRoutes = require('./routes/report.routes');
 
 const app = express();
 app.use(cors());
@@ -23,6 +24,7 @@ app.use('/api/cloudflare', cloudflareRoutes);
 app.use('/api/f5', f5Routes);
 app.use('/api/checkpoint', checkpointRoutes);
 app.use('/api', commonRoutes);
+app.use('/api/reports', reportRoutes);
 
 // --- 常數設定 ---
 const LOG_FILE_PATH = '../CF-http_log.txt';

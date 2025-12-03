@@ -610,14 +610,140 @@ class CheckpointRiskServices {
       .slice(0, n);
   }
   
+  // ==================== AI Prompt 輔助函數（動態從配置檔案提取）====================
+  
   /**
-   * 產生 AI 分析提示詞
+   * 從 CHECKPOINT_FIELD_MAPPING 提取 AI 需要的欄位說明
+   * 資料來源：chcekpointFieldMapping.js
+   */
+  generateFieldMappingContext() {
+    // 選取 AI 分析時最關鍵的欄位
+    const importantFields = [
+      'action', 'threat_severity', 'threat_name', 'threat_category',
+      'app_risk', 'appi_name', 'app_category',
+      'url_category', 'url_reputation',
+      'http_user_agent', 'http_url', 'http_method',
+      'burst_count', 'src', 'dst'
+    ];
+    
+    const fieldDescriptions = importantFields.map(fieldName => {
+      const config = this.fieldMapping[fieldName];
+      if (config) {
+        return `- **${fieldName}** (${config.elk_field}): ${config.description}\n  - AI 分析說明: ${config.ai_context}\n  - 範例值: ${config.example || 'N/A'}`;
+      }
+      return null;
+    }).filter(Boolean);
+    
+    return fieldDescriptions.join('\n\n');
+  }
+  
+  /**
+   * 從 CHECKPOINT_ACTION_MAPPING 提取 Action 判斷規則
+   * 資料來源：checkpointStandards.js
+   */
+  generateActionMappingContext() {
+    return Object.entries(CHECKPOINT_ACTION_MAPPING).map(([action, config]) => {
+      const reasons = config.reason_categories ? config.reason_categories.slice(0, 3).join('、') : '';
+      return `- **${action}** (${config.displayName}):
+  - 是否封鎖: ${config.isBlocked ? '是' : '否'}
+  - 是否威脅: ${config.isThreat ? '是' : '否'}
+  - 嚴重程度: ${config.severity}
+  - 說明: ${config.description}
+  - AI 分析建議: ${config.aiContext}
+  - 可能原因: ${reasons}`;
+    }).join('\n\n');
+  }
+  
+  /**
+   * 從 THREAT_PREVENTION_MAPPING 提取威脅等級判斷規則
+   * 資料來源：checkpointStandards.js
+   */
+  generateThreatPreventionContext() {
+    // 嚴重程度
+    const severitySection = Object.entries(THREAT_PREVENTION_MAPPING.SEVERITY).map(([level, config]) => {
+      return `- **${level}** (${config.displayName}): 分數=${config.score}, 嚴重程度=${config.severity}\n  - AI 分析說明: ${config.aiContext}`;
+    }).join('\n');
+    
+    // 威脅類別
+    const categorySection = Object.entries(THREAT_PREVENTION_MAPPING.CATEGORY).map(([category, config]) => {
+      return `- **${category}**: ${config.description} (${config.owaspCategory}), 類型=${config.type}, 嚴重程度=${config.severity}`;
+    }).join('\n');
+    
+    return `**威脅嚴重程度判斷 (threat_severity)**:\n${severitySection}\n\n**威脅類別判斷 (threat_category)**:\n${categorySection}`;
+  }
+  
+  /**
+   * 從 CHECKPOINT_APP_RISK_MAPPING 提取應用程式風險等級
+   * 資料來源：checkpointStandards.js
+   */
+  generateAppRiskContext() {
+    return Object.entries(CHECKPOINT_APP_RISK_MAPPING)
+      .sort((a, b) => parseInt(b[0]) - parseInt(a[0])) // 從高到低排序
+      .map(([level, config]) => {
+        return `- **app_risk = ${level}** (${config.displayName}): 嚴重程度=${config.severity}, 建議操作=${config.action_recommendation}\n  - 說明: ${config.description}`;
+      }).join('\n');
+  }
+  
+  /**
+   * 從 URL_CATEGORY_MAPPING 提取 URL 分類規則
+   * 資料來源：checkpointStandards.js
+   */
+  generateURLCategoryContext() {
+    return Object.entries(URL_CATEGORY_MAPPING).map(([category, config]) => {
+      return `- **${category}** (${config.displayName}): 嚴重程度=${config.severity}, 違規類型=${config.violation_type}\n  - 說明: ${config.description}\n  - 建議操作: ${config.action_recommendation}`;
+    }).join('\n\n');
+  }
+  
+  /**
+   * 從 OWASP_TOP10_PATTERNS 提取攻擊模式
+   * 資料來源：checkpointStandards.js
+   */
+  generateOWASPContext() {
+    return Object.entries(OWASP_TOP10_PATTERNS).map(([attackType, config]) => {
+      const patterns = config.patterns.slice(0, 5).join(', ');
+      return `- **${attackType}** (${config.category} - ${config.name}):\n  - 偵測模式範例: ${patterns}...`;
+    }).join('\n\n');
+  }
+  
+  /**
+   * 從 MALICIOUS_USER_AGENT_PATTERNS 提取惡意 UA 特徵
+   * 資料來源：checkpointStandards.js
+   */
+  generateMaliciousUAContext() {
+    return Object.entries(MALICIOUS_USER_AGENT_PATTERNS).map(([category, config]) => {
+      const patterns = config.patterns.slice(0, 5).join(', ');
+      return `- **${category}** (嚴重程度: ${config.severity}): ${config.description}\n  - 偵測工具: ${patterns}...`;
+    }).join('\n\n');
+  }
+  
+  /**
+   * 產生 AI 分析提示詞（動態從配置檔案提取）
    */
   generateAIPrompt(analysisData) {
     const { timeRange, totalEvents, totalThreats } = analysisData;
     
+    // 動態提取配置說明
+    const fieldMappingContext = this.generateFieldMappingContext();
+    const actionMappingContext = this.generateActionMappingContext();
+    const threatPreventionContext = this.generateThreatPreventionContext();
+    const appRiskContext = this.generateAppRiskContext();
+    const urlCategoryContext = this.generateURLCategoryContext();
+    const owaspContext = this.generateOWASPContext();
+    const maliciousUAContext = this.generateMaliciousUAContext();
+    
     const promptTemplate = `
-你是一位資深的網路安全分析專家，專精於 Check Point 防火牆日誌分析和威脅識別。
+你是一位資深的網路安全分析專家，專精於 **Check Point 防火牆**日誌分析和威脅識別。
+
+⚠️ **重要要求**：
+1. **語言要求**：請務必使用「繁體中文」回應所有內容，包括標題、描述、AI 洞察分析、建議操作等。
+2. **產品識別**：這是 **Check Point 防火牆** 的安全分析，請勿混淆成其他產品：
+   - ❌ 不是 Palo Alto Networks
+   - ❌ 不是 Fortinet / FortiGate
+   - ❌ 不是 Cisco ASA
+   - ✅ 這是 **Check Point Firewall / Application Control / Threat Prevention / URL Filtering**
+3. 所有分析和建議都必須基於 Check Point 產品的功能和術語。
+
+---
 
 ### 【任務說明】
 
@@ -629,6 +755,7 @@ class CheckpointRiskServices {
 
 ### 【資料來源】
 
+- **產品**: Check Point Firewall
 - **索引名稱**: ${this.elkConfig.index}
 - **分析時間範圍（台灣時間 UTC+8）**: 
   - 開始: ${this.formatTimeTaipei(timeRange.start)}
@@ -639,34 +766,55 @@ class CheckpointRiskServices {
 
 ---
 
+### 【ELK 日誌欄位說明】
+（來源：chcekpointFieldMapping.js）
+
+以下是 Check Point 日誌中關鍵欄位的定義和 AI 分析說明：
+
+${fieldMappingContext}
+
+---
+
 ### 【Check Point 五層判斷模型】
 
-**Layer 1: Firewall Action (防火牆動作)**
-- Drop/Reject: 已封鎖的威脅
-- Accept/Allow: 需要深度分析
-- Alert: 告警事件
+本分析採用 Check Point 五層判斷模型，以下規則來自 checkpointStandards.js：
 
-**Layer 2: Threat Prevention (威脅防護)**
-- threat_severity: High/Medium/Low
-- threat_name: SQL Injection, XSS, Botnet, Exploit 等
-- burst_count: 連線爆發次數
+**Layer 1: Firewall Action (防火牆動作判斷)**
+（來源：CHECKPOINT_ACTION_MAPPING）
 
-**Layer 3: Application Risk (應用程式風險)**
-- app_risk = 5: 嚴重風險
-- app_risk = 4: 高風險
-- app_risk = 3: 中風險
+${actionMappingContext}
 
-**Layer 4: URI/UA Analysis (OWASP TOP 10 攻擊模式)**
-- SQL Injection: union select, or 1=1, exec(
-- XSS: <script>, javascript:, onerror=
-- Command Injection: |cat, ;ls, $(
-- Path Traversal: ../, /etc/passwd
-- 惡意 User-Agent: sqlmap, nikto, nmap
+---
 
-**Layer 5: URL Filtering (URL 分類)**
-- Malicious Sites: 惡意網站
-- Phishing: 釣魚網站
-- Pornography/Gambling: 政策違規
+**Layer 2: Threat Prevention (威脅防護判斷)**
+（來源：THREAT_PREVENTION_MAPPING）
+
+${threatPreventionContext}
+
+---
+
+**Layer 3: Application Risk (應用程式風險判斷)**
+（來源：CHECKPOINT_APP_RISK_MAPPING）
+
+${appRiskContext}
+
+---
+
+**Layer 4: URI/UA Analysis (OWASP TOP 10 攻擊模式判斷)**
+（來源：OWASP_TOP10_PATTERNS + MALICIOUS_USER_AGENT_PATTERNS）
+
+**OWASP TOP 10 2021 攻擊模式**:
+${owaspContext}
+
+**惡意 User-Agent 特徵庫**:
+${maliciousUAContext}
+
+---
+
+**Layer 5: URL Filtering (URL 分類判斷)**
+（來源：URL_CATEGORY_MAPPING）
+
+${urlCategoryContext}
 
 ---
 
@@ -678,30 +826,34 @@ ${JSON.stringify(analysisData, null, 2)}
 
 ### 【輸出格式要求】
 
-請使用 JSON 格式輸出，必須包含以下結構：
+請使用 JSON 格式輸出，**所有文字內容必須使用繁體中文**，必須包含以下結構：
 
 \`\`\`json
 {
   "risks": [
     {
       "id": "risk_001",
-      "title": "威脅標題（從日誌中自動識別）",
+      "title": "威脅標題（繁體中文，從日誌中自動識別）",
       "severity": "critical/high/medium/low",
       "category": "BLOCKED_ATTACK/THREAT_PREVENTION/HIGH_RISK_APP/URI_ATTACK/URL_FILTERING",
       "layer": "FIREWALL_ACTION/THREAT_PREVENTION/APP_RISK_ASSESSMENT/URI_UA_ANALYSIS/URL_FILTERING",
-      "description": "威脅詳細描述",
+      "description": "威脅詳細描述（繁體中文）",
       "affectedAssets": ["資產1", "資產2"],
       "attackCount": 數量,
       "uniqueIPs": 唯一 IP 數量,
       "topCountries": ["國家1", "國家2"],
-      "aiInsight": "AI 深度洞察分析",
+      "aiInsight": "AI 深度洞察分析（繁體中文，必須包含具體數字和 Check Point 專業術語）",
       "recommendations": [
         {
           "priority": "high/medium/low",
-          "action": "建議操作",
-          "reason": "原因說明"
+          "title": "建議標題（繁體中文）",
+          "description": "具體的 Check Point 操作建議（繁體中文，例如：在 SmartConsole 中設定...）"
         }
-      ]
+      ],
+      "openIssues": 未解決問題數,
+      "resolvedIssues": 已解決問題數,
+      "createdDate": "建立日期",
+      "updatedDate": "更新日期"
     }
   ],
   "summary": {
@@ -717,10 +869,11 @@ ${JSON.stringify(analysisData, null, 2)}
 ### 【分析要點】
 
 1. **自動識別威脅**：從日誌數據中自動識別威脅類型，不要使用預設清單
-2. **多層判斷**：根據五層判斷模型分類威脅
-3. **優先級排序**：按照威脅嚴重程度排序
-4. **可操作建議**：提供具體的緩解措施
+2. **多層判斷**：根據上述五層判斷模型分類威脅，每個風險必須標明是哪一層判斷出來的
+3. **優先級排序**：按照威脅嚴重程度排序（critical > high > medium > low）
+4. **可操作建議**：提供具體的 Check Point 緩解措施（使用 SmartConsole、SmartDashboard 等 Check Point 工具術語）
 5. **關聯分析**：識別相關聯的攻擊模式
+6. **繁體中文**：所有輸出內容必須使用繁體中文
 
 請開始分析。
     `.trim();
