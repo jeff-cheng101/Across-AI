@@ -459,7 +459,7 @@ const responseText = result.response.text();
 const response = await fetch('http://localhost:11434/api/generate', {
   method: 'POST',
   body: JSON.stringify({
-    model: 'gpt-oss:20b',
+    model: 'llama3.3:70b',
     prompt: prompt,
     stream: false
   })
@@ -507,5 +507,5 @@ if (jsonMatch) {
 
 4. **AI 模型選擇**：
    - Gemini 2.0 Flash: 速度快，適合實時分析
-   - Ollama gpt-oss:20b: 本地部署，隱私性好
+   - Ollama llama3.3:70b: 本地部署，隱私性好
 

@@ -203,7 +203,7 @@ curl -X POST http://localhost:8080/api/analyze-waf-risks-cloudflare \
   -H "Content-Type: application/json" \
   -d '{
     "aiProvider": "ollama",
-    "model": "gpt-oss:20b",
+    "model": "llama3.3:70b",
     "timeRange": "24h"
   }'
 ```
