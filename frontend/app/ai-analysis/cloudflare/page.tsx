@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from "react"
 import { motion, AnimatePresence } from "framer-motion"
-import { Shield, TrendingUp, AlertTriangle, CheckCircle, XCircle, Globe, Clock, Sparkles, Calendar, Activity, RefreshCw, CalendarIcon, Loader2, ChevronDown, ChevronUp, FileText, ExternalLink } from "lucide-react"
+import { Shield, TrendingUp, AlertTriangle, CheckCircle, XCircle, Globe, Clock, Sparkles, Calendar, Activity, RefreshCw, CalendarIcon, Loader2, ChevronDown, ChevronUp, FileText, ExternalLink, Download } from "lucide-react"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
@@ -11,6 +11,7 @@ import { format } from "date-fns"
 import { useWAFData } from "@/app/dashboard/waf-data-context"
 import { useToast } from "@/hooks/use-toast"
 import { saveActionRecord, type ActionRecord } from "@/lib/action-records"
+import { ReportDownloadDialog } from "@/components/report-download-dialog"
 
 // API 基礎 URL - 從環境變數讀取，預設為 localhost
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:8081'
@@ -101,6 +102,9 @@ export default function CloudflareAIAnalysisPage() {
     low: [],
   })
   const [executedActions, setExecutedActions] = useState<Set<string>>(new Set())
+  
+  // 報告下載對話框狀態
+  const [reportDialogOpen, setReportDialogOpen] = useState(false)
 
   // 載入 Cloudflare WAF 風險分析資料
   const loadCloudflareWAFRisks = async () => {
@@ -794,32 +798,48 @@ export default function CloudflareAIAnalysisPage() {
               <span>載入中...</span>
             </div>
           )}
-          <Button
-            onClick={hasAttemptedLoad ? handleReAnalysis : handleStartAnalysis}
-            disabled={isLoading}
-            className={`ml-auto ${
-              hasAttemptedLoad 
-                ? 'bg-cyan-600 hover:bg-cyan-700' 
-                : 'bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-700 hover:to-blue-700 shadow-lg'
-            } text-white font-semibold px-6 py-2 transition-all`}
-          >
-            {isLoading ? (
-              <>
-                <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                分析中...
-              </>
-            ) : hasAttemptedLoad ? (
-              <>
-                <RefreshCw className="w-4 h-4 mr-2" />
-                重新分析
-              </>
-            ) : (
-              <>
-                <Sparkles className="w-4 h-4 mr-2" />
-                開始 AI 分析
-              </>
+          <div className="ml-auto flex gap-2">
+            {/* 報告下載按鈕 - 只在有分析結果時顯示 */}
+            {wafRisks.length > 0 && (
+              <Button
+                onClick={() => setReportDialogOpen(true)}
+                disabled={isLoading}
+                variant="outline"
+                className="border-green-500 text-green-400 hover:bg-green-900/20 font-semibold px-4 py-2"
+              >
+                <Download className="w-4 h-4 mr-2" />
+                生成報告
+              </Button>
             )}
-          </Button>
+            
+            {/* AI 分析按鈕 */}
+            <Button
+              onClick={hasAttemptedLoad ? handleReAnalysis : handleStartAnalysis}
+              disabled={isLoading}
+              className={`${
+                hasAttemptedLoad 
+                  ? 'bg-cyan-600 hover:bg-cyan-700' 
+                  : 'bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-700 hover:to-blue-700 shadow-lg'
+              } text-white font-semibold px-6 py-2 transition-all`}
+            >
+              {isLoading ? (
+                <>
+                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                  分析中...
+                </>
+              ) : hasAttemptedLoad ? (
+                <>
+                  <RefreshCw className="w-4 h-4 mr-2" />
+                  重新分析
+                </>
+              ) : (
+                <>
+                  <Sparkles className="w-4 h-4 mr-2" />
+                  開始 AI 分析
+                </>
+              )}
+            </Button>
+          </div>
         </div>
         <p className="text-slate-400">
           基於 Cloudflare 安全數據的智能分析與建議 | 總計 {totalOpenIssues} 個開放問題，影響 {totalAffectedAssets}{" "}
@@ -1185,6 +1205,19 @@ export default function CloudflareAIAnalysisPage() {
       )}
 
       {/* Three Column Layout */}
+      {/* 報告下載對話框 */}
+      <ReportDownloadDialog
+        open={reportDialogOpen}
+        onOpenChange={setReportDialogOpen}
+        analysisData={wafRisks}
+        metadata={{
+          totalEvents: analysisMetadata.totalEvents,
+          timeRange: analysisMetadata.timeRange,
+          platform: 'cloudflare',
+          analysisTimestamp: analysisMetadata.analysisTimestamp
+        }}
+      />
+
       {wafRisks.length > 0 && (
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
         {/* Column 1: 風險評估 (Risk Assessment) - Category Cards */}
