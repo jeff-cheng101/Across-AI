@@ -5,30 +5,22 @@ import type React from "react"
 import { useState } from "react"
 import Link from "next/link"
 import { motion } from "framer-motion"
-import { ChevronLeft, ChevronRight, SparklesIcon, Sparkles } from 'lucide-react'
+import { ChevronLeft, ChevronRight, SparklesIcon, Sparkles, MoreHorizontal } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { WAFDataProvider } from "@/app/dashboard/waf-data-context"
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 
 const brands = [
   { name: "Cloudflare", logo: "/logos/Cloudflar.png", href: "/ai-analysis/cloudflare" },
-  { name: "Palo Alto", logo: "/logos/palo-alto-networks-1.png", href: "#", disabled: true },
+  { name: "Palo Alto", logo: "/logos/palo-alto-networks-1.png", href: "/ai-analysis/paloalto", disabled: true },
   { name: "F5", logo: "/logos/f5_b.png", href: "/ai-analysis/f5", disabled: false },
   { name: "CATO", logo: "/logos/cato-networks.png", href: "#", disabled: true },
-  { name: "Checkpoint", logo: "/logos/checkpoint.png", href: "#", disabled: true },
+  { name: "Checkpoint", logo: "/logos/checkpoint.png", href: "/ai-analysis/checkpoint", disabled: false },
   { name: "Intezer", logo: "/logos/INTEZER_logo.png", href: "#", disabled: true },
   { name: "CyCraft", logo: "/logos/craftai.png", href: "#", disabled: true },
 ]
 
-const installedModels = [
-  { id: "gpt-oss-20b", name: "GPT-OSS20b", version: "1.0.0" },
-]
+const installedModels = [{ id: "gpt-oss-20b", name: "GPT-OSS20b", version: "1.0.0" }]
 
 export default function AIAnalysisLayout({ children }: { children: React.ReactNode }) {
   const [isCollapsed, setIsCollapsed] = useState(false)
@@ -63,8 +55,8 @@ export default function AIAnalysisLayout({ children }: { children: React.ReactNo
               </div>
             ) : (
               <div className="flex justify-center">
-                <Sparkles 
-                  className="w-6 h-6 text-white cursor-pointer hover:text-cyan-400 transition-colors" 
+                <Sparkles
+                  className="w-6 h-6 text-white cursor-pointer hover:text-cyan-400 transition-colors"
                   onClick={() => setIsCollapsed(false)}
                 />
               </div>
@@ -118,6 +110,52 @@ export default function AIAnalysisLayout({ children }: { children: React.ReactNo
                 {!isCollapsed && <span className="text-white text-sm font-medium">{brand.name}</span>}
               </Link>
             ))}
+
+            {isCollapsed ? (
+              <div className="pt-4 border-t border-white/10">
+                <div
+                  className="flex justify-center p-3 rounded-lg hover:bg-white/5 transition-colors cursor-pointer"
+                  title="其他可用操作"
+                  onClick={() => setIsCollapsed(false)}
+                >
+                  <MoreHorizontal className="w-5 h-5 text-slate-400" />
+                </div>
+              </div>
+            ) : (
+              <div className="pt-4 border-t border-white/10 space-y-2">
+                <div className="text-xs text-slate-400 mb-2 px-3">其他可用操作</div>
+                <Button
+                  variant="outline"
+                  className="w-full border-white/10 text-white hover:bg-white/5 bg-transparent text-sm"
+                >
+                  生成詳細報告
+                </Button>
+                <Link href="/ai-analysis/create-ticket" className="block w-full">
+                  <Button
+                    variant="outline"
+                    className="w-full border-white/10 text-white hover:bg-white/5 bg-transparent text-sm"
+                  >
+                    創建工單
+                  </Button>
+                </Link>
+                <Link href="/ai-analysis/notifications" className="block w-full">
+                  <Button
+                    variant="outline"
+                    className="w-full border-white/10 text-white hover:bg-white/5 bg-transparent text-sm"
+                  >
+                    通知相關人員
+                  </Button>
+                </Link>
+                <Link href="/ai-analysis/history" className="block w-full">
+                  <Button
+                    variant="outline"
+                    className="w-full border-white/10 text-white hover:bg-white/5 bg-transparent text-sm"
+                  >
+                    AI 分析紀錄
+                  </Button>
+                </Link>
+              </div>
+            )}
           </nav>
 
           {/* Back to Dashboard */}

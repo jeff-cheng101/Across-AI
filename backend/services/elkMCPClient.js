@@ -19,6 +19,18 @@ class ElkMCPClient {
     this.serverCapabilities = {};
   }
 
+  // 取得統一的 MCP 超時 (毫秒)
+  getTimeoutMs() {
+    const timeout = ELK_CONFIG?.mcp?.timeout;
+    return Number.isFinite(timeout) && timeout > 0 ? timeout : 300000;
+  }
+
+  // 取得 Elasticsearch 查詢用的超時字串 (如 "60s")
+  getTimeoutSecondsString() {
+    const seconds = Math.max(1, Math.ceil(this.getTimeoutMs() / 1000));
+    return `${seconds}s`;
+  }
+
   // 建立 HTTP 傳輸
   async createHttpTransport() {
     // 先測試 MCP Server 是否可用
@@ -87,7 +99,7 @@ class ElkMCPClient {
       
       const response = await fetch(pingUrl, {
         method: 'GET',
-        timeout: 5000
+        timeout: this.getTimeoutMs()
       });
       
       if (!response.ok) {
@@ -125,8 +137,8 @@ class ElkMCPClient {
             arguments: args
           }
         }),
-        // 增加超時時間到60秒，適應大數據量查詢
-        signal: AbortSignal.timeout(60000)
+        // 增加超時時間到5分鐘，適應大數據量查詢
+        signal: AbortSignal.timeout(this.getTimeoutMs())
       });
       
       if (!response.ok) {
@@ -264,13 +276,14 @@ class ElkMCPClient {
         }, {
           capabilities: {
             tools: {}
-          }
+          },
+          timeout: this.getTimeoutMs()  // 依環境變數設定超時
         });
 
         // 設置連接超時
         const connectPromise = this.client.connect(transport);
         const timeoutPromise = new Promise((_, reject) => 
-          setTimeout(() => reject(new Error('Connection timeout')), 15000)
+          setTimeout(() => reject(new Error('Connection timeout')), this.getTimeoutMs())
         );
         
         // 連接到服務器（帶超時）
@@ -356,12 +369,12 @@ class ElkMCPClient {
             query_body: {
               query: { match_all: {} },
               size: 1,
-              timeout: '5s'
+              timeout: this.getTimeoutSecondsString()
             }
           }
         }),
         new Promise((_, reject) => 
-          setTimeout(() => reject(new Error('Connection test timeout')), 5000)
+          setTimeout(() => reject(new Error('Connection test timeout')), this.getTimeoutMs())
         )
       ]);
 
@@ -372,7 +385,7 @@ class ElkMCPClient {
   }
 
   // 建構 Elasticsearch 查詢（產品無關）
-  buildElasticsearchQuery(timeRange = '1h', filters = {}, fieldMapping = null) {
+  buildElasticsearchQuery(timeRange = '1h', filters = {}, fieldMapping = null, maxResults = ELK_CONFIG.elasticsearch.maxResults) {
     // 智能時間範圍查詢策略
     let query;
     
@@ -485,6 +498,15 @@ class ElkMCPClient {
       }
     }
 
+    // 全域限制最大回傳筆數，避免 MCP search 過載
+    const configuredLimit = Number.isInteger(ELK_CONFIG.elasticsearch.maxResults) && ELK_CONFIG.elasticsearch.maxResults > 0
+      ? ELK_CONFIG.elasticsearch.maxResults
+      : 2;
+    const limit = Number.isInteger(maxResults) && maxResults > 0
+      ? Math.min(maxResults, configuredLimit)
+      : configuredLimit;
+    query.size = Math.min(query.size || limit, limit);
+
     return query;
   }
 
@@ -524,7 +546,7 @@ class ElkMCPClient {
     }
 
     try {
-      const query = this.buildElasticsearchQuery(timeRange, filters, fieldMapping);
+      const query = this.buildElasticsearchQuery(timeRange, filters, fieldMapping, ELK_CONFIG.elasticsearch.maxResults);
       
       // 使用提供的索引模式，或回退到預設
       const targetIndex = indexPattern || ELK_CONFIG.elasticsearch.index;
@@ -535,6 +557,10 @@ class ElkMCPClient {
       console.log('索引:', targetIndex);
       console.log('查詢內容:', JSON.stringify(query, null, 2));
 
+      const requestTimeout = this.getTimeoutMs();
+      const callStart = Date.now();
+      console.log(`🛰️ 開始呼叫 MCP 工具 search，timeout = ${requestTimeout}ms`);
+
       // 使用 MCP 工具執行查詢
       const result = await this.client.callTool({
         name: 'search',
@@ -542,7 +568,19 @@ class ElkMCPClient {
           index: targetIndex,
           query_body: query
         }
+      }, undefined, {
+        timeout: requestTimeout,  // 依環境變數設定超時
+        resetTimeoutOnProgress: true,  // 收到進度通知時重置超時
+        onprogress: (progress) => {
+          try {
+            const summary = JSON.stringify(progress);
+            console.log('📡 MCP 進度通知:', summary.length > 500 ? `${summary.slice(0, 500)}...` : summary);
+          } catch {
+            console.log('📡 MCP 進度通知（無法序列化）', progress);
+          }
+        }
       });
+      console.log(`✅ MCP 工具 search 完成，耗時 ${Date.now() - callStart}ms`);
 
       if (result.isError) {
         throw new Error(`Elasticsearch 查詢錯誤: ${result.content[0]?.text || 'Unknown error'}`);
@@ -613,7 +651,7 @@ class ElkMCPClient {
       };
 
     } catch (error) {
-      console.error('❌ Elasticsearch 查詢失敗:', error.message);
+      console.error(`❌ Elasticsearch 查詢失敗 (耗時 ${Date.now() - callStart}ms):`, error.message);
       throw error;
     }
   }
@@ -676,6 +714,174 @@ class ElkMCPClient {
     console.log('✅ 客戶端狀態已重置');
   }
 
+  // 分批查詢 Elasticsearch（使用 from/size 分頁）
+  // options 可以包含: { indexPattern, fieldMapping, batchSize, maxBatches }
+  async queryElasticsearchBatched(timeRange = '1h', options = {}) {
+    const { 
+      indexPattern, 
+      fieldMapping, 
+      batchSize = ELK_CONFIG.elasticsearch.batchSize,  // 從 .env 的 ELK_BATCH_SIZE 讀取，預設 10
+      maxBatches = ELK_CONFIG.elasticsearch.maxBatches,  // 從 .env 的 ELK_MAX_BATCHES 讀取，預設 10
+      ...filters 
+    } = options;
+    
+    try {
+      await this.ensureConnection();
+    } catch (error) {
+      console.log('⚠️ 單例連接失敗，嘗試使用新實例...');
+      throw new Error(`無法建立連接: ${error.message}`);
+    }
+
+    const targetIndex = indexPattern || ELK_CONFIG.elasticsearch.index;
+    const allHits = [];
+    let totalFound = 0;
+    let currentBatch = 0;
+    let from = 0;
+    let totalQueriedCount = 0;
+
+    console.log(`📦 開始分批查詢 Elasticsearch...`);
+    console.log(`批次大小: ${batchSize}, 最大批次數: ${maxBatches}`);
+
+    while (currentBatch < maxBatches) {
+      try {
+        // 建構單一批次的查詢
+        const baseQuery = this.buildElasticsearchQuery(timeRange, filters, fieldMapping, batchSize);
+        const batchQuery = {
+          ...baseQuery,
+          from: from,
+          size: batchSize
+        };
+
+        console.log(`📊 執行第 ${currentBatch + 1} 批查詢 (from: ${from}, size: ${batchSize})...`);
+
+        const requestTimeout = this.getTimeoutMs();
+        const callStart = Date.now();
+
+        // 執行單一批次查詢
+        const result = await this.client.callTool({
+          name: 'search',
+          arguments: {
+            index: targetIndex,
+            query_body: batchQuery
+          }
+        }, undefined, {
+          timeout: requestTimeout,
+          resetTimeoutOnProgress: true,
+          onprogress: (progress) => {
+            try {
+              const summary = JSON.stringify(progress);
+              console.log(`📡 批次 ${currentBatch + 1} 進度:`, summary.length > 200 ? `${summary.slice(0, 200)}...` : summary);
+            } catch {
+              console.log(`📡 批次 ${currentBatch + 1} 進度通知（無法序列化）`);
+            }
+          }
+        });
+
+        console.log(`✅ 批次 ${currentBatch + 1} 完成，耗時 ${Date.now() - callStart}ms`);
+
+        if (result.isError) {
+          throw new Error(`Elasticsearch 查詢錯誤: ${result.content[0]?.text || 'Unknown error'}`);
+        }
+
+        // 解析回應
+        const responseText = result.content[0]?.text || '';
+        const dataText = result.content[1]?.text || responseText;
+        
+        let batchHits = [];
+        let batchTotal = 0;
+
+        try {
+          const records = JSON.parse(dataText);
+          
+          if (Array.isArray(records)) {
+            // 直接是記錄陣列（無法得知總數，需要繼續查詢直到沒有資料）
+            batchHits = records;
+            batchTotal = -1; // 標記為未知總數
+          } else if (records.hits?.hits) {
+            // 標準 Elasticsearch 格式
+            batchHits = records.hits.hits;
+            batchTotal = records.hits.total?.value || records.hits.total || batchHits.length;
+          } else {
+            // 其他格式，嘗試提取
+            batchHits = [];
+            batchTotal = 0;
+          }
+        } catch (parseError) {
+          console.warn(`⚠️ 批次 ${currentBatch + 1} 回應解析失敗:`, parseError.message);
+          batchHits = [];
+          batchTotal = 0;
+        }
+
+        // 如果第一批，記錄總數（如果可取得的話）
+        if (currentBatch === 0 && batchTotal >= 0) {
+          totalFound = batchTotal;
+          console.log(`📊 Elasticsearch 索引總共有 ${totalFound} 筆記錄`);
+        } else if (currentBatch === 0 && batchTotal === -1) {
+          console.log(`📊 無法取得總筆數，將持續查詢直到沒有資料`);
+        }
+
+        // 如果這批沒有資料，停止查詢
+        if (batchHits.length === 0) {
+          console.log(`✅ 批次 ${currentBatch + 1} 沒有更多資料，停止查詢`);
+          break;
+        }
+
+        // 將這批資料加入總結果
+        const formattedHits = batchHits.map(hit => {
+          const source = hit._source || hit;
+          return {
+            id: hit._id || source.RayID || source.id || `${currentBatch}-${allHits.length}`,
+            source: source,
+            timestamp: source["@timestamp"]
+          };
+        });
+
+        allHits.push(...formattedHits);
+        totalQueriedCount = allHits.length;
+        console.log(`✅ 批次 ${currentBatch + 1} 取得 ${formattedHits.length} 筆記錄，累計 ${allHits.length} 筆`);
+        console.log(`🔢 總共查詢筆數（目前）: ${totalQueriedCount}`);
+
+        // 如果這批資料少於批次大小，表示已經是最後一批
+        if (batchHits.length < batchSize) {
+          console.log(`✅ 已取得所有資料（最後一批）`);
+          break;
+        }
+
+        // 準備下一批
+        from += batchSize;
+        currentBatch++;
+
+        // 如果已取得足夠的資料（達到總數），停止查詢
+        // 注意：只有在 totalFound > 0 時才檢查（避免在未知總數時誤判）
+        if (totalFound > 0 && allHits.length >= totalFound) {
+          console.log(`✅ 已取得所有 ${totalFound} 筆記錄`);
+          break;
+        }
+
+      } catch (error) {
+        console.error(`❌ 批次 ${currentBatch + 1} 查詢失敗:`, error.message);
+        // 如果已經有資料，返回部分結果；否則拋出錯誤
+        if (allHits.length > 0) {
+          console.warn(`⚠️ 返回部分結果（${allHits.length} 筆）`);
+          break;
+        } else {
+          throw error;
+        }
+      }
+    }
+
+    console.log(`✅ 分批查詢完成，共取得 ${allHits.length} 筆記錄（${currentBatch + 1} 批次）`);
+    console.log(`📈 總共查詢筆數: ${totalQueriedCount}`);
+
+    return {
+      total: totalFound,
+      hits: allHits,
+      batches: currentBatch + 1,
+      batchSize: batchSize,
+      queriedCount: totalQueriedCount
+    };
+  }
+
   // 使用新實例執行查詢（回退機制）
   async queryWithNewInstance(timeRange = '1h', options = {}) {
     console.log('🆕 使用新實例執行 Elasticsearch 查詢...');
@@ -686,7 +892,7 @@ class ElkMCPClient {
     try {
       await newClient.connect();
       
-      const query = newClient.buildElasticsearchQuery(timeRange, filters, fieldMapping);
+      const query = newClient.buildElasticsearchQuery(timeRange, filters, fieldMapping, ELK_CONFIG.elasticsearch.maxResults);
       const targetIndex = indexPattern || ELK_CONFIG.elasticsearch.index;
       
       console.log('📊 執行 Elasticsearch 查詢（新實例）...');
@@ -701,6 +907,9 @@ class ElkMCPClient {
           index: targetIndex,
           query_body: query
         }
+      }, undefined, {
+        timeout: this.getTimeoutMs(),  // 依環境變數設定超時
+        resetTimeoutOnProgress: true  // 收到進度通知時重置超時
       });
 
       if (result.isError) {

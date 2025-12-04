@@ -363,7 +363,7 @@ const F5_FIELD_MAPPING = {
     data_type: "keyword",
     description: "HTTP類型/分類識別名稱",
     ai_context: "HTTP流量分類",
-    example: "/Common/www.twister5.com.tw"
+    example: "/Common/www.example.com"
   },
 
   virtual: {
@@ -371,7 +371,7 @@ const F5_FIELD_MAPPING = {
     data_type: "keyword",
     description: "虛擬伺服器名稱/路徑",
     ai_context: "識別F5虛擬伺服器",
-    example: "/Common/vs_1234567890_VS202.39.33.192_443"
+    example: "/Common/vs_1234567890_VS10x.XX.XX.XX_443"
   },
 
   // === F5 裝置與管理資訊 ===
@@ -380,7 +380,7 @@ const F5_FIELD_MAPPING = {
     data_type: "keyword",
     description: "F5 裝置主機名稱（或分組識別）",
     ai_context: "識別產生日誌的F5裝置",
-    example: "office.twister5.com"
+    example: "office.example.com"
   },
 
   management_ip_address: {
@@ -388,7 +388,7 @@ const F5_FIELD_MAPPING = {
     data_type: "ip",
     description: "管理介面 IP 位址",
     ai_context: "F5管理介面IP",
-    example: "192.168.1.245"
+    example: "192.168.1.1"
   },
 
   management_ip_address_2: {
@@ -396,7 +396,7 @@ const F5_FIELD_MAPPING = {
     data_type: "keyword",
     description: "次管理介面 IP 位址（多介面設備）",
     ai_context: "第二個管理介面IP",
-    example: "192.168.1.246"
+    example: "192.168.1.2"
   },
 
   route_domain: {
@@ -489,7 +489,7 @@ const F5_FIELD_MAPPING = {
     data_type: "text",
     description: "原始記錄訊息（詳細內容/結構化輸出）",
     ai_context: "完整的原始日誌訊息",
-    example: "ASM:unit_hostname=\"office.twister5.com\"..."
+    example: "ASM:unit_hostname=\"office.example.com\"..."
   },
 
   version: {

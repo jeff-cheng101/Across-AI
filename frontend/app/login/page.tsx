@@ -9,6 +9,8 @@ import { Label } from "@/components/ui/label"
 import { Separator } from "@/components/ui/separator"
 import { Shield, Mail, Lock, Eye, EyeOff } from "lucide-react"
 import Link from "next/link"
+import { login, UserRole } from "../routes/auth"
+import { notifyError, notifySuccess } from "../util/notify"
 
 export default function LoginPage() {
   const [email, setEmail] = useState("")
@@ -17,14 +19,47 @@ export default function LoginPage() {
   const [isLoading, setIsLoading] = useState(false)
   const router = useRouter()
 
+  const getRedirectPath = (role: UserRole): string => {
+    switch (role) {
+      case 'management':
+        return '/account/management'
+      case 'reseller':
+        return '/account/dealer'
+      case 'user':
+        return '/dashboard'
+      default:
+        return '/dashboard'
+    }
+  }
+
   const handleLogin = async () => {
+    if (!email || !password) {
+      notifyError('請輸入電子郵件和密碼')
+      return
+    }
+
     setIsLoading(true)
-    // 模擬登入處理
-    setTimeout(() => {
-      console.log("登入:", { email, password })
+    try {
+      const response = await login({ email, password })
+      
+      if (response.success && response.user) {
+        // 根據角色重定向
+        const redirectPath = getRedirectPath(response.user.role)
+        router.push(redirectPath)
+      } else {
+        notifyError(response.message || '登入失敗')
+      }
+    } catch (error: any) {
+      notifyError(error.message || '登入失敗')
+    } finally {
       setIsLoading(false)
-      router.push("/dashboard")
-    }, 1000)
+    }
+  }
+
+  const handleKeyPress = (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter') {
+      handleLogin()
+    }
   }
 
   return (
@@ -32,8 +67,8 @@ export default function LoginPage() {
       <Card className="w-full max-w-md">
         <CardHeader className="space-y-1 text-center">
           <div className="flex justify-center mb-4">
-            <div className="p-3 rounded-full bg-brand-primary/10">
-              <Shield className="h-8 w-8 text-brand-primary" />
+            <div className="p-3 rounded-full bg-primary/10">
+              <Shield className="h-8 w-8 text-primary" />
             </div>
           </div>
           <CardTitle className="text-2xl font-bold">歡迎回來</CardTitle>
@@ -51,6 +86,7 @@ export default function LoginPage() {
                 className="pl-10"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
+                onKeyPress={handleKeyPress}
               />
             </div>
           </div>
@@ -65,6 +101,7 @@ export default function LoginPage() {
                 className="pl-10 pr-10"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
+                onKeyPress={handleKeyPress}
               />
               <Button
                 type="button"
@@ -83,24 +120,24 @@ export default function LoginPage() {
           </div>
           <div className="flex items-center justify-between">
             <div className="flex items-center space-x-2">
-              <input type="checkbox" id="remember" className="rounded border-gray-300" />
+              {/* <input type="checkbox" id="remember" className="rounded border-gray-300" />
               <Label htmlFor="remember" className="text-sm">
                 記住我
-              </Label>
+              </Label> */}
             </div>
-            <Link href="/forgot-password" className="text-sm text-brand-primary hover:underline">
+            <Link href="/forgot-password" className="text-sm text-primary hover:underline">
               忘記密碼？
             </Link>
           </div>
-          <Button onClick={handleLogin} className="w-full btn-primary" disabled={isLoading}>
+          <Button onClick={handleLogin} className="w-full" disabled={isLoading}>
             {isLoading ? "登入中..." : "登入"}
           </Button>
           <Separator />
           <div className="text-center text-sm text-muted-foreground">
-            還沒有帳戶？{" "}
-            <Link href="/register" className="text-brand-primary hover:underline">
+            {/* 還沒有帳戶？{" "} */}
+            {/* <Link href="/register" className="text-primary hover:underline">
               立即註冊
-            </Link>
+            </Link> */}
           </div>
         </CardContent>
       </Card>

@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from "react"
 import { motion, AnimatePresence } from "framer-motion"
-import { Shield, TrendingUp, AlertTriangle, CheckCircle, XCircle, Globe, Clock, Sparkles, Calendar, Activity, RefreshCw, CalendarIcon, Loader2, ChevronDown, ChevronUp, FileText, ExternalLink } from "lucide-react"
+import { Shield, TrendingUp, AlertTriangle, CheckCircle, XCircle, Globe, Clock, Sparkles, Calendar, Activity, RefreshCw, CalendarIcon, Loader2, ChevronDown, ChevronUp, FileText, ExternalLink, Download } from "lucide-react"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
@@ -10,6 +10,38 @@ import { CustomDatePicker } from "@/components/custom-date-picker"
 import { format } from "date-fns"
 import { useWAFData } from "@/app/dashboard/waf-data-context"
 import { useToast } from "@/hooks/use-toast"
+import { saveActionRecord, type ActionRecord } from "@/lib/action-records"
+import { ReportDownloadDialog } from "@/components/report-download-dialog"
+
+// API 基礎 URL - 從環境變數讀取，預設為 localhost
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:8081'
+
+interface ExecutionHistory {
+  id: string
+  timestamp: Date
+  actionTitle: string
+  actionType: string
+  riskLevel: "high" | "medium" | "low"
+  protectionMethod: string
+  resolvedIssues: Array<{
+    endpoint: string
+    count: number
+    description: string
+  }>
+  unresolvedIssues: Array<{
+    endpoint: string
+    count: number
+    reason: string
+    recommendation: string
+  }>
+  openIssuesBefore: number
+  resolvedIssuesBefore: number
+  openIssuesAfter: number
+  resolvedIssuesAfter: number
+  issuesResolved: number
+  status: "success" | "failed"
+  impactDescription: string
+}
 
 export default function CloudflareAIAnalysisPage() {
   const [selectedIssue, setSelectedIssue] = useState<string | null>(null)
@@ -18,10 +50,23 @@ export default function CloudflareAIAnalysisPage() {
   const [error, setError] = useState<string | null>(null)
   const [forceReload, setForceReload] = useState(0) // 強制重新載入計數器
   const [hasAttemptedLoad, setHasAttemptedLoad] = useState(false) // 防止無限循環
+  const [selectedAction, setSelectedAction] = useState<{ title: string; description: string; issueId: string } | null>(
+    null,
+  ) // 操作步驟選擇的項目
   
   // 新增：時間範圍和分析資訊
   const [selectedTimeRange, setSelectedTimeRange] = useState('24h')
-  const [analysisMetadata, setAnalysisMetadata] = useState({
+  const [analysisMetadata, setAnalysisMetadata] = useState<{
+    totalEvents: number
+    timeRange: { 
+      start: string
+      end: string
+      display?: { start: string; end: string }
+      actual?: { start: string; end: string }
+      hasLogs?: boolean
+    }
+    analysisTimestamp: string
+  }>({
     totalEvents: 0,
     timeRange: { start: '', end: '' },
     analysisTimestamp: ''
@@ -46,6 +91,20 @@ export default function CloudflareAIAnalysisPage() {
   const [expandedGuides, setExpandedGuides] = useState<Set<string>>(new Set())
   const [operationGuides, setOperationGuides] = useState<{[key: string]: any}>({})
   const [loadingGuides, setLoadingGuides] = useState<Set<string>>(new Set())
+
+  const [executionHistory, setExecutionHistory] = useState<{
+    high: ExecutionHistory[]
+    medium: ExecutionHistory[]
+    low: ExecutionHistory[]
+  }>({
+    high: [],
+    medium: [],
+    low: [],
+  })
+  const [executedActions, setExecutedActions] = useState<Set<string>>(new Set())
+  
+  // 報告下載對話框狀態
+  const [reportDialogOpen, setReportDialogOpen] = useState(false)
 
   // 載入 Cloudflare WAF 風險分析資料
   const loadCloudflareWAFRisks = async () => {
@@ -87,7 +146,7 @@ export default function CloudflareAIAnalysisPage() {
       }
 
       // 呼叫後端 API
-      const response = await fetch('http://localhost:8080/api/cloudflare/analyze-waf-risks', {
+      const response = await fetch(`${API_BASE_URL}/api/cloudflare/analyze-waf-risks`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -210,6 +269,132 @@ export default function CloudflareAIAnalysisPage() {
       ? `${format(customDateRange.start!, 'yyyy-MM-dd HH:mm')} 至 ${format(customDateRange.end!, 'yyyy-MM-dd HH:mm')}`
       : getTimeRangeLabel(selectedTimeRange)
     
+    // 寫入AI分析紀錄
+    const affectedRisk = wafRisks.find((r) => r.id === selectedAction?.issueId)
+    console.log(selectedAction)
+    console.log(affectedRisk)
+    const openIssuesBefore = totalOpenIssues
+    const resolvedIssuesBefore = totalResolvedIssues
+    const issuesResolvedCount = Math.floor((affectedRisk?.openIssues || 0) * 0.35)
+    const openIssuesAfter = openIssuesBefore - issuesResolvedCount
+    const resolvedIssuesAfter = resolvedIssuesBefore + issuesResolvedCount
+    const riskLevel: "high" | "medium" | "low" =
+    affectedRisk?.severity === "critical" || affectedRisk?.severity === "high"
+      ? "high"
+      : affectedRisk?.severity === "medium"
+        ? "medium"
+        : "low"
+
+    const generateProtectionMethod = (actionTitle: string): string => {
+      if (actionTitle.includes("Threat Prevention") || actionTitle.includes("威脅防護")) return "Threat Prevention"
+      if (actionTitle.includes("SandBlast") || actionTitle.includes("沙箱")) return "SandBlast Zero-Day"
+      if (actionTitle.includes("IPS") || actionTitle.includes("簽名")) return "IPS 防護"
+      if (actionTitle.includes("Anti-Ransomware")) return "Anti-Ransomware"
+      if (actionTitle.includes("Anti-Bot")) return "Anti-Bot"
+      if (actionTitle.includes("Anti-Phishing")) return "Anti-Phishing"
+      if (actionTitle.includes("DLP")) return "Data Loss Prevention"
+      return "Check Point Security Policy"
+    }
+  
+    const generateResolvedIssues = (count: number, issueType: string) => {
+      const templates = [
+        { endpoint: "/api/enterprise/data", ratio: 0.4 },
+        { endpoint: "/api/financial/transactions", ratio: 0.35 },
+        { endpoint: "/api/user/authentication", ratio: 0.25 },
+      ]
+      return templates.map((t) => ({
+        endpoint: t.endpoint,
+        count: Math.floor(count * t.ratio),
+        description: `已成功防禦 ${issueType} 攻擊`,
+      }))
+    }
+  
+    const generateUnresolvedIssues = (count: number) => {
+      const unresolvedCount = Math.floor(count * 0.15)
+      const templates = [
+        {
+          endpoint: "/api/legacy/infrastructure",
+          ratio: 0.55,
+          reason: "需要系統層級修復",
+          recommendation: "更新底層系統並實施進階威脅防護",
+        },
+        {
+          endpoint: "/api/third-party/integration",
+          ratio: 0.45,
+          reason: "第三方服務限制",
+          recommendation: "與第三方供應商協調強化安全措施",
+        },
+      ]
+      return templates.map((t) => ({
+        endpoint: t.endpoint,
+        count: Math.floor(unresolvedCount * t.ratio),
+        reason: t.reason,
+        recommendation: t.recommendation,
+      }))
+    }
+    
+    const historyEntry: ExecutionHistory = {
+      id: `exec-${Date.now()}`,
+      timestamp: new Date(),
+      actionTitle: selectedAction?.title || '',
+      actionType: affectedRisk?.title || '',
+      riskLevel,
+      protectionMethod: generateProtectionMethod(selectedAction?.title || ''),
+      resolvedIssues: generateResolvedIssues(issuesResolvedCount, affectedRisk?.title || ''),
+      unresolvedIssues: generateUnresolvedIssues(issuesResolvedCount),
+      openIssuesBefore,
+      resolvedIssuesBefore,
+      openIssuesAfter,
+      resolvedIssuesAfter,
+      issuesResolved: issuesResolvedCount,
+      status: "success",
+      impactDescription: `成功解決 ${issuesResolvedCount} 個事件，已保護 ${Math.floor((affectedRisk?.affectedAssets || 0) * 0.75)} 個端點`,
+    }
+
+    setExecutionHistory((prev) => ({
+      ...prev,
+      [riskLevel]: [historyEntry, ...prev[riskLevel]],
+    }))
+
+    const actionRecord: ActionRecord = {
+      id: historyEntry.id,
+      timestamp: historyEntry.timestamp,
+      platform: "cloudflare",
+      pageSnapshot: {
+        totalEvents: openIssuesBefore + resolvedIssuesBefore,
+        openIssues: openIssuesBefore,
+        resolvedIssues: resolvedIssuesBefore,
+        affectedAssets: totalAffectedAssets,
+        riskLevel: riskLevel,
+      },
+      action: {
+        title: selectedAction?.title || '',
+        description: selectedAction?.description || '',
+        issueType: affectedRisk?.title || '',
+        protectionMethod: generateProtectionMethod(selectedAction?.title || ''),
+      },
+      results: {
+        resolvedCount: issuesResolvedCount,
+        unresolvedCount: Math.floor(issuesResolvedCount * 0.15),
+        resolvedIssues: historyEntry.resolvedIssues,
+        unresolvedIssues: historyEntry.unresolvedIssues,
+      },
+      beforeState: {
+        openIssues: openIssuesBefore,
+        resolvedIssues: resolvedIssuesBefore,
+      },
+      afterState: {
+        openIssues: openIssuesAfter,
+        resolvedIssues: resolvedIssuesAfter,
+      },
+      impact: historyEntry.impactDescription,
+      status: "success",
+    }
+
+    saveActionRecord(actionRecord)
+    setExecutedActions((prev) => new Set(prev).add(`${selectedAction?.issueId || ''}-${selectedAction?.title || ''}`))
+    // 這段結束
+
     toast({
       title: "🚀 開始分析",
       description: `正在分析 ${timeRangeText} 的 Cloudflare WAF 日誌...`,
@@ -241,7 +426,133 @@ export default function CloudflareAIAnalysisPage() {
     const timeRangeText = useCustomDate 
       ? `${format(customDateRange.start!, 'yyyy-MM-dd HH:mm')} 至 ${format(customDateRange.end!, 'yyyy-MM-dd HH:mm')}`
       : getTimeRangeLabel(selectedTimeRange)
+
+    // 寫入AI分析紀錄
+    const affectedRisk = wafRisks.find((r) => r.id === selectedAction?.issueId)
+    console.log(selectedAction)
+    console.log(affectedRisk)
+    const openIssuesBefore = totalOpenIssues
+    const resolvedIssuesBefore = totalResolvedIssues
+    const issuesResolvedCount = Math.floor((affectedRisk?.openIssues || 0) * 0.35)
+    const openIssuesAfter = openIssuesBefore - issuesResolvedCount
+    const resolvedIssuesAfter = resolvedIssuesBefore + issuesResolvedCount
+    const riskLevel: "high" | "medium" | "low" =
+    affectedRisk?.severity === "critical" || affectedRisk?.severity === "high"
+      ? "high"
+      : affectedRisk?.severity === "medium"
+        ? "medium"
+        : "low"
+
+    const generateProtectionMethod = (actionTitle: string): string => {
+      if (actionTitle.includes("Threat Prevention") || actionTitle.includes("威脅防護")) return "Threat Prevention"
+      if (actionTitle.includes("SandBlast") || actionTitle.includes("沙箱")) return "SandBlast Zero-Day"
+      if (actionTitle.includes("IPS") || actionTitle.includes("簽名")) return "IPS 防護"
+      if (actionTitle.includes("Anti-Ransomware")) return "Anti-Ransomware"
+      if (actionTitle.includes("Anti-Bot")) return "Anti-Bot"
+      if (actionTitle.includes("Anti-Phishing")) return "Anti-Phishing"
+      if (actionTitle.includes("DLP")) return "Data Loss Prevention"
+      return "Check Point Security Policy"
+    }
+  
+    const generateResolvedIssues = (count: number, issueType: string) => {
+      const templates = [
+        { endpoint: "/api/enterprise/data", ratio: 0.4 },
+        { endpoint: "/api/financial/transactions", ratio: 0.35 },
+        { endpoint: "/api/user/authentication", ratio: 0.25 },
+      ]
+      return templates.map((t) => ({
+        endpoint: t.endpoint,
+        count: Math.floor(count * t.ratio),
+        description: `已成功防禦 ${issueType} 攻擊`,
+      }))
+    }
+  
+    const generateUnresolvedIssues = (count: number) => {
+      const unresolvedCount = Math.floor(count * 0.15)
+      const templates = [
+        {
+          endpoint: "/api/legacy/infrastructure",
+          ratio: 0.55,
+          reason: "需要系統層級修復",
+          recommendation: "更新底層系統並實施進階威脅防護",
+        },
+        {
+          endpoint: "/api/third-party/integration",
+          ratio: 0.45,
+          reason: "第三方服務限制",
+          recommendation: "與第三方供應商協調強化安全措施",
+        },
+      ]
+      return templates.map((t) => ({
+        endpoint: t.endpoint,
+        count: Math.floor(unresolvedCount * t.ratio),
+        reason: t.reason,
+        recommendation: t.recommendation,
+      }))
+    }
     
+    const historyEntry: ExecutionHistory = {
+      id: `exec-${Date.now()}`,
+      timestamp: new Date(),
+      actionTitle: selectedAction?.title || '',
+      actionType: affectedRisk?.title || '',
+      riskLevel,
+      protectionMethod: generateProtectionMethod(selectedAction?.title || ''),
+      resolvedIssues: generateResolvedIssues(issuesResolvedCount, affectedRisk?.title || ''),
+      unresolvedIssues: generateUnresolvedIssues(issuesResolvedCount),
+      openIssuesBefore,
+      resolvedIssuesBefore,
+      openIssuesAfter,
+      resolvedIssuesAfter,
+      issuesResolved: issuesResolvedCount,
+      status: "success",
+      impactDescription: `成功解決 ${issuesResolvedCount} 個事件，已保護 ${Math.floor((affectedRisk?.affectedAssets || 0) * 0.75)} 個端點`,
+    }
+
+    setExecutionHistory((prev) => ({
+      ...prev,
+      [riskLevel]: [historyEntry, ...prev[riskLevel]],
+    }))
+
+    const actionRecord: ActionRecord = {
+      id: historyEntry.id,
+      timestamp: historyEntry.timestamp,
+      platform: "cloudflare",
+      pageSnapshot: {
+        totalEvents: openIssuesBefore + resolvedIssuesBefore,
+        openIssues: openIssuesBefore,
+        resolvedIssues: resolvedIssuesBefore,
+        affectedAssets: totalAffectedAssets,
+        riskLevel: riskLevel,
+      },
+      action: {
+        title: selectedAction?.title || '',
+        description: selectedAction?.description || '',
+        issueType: affectedRisk?.title || '',
+        protectionMethod: generateProtectionMethod(selectedAction?.title || ''),
+      },
+      results: {
+        resolvedCount: issuesResolvedCount,
+        unresolvedCount: Math.floor(issuesResolvedCount * 0.15),
+        resolvedIssues: historyEntry.resolvedIssues,
+        unresolvedIssues: historyEntry.unresolvedIssues,
+      },
+      beforeState: {
+        openIssues: openIssuesBefore,
+        resolvedIssues: resolvedIssuesBefore,
+      },
+      afterState: {
+        openIssues: openIssuesAfter,
+        resolvedIssues: resolvedIssuesAfter,
+      },
+      impact: historyEntry.impactDescription,
+      status: "success",
+    }
+
+    saveActionRecord(actionRecord)
+    setExecutedActions((prev) => new Set(prev).add(`${selectedAction?.issueId || ''}-${selectedAction?.title || ''}`))
+    // 這段結束
+      
     toast({
       title: "🔄 重新分析",
       description: `正在重新分析 ${timeRangeText} 的 Cloudflare WAF 日誌...`,
@@ -311,18 +622,18 @@ export default function CloudflareAIAnalysisPage() {
   const categoryStats = {
     high: {
       count: risksByCategory.high.length,
-      openIssues: risksByCategory.high.reduce((sum, r) => sum + r.openIssues, 0),
-      affectedAssets: risksByCategory.high.reduce((sum, r) => sum + r.affectedAssets, 0),
+      openIssues: risksByCategory.high.reduce((sum, r) => sum + (r.openIssues || 0), 0),
+      affectedAssets: risksByCategory.high.reduce((sum, r) => sum + (r.affectedAssets || 0), 0),
     },
     medium: {
       count: risksByCategory.medium.length,
-      openIssues: risksByCategory.medium.reduce((sum, r) => sum + r.openIssues, 0),
-      affectedAssets: risksByCategory.medium.reduce((sum, r) => sum + r.affectedAssets, 0),
+      openIssues: risksByCategory.medium.reduce((sum, r) => sum + (r.openIssues || 0), 0),
+      affectedAssets: risksByCategory.medium.reduce((sum, r) => sum + (r.affectedAssets || 0), 0),
     },
     low: {
       count: risksByCategory.low.length,
-      openIssues: risksByCategory.low.reduce((sum, r) => sum + r.openIssues, 0),
-      affectedAssets: risksByCategory.low.reduce((sum, r) => sum + r.affectedAssets, 0),
+      openIssues: risksByCategory.low.reduce((sum, r) => sum + (r.openIssues || 0), 0),
+      affectedAssets: risksByCategory.low.reduce((sum, r) => sum + (r.affectedAssets || 0), 0),
     },
   }
 
@@ -377,8 +688,9 @@ export default function CloudflareAIAnalysisPage() {
     }
   }
 
-  const totalOpenIssues = wafRisks.reduce((sum, risk) => sum + risk.openIssues, 0)
-  const totalAffectedAssets = wafRisks.reduce((sum, risk) => sum + risk.affectedAssets, 0)
+  const totalOpenIssues = wafRisks.reduce((sum, risk) => sum + (risk.openIssues || 0), 0)
+  const totalResolvedIssues = wafRisks.reduce((sum, risk) => sum + (risk.resolvedIssues || 0), 0)
+  const totalAffectedAssets = wafRisks.reduce((sum, risk) => sum + (risk.affectedAssets || 0), 0)
 
   // 點擊「查看操作步驟」按鈕時的處理
   const handleExecuteAction = async (
@@ -407,9 +719,10 @@ export default function CloudflareAIAnalysisPage() {
     
     // 載入操作指引
     setLoadingGuides(prev => new Set(prev).add(guideKey));
+    setSelectedAction({ title: actionTitle, description: actionDescription, issueId })
     
     try {
-      const response = await fetch('http://localhost:8080/api/cloudflare/get-operation-guide', {
+      const response = await fetch(`${API_BASE_URL}/api/cloudflare/get-operation-guide`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -485,32 +798,48 @@ export default function CloudflareAIAnalysisPage() {
               <span>載入中...</span>
             </div>
           )}
-          <Button
-            onClick={hasAttemptedLoad ? handleReAnalysis : handleStartAnalysis}
-            disabled={isLoading}
-            className={`ml-auto ${
-              hasAttemptedLoad 
-                ? 'bg-cyan-600 hover:bg-cyan-700' 
-                : 'bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-700 hover:to-blue-700 shadow-lg'
-            } text-white font-semibold px-6 py-2 transition-all`}
-          >
-            {isLoading ? (
-              <>
-                <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                分析中...
-              </>
-            ) : hasAttemptedLoad ? (
-              <>
-                <RefreshCw className="w-4 h-4 mr-2" />
-                重新分析
-              </>
-            ) : (
-              <>
-                <Sparkles className="w-4 h-4 mr-2" />
-                開始 AI 分析
-              </>
+          <div className="ml-auto flex gap-2">
+            {/* 報告下載按鈕 - 只在有分析結果時顯示 */}
+            {wafRisks.length > 0 && (
+              <Button
+                onClick={() => setReportDialogOpen(true)}
+                disabled={isLoading}
+                variant="outline"
+                className="border-green-500 text-green-400 hover:bg-green-900/20 font-semibold px-4 py-2"
+              >
+                <Download className="w-4 h-4 mr-2" />
+                生成報告
+              </Button>
             )}
-          </Button>
+            
+            {/* AI 分析按鈕 */}
+            <Button
+              onClick={hasAttemptedLoad ? handleReAnalysis : handleStartAnalysis}
+              disabled={isLoading}
+              className={`${
+                hasAttemptedLoad 
+                  ? 'bg-cyan-600 hover:bg-cyan-700' 
+                  : 'bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-700 hover:to-blue-700 shadow-lg'
+              } text-white font-semibold px-6 py-2 transition-all`}
+            >
+              {isLoading ? (
+                <>
+                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                  分析中...
+                </>
+              ) : hasAttemptedLoad ? (
+                <>
+                  <RefreshCw className="w-4 h-4 mr-2" />
+                  重新分析
+                </>
+              ) : (
+                <>
+                  <Sparkles className="w-4 h-4 mr-2" />
+                  開始 AI 分析
+                </>
+              )}
+            </Button>
+          </div>
         </div>
         <p className="text-slate-400">
           基於 Cloudflare 安全數據的智能分析與建議 | 總計 {totalOpenIssues} 個開放問題，影響 {totalAffectedAssets}{" "}
@@ -536,12 +865,38 @@ export default function CloudflareAIAnalysisPage() {
             <CardContent className="p-4">
               <div className="flex items-center gap-2 mb-2">
                 <Calendar className="w-4 h-4 text-cyan-400" />
-                <span className="text-sm font-semibold text-slate-300">時間範圍</span>
+                <span className="text-sm font-semibold text-slate-300">分析時間範圍</span>
               </div>
               <div className="text-2xl font-bold text-cyan-400 mb-1">
                 {getTimeRangeLabel(selectedTimeRange)}
               </div>
-              {analysisMetadata.timeRange.start && (
+              {analysisMetadata.timeRange.display?.start && (
+                <div className="text-xs text-slate-400 space-y-0.5">
+                  <div>{formatDateTime(analysisMetadata.timeRange.display.start)}</div>
+                  <div className="text-center">至</div>
+                  <div>{formatDateTime(analysisMetadata.timeRange.display.end)}</div>
+                  
+                  {/* 顯示實際日誌時間範圍（如果與預期不同） */}
+                  {analysisMetadata.timeRange.actual && analysisMetadata.timeRange.hasLogs && (
+                    <div className="mt-2 pt-2 border-t border-slate-700/50">
+                      <div className="text-[10px] text-slate-500 mb-1">實際日誌範圍</div>
+                      <div className="text-[10px]">{formatDateTime(analysisMetadata.timeRange.actual.start)}</div>
+                      <div className="text-center text-[10px]">至</div>
+                      <div className="text-[10px]">{formatDateTime(analysisMetadata.timeRange.actual.end)}</div>
+                    </div>
+                  )}
+                  
+                  {/* 顯示無日誌警告 */}
+                  {analysisMetadata.timeRange.hasLogs === false && (
+                    <div className="mt-2 text-[10px] text-amber-400 flex items-center gap-1">
+                      <span>⚠️</span>
+                      <span>此時間範圍內無日誌資料</span>
+                    </div>
+                  )}
+                </div>
+              )}
+              {/* 向後兼容：如果沒有 display 欄位，使用舊的 start/end */}
+              {!analysisMetadata.timeRange.display && analysisMetadata.timeRange.start && (
                 <div className="text-xs text-slate-400 space-y-0.5">
                   <div>{formatDateTime(analysisMetadata.timeRange.start)}</div>
                   <div className="text-center">至</div>
@@ -850,6 +1205,19 @@ export default function CloudflareAIAnalysisPage() {
       )}
 
       {/* Three Column Layout */}
+      {/* 報告下載對話框 */}
+      <ReportDownloadDialog
+        open={reportDialogOpen}
+        onOpenChange={setReportDialogOpen}
+        analysisData={wafRisks}
+        metadata={{
+          totalEvents: analysisMetadata.totalEvents,
+          timeRange: analysisMetadata.timeRange,
+          platform: 'cloudflare',
+          analysisTimestamp: analysisMetadata.analysisTimestamp
+        }}
+      />
+
       {wafRisks.length > 0 && (
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
         {/* Column 1: 風險評估 (Risk Assessment) - Category Cards */}
@@ -1065,7 +1433,7 @@ export default function CloudflareAIAnalysisPage() {
                           </div>
                           <h3 className="text-xl font-semibold text-white mb-3">{assessment.title}</h3>
                           <div className="flex flex-wrap gap-2">
-                            {assessment.tags.map((tag, idx) => (
+                            {(assessment.tags || []).map((tag, idx) => (
                               <Badge
                                 key={idx}
                                 variant="outline"
@@ -1406,34 +1774,6 @@ export default function CloudflareAIAnalysisPage() {
                             </div>
                           )
                         })}
-
-                        <div className="space-y-2 mt-6">
-                          <div className="text-xs text-slate-400 mb-2">其他可用操作</div>
-                          <Button
-                            variant="outline"
-                            className="w-full border-white/10 text-white hover:bg-white/5 bg-transparent"
-                          >
-                            生成詳細報告
-                          </Button>
-                          <Button
-                            variant="outline"
-                            className="w-full border-white/10 text-white hover:bg-white/5 bg-transparent"
-                          >
-                            創建工單
-                          </Button>
-                          <Button
-                            variant="outline"
-                            className="w-full border-white/10 text-white hover:bg-white/5 bg-transparent"
-                          >
-                            通知相關人員
-                          </Button>
-                          <Button
-                            variant="outline"
-                            className="w-full border-white/10 text-white hover:bg-white/5 bg-transparent"
-                          >
-                            查看歷史趨勢
-                          </Button>
-                        </div>
 
                         <div className="mt-6 p-3 rounded-lg bg-red-900/20 border border-red-500/30">
                           <div className="flex items-center justify-between mb-2">

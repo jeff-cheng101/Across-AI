@@ -19,12 +19,43 @@ import {
   Layers2,
 } from "lucide-react"
 import Link from "next/link"
-import { useRef } from "react"
+import { useEffect, useState, useRef } from "react"
 import { PageTitle } from "@/components/page-title"
+import { useRouter } from "next/navigation"
+import authenticator from "@/app/util/authenticator"
 
 export default function Home() {
   const pricingRef = useRef(null)
   const whyChooseRef = useRef(null)
+  const router = useRouter()
+  const [isLoggedIn, setIsLoggedIn] = useState(false)
+
+  useEffect(() => {
+    // 檢查登入狀態
+    const checkLoginStatus = () => {
+      const auth = authenticator.authValue
+      if (auth) {
+        if (auth.user?.role === 'management' || auth.user?.role === 'reseller' || auth.user?.role === 'user') {
+          setIsLoggedIn(true)
+        }
+      }
+    }
+    
+    checkLoginStatus()
+    
+    // 設置一個間隔來檢查登入狀態變化
+    const interval = setInterval(checkLoginStatus, 1000)
+    
+    return () => clearInterval(interval)
+  }, [])
+
+  const handleStartClick = () => {
+    if (isLoggedIn) {
+      router.push('/dashboard')
+    } else {
+      router.push('/login')
+    }
+  }
 
   const scrollToPricing = () => {
     pricingRef.current?.scrollIntoView({ behavior: "smooth" })
@@ -51,7 +82,7 @@ export default function Home() {
             <div className="space-y-8">
               <div className="space-y-4">
                 <PageTitle>
-                  ADAS ONE <br />
+                  ACROSS <br />
                   <span className="text-brand-primary">Security Operation Center</span>
                 </PageTitle>
                 <p className="text-muted-foreground body-sm max-w-md">
@@ -59,9 +90,18 @@ export default function Home() {
                 </p>
               </div>
               <div className="flex flex-wrap gap-4">
-                <Link href="/login">
+                {/* <Link href="/login">
                   <Button className="btn-primary text-base font-light">開始使用</Button>
-                </Link>
+                </Link> */}
+                <Button
+                  className="btn-primary text-base font-light"
+                  style={{ backgroundColor: "#0D99FF", borderColor: "#0D99FF" }}
+                  onMouseOver={(e) => (e.currentTarget.style.backgroundColor = "#0A85E9")}
+                  onMouseOut={(e) => (e.currentTarget.style.backgroundColor = "#0D99FF")}
+                  onClick={handleStartClick}
+                >
+                  開始使用
+                </Button>
                 <Button
                   variant="outline"
                   className="btn-outline text-base bg-transparent font-light"
@@ -95,6 +135,7 @@ export default function Home() {
                 icon={<Shield className="text-brand-primary w-9 h-9" />}
                 price="$3.5萬"
                 priceUnit="/月起"
+                priceNote=""
               />
             </Link>
             <Link href="/services/application-defense">

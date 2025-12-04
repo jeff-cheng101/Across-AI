@@ -1,21 +1,122 @@
 // ELK 連接配置檔案
 // 包含 MCP 連接設定、OWASP 參考連結和預設配置
 
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
+
+const DEFAULT_MCP_SERVER_URL = process.env.ELK_MCP_SERVER_URL || 'http://127.0.0.1:8080';
+
+const parsePositiveInt = (value, fallback) => {
+  const parsed = parseInt(value, 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+};
+
+const isExecutable = (candidate) => {
+  if (!candidate) return false;
+  try {
+    const stats = fs.statSync(candidate);
+    return stats.isFile() || stats.isSymbolicLink();
+  } catch {
+    return false;
+  }
+};
+
+const ensureMcpEndpoint = (url) => {
+  if (!url) {
+    return 'http://127.0.0.1:8080/mcp';
+  }
+  const trimmed = url.trim().replace(/\/+$/, '');
+  return trimmed.endsWith('/mcp') ? trimmed : `${trimmed}/mcp`;
+};
+
+const findExecutableOnPath = (names) => {
+  const pathEnv = process.env.PATH || '';
+  const directories = pathEnv.split(path.delimiter).filter(Boolean);
+  for (const dir of directories) {
+    for (const name of names) {
+      const candidate = path.join(dir, name);
+      if (isExecutable(candidate)) {
+        return candidate;
+      }
+    }
+  }
+  return null;
+};
+
+const resolveMcpProxyCommand = () => {
+  const userDefined = process.env.MCP_PROXY_PATH || process.env.MCP_PROXY_COMMAND;
+  if (userDefined) {
+    return userDefined;
+  }
+
+  const binaryNames = process.platform === 'win32'
+    ? ['mcp-proxy.exe', 'mcp-proxy.cmd', 'mcp-proxy.bat', 'mcp-proxy']
+    : ['mcp-proxy'];
+
+  const candidatePaths = [];
+  const addCandidates = (dir) => {
+    if (!dir) return;
+    for (const name of binaryNames) {
+      candidatePaths.push(path.join(dir, name));
+    }
+  };
+
+  const homeDir = (typeof os.homedir === 'function' && os.homedir()) || '';
+
+  addCandidates(path.resolve(__dirname, '../node_modules/.bin'));
+  addCandidates(path.resolve(process.cwd(), 'node_modules/.bin'));
+  if (homeDir) {
+    addCandidates(path.join(homeDir, '.local', 'bin'));
+  }
+
+  if (process.platform === 'darwin') {
+    addCandidates('/opt/homebrew/bin');
+    addCandidates('/usr/local/bin');
+  } else if (process.platform === 'linux') {
+    addCandidates('/usr/local/bin');
+    addCandidates('/usr/bin');
+  } else if (process.platform === 'win32') {
+    const localAppData = process.env.LOCALAPPDATA || (homeDir ? path.join(homeDir, 'AppData', 'Local') : null);
+    const roamingAppData = process.env.APPDATA || (homeDir ? path.join(homeDir, 'AppData', 'Roaming') : null);
+    if (localAppData) {
+      addCandidates(path.join(localAppData, 'Programs', 'Python', 'Scripts'));
+      addCandidates(path.join(localAppData, 'Microsoft', 'WindowsApps'));
+    }
+    if (roamingAppData) {
+      addCandidates(path.join(roamingAppData, 'Python', 'Scripts'));
+    }
+  }
+
+  for (const candidate of candidatePaths) {
+    if (isExecutable(candidate)) {
+      return candidate;
+    }
+  }
+
+  const pathMatch = findExecutableOnPath(binaryNames);
+  if (pathMatch) {
+    return pathMatch;
+  }
+
+  return process.platform === 'win32' ? 'mcp-proxy.exe' : 'mcp-proxy';
+};
+
 const ELK_CONFIG = {
   // MCP 連接配置
   mcp: {
     // HTTP MCP Server URL（您的 MCP 服務位址）
-    serverUrl: process.env.ELK_MCP_SERVER_URL || 'http://127.0.0.1:8080',
+    serverUrl: DEFAULT_MCP_SERVER_URL,
     
     // 協議類型：'proxy' 使用 mcp-proxy 橋接, 'stdio' 直接使用 stdio
     protocol: process.env.ELK_MCP_PROTOCOL || 'proxy',
     
     // mcp-proxy 模式配置（推薦）
-    // 修復：使用固定路徑，避免 HOME 環境變數在 root 環境下指向錯誤路徑
-    proxyCommand: process.env.MCP_PROXY_PATH || '/root/.local/bin/mcp-proxy',
+    // 修復：自動偵測多平台安裝路徑，仍可透過 MCP_PROXY_PATH 覆寫
+    proxyCommand: resolveMcpProxyCommand(),
     proxyArgs: [
       '--transport=streamablehttp',
-      `http://127.0.0.1:8080/mcp`
+      ensureMcpEndpoint(DEFAULT_MCP_SERVER_URL)
     ],
     
     // stdio 模式配置（備用）
@@ -28,8 +129,8 @@ const ELK_CONFIG = {
     ],
     
     // 連接配置
-    timeout: parseInt(process.env.ELK_MCP_TIMEOUT) || 30000,
-    retryAttempts: parseInt(process.env.ELK_MCP_RETRY) || 3
+    timeout: parsePositiveInt(process.env.ELK_MCP_TIMEOUT, 300000),
+    retryAttempts: parsePositiveInt(process.env.ELK_MCP_RETRY, 3)
   },
 
   // Elasticsearch 連接配置
@@ -41,15 +142,18 @@ const ELK_CONFIG = {
     // - F5: config/products/f5/f5ELKConfig.js (across-f5-awaf-*)
     index: process.env.ELK_INDEX || 'across-cf-*',
     apiKey: process.env.ELK_API_KEY || 'XzJlcm1wb0JQWGtnSXBHR0tEMFg6MERFYWFNTUFTTmxXOEhpdUg2aGwtUQ==',
-    maxResults: parseInt(process.env.ELK_MAX_RESULTS) || 10000
+    maxResults: parsePositiveInt(process.env.ELK_MAX_RESULTS, 2),
+    // elastic mcp 分批查詢配置
+    batchSize: parsePositiveInt(process.env.ELK_BATCH_SIZE, 10),
+    maxBatches: parsePositiveInt(process.env.ELK_MAX_BATCHES, 10)
   },
 
   // 查詢配置
   query: {
     defaultTimeRange: process.env.ELK_TIME_RANGE || '1h', // 1小時
     maxTimeRange: process.env.ELK_MAX_TIME_RANGE || '24h', // 最大24小時
-    attackThreshold: parseInt(process.env.ELK_ATTACK_THRESHOLD) || 20, // DDoS 攻擊閾值
-    timeWindowSeconds: parseInt(process.env.ELK_TIME_WINDOW) || 10 // 時間窗口
+    attackThreshold: parsePositiveInt(process.env.ELK_ATTACK_THRESHOLD, 20), // DDoS 攻擊閾值
+    timeWindowSeconds: parsePositiveInt(process.env.ELK_TIME_WINDOW, 10) // 時間窗口
   }
 };
 
