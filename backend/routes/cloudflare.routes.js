@@ -4,13 +4,17 @@
 require('dotenv').config();
 
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
-// 根據環境變數決定使用本地服務 (Ollama) 或雲端服務 (Gemini)
+// vLLM configuration
+const LLM_SERVICE_URL = process.env.LLM_SERVICE_URL;
+
+// 根據環境變數決定使用本地服務 (vLLM) 或雲端服務 (Gemini)
 const USE_LOCAL_SERVICE = process.env.USE_LOCAL_SERVICE === 'true';
-const AI_PROVIDER = USE_LOCAL_SERVICE ? 'ollama' : 'gemini';
+const AI_PROVIDER = USE_LOCAL_SERVICE ? 'vllm' : 'gemini';
 
 const express = require('express');
 const router = express.Router();
 const { GoogleGenerativeAI } = require('@google/generative-ai');
+const { generateOpenAIRequestBody, parseOpenAIResponse } = require('../utils/openaiHelper');
 const { elkMCPClient } = require('../services/elkMCPClient');
 const CloudflareWAFRiskService = require('../services/products/cloudflareWAFRiskService');
 // const {
@@ -51,8 +55,8 @@ router.post('/analyze-waf-risks', async (req, res) => {
 
 		// 根據 AI 提供者設定預設模型
 		const defaultModel =
-			aiProvider === 'ollama'
-				? process.env.OLLAMA_MODEL || 'llama3.3:70b'
+			aiProvider === 'vllm'
+				? 'Qwen/Qwen2.5-7B-Instruct-AWQ' // vLLM 預設模型
 				: 'gemini-2.0-flash-exp';
 
 		const { model = defaultModel, timeRange = '24h' } = req.body;
@@ -62,7 +66,16 @@ router.post('/analyze-waf-risks', async (req, res) => {
 			return res.status(400).json({
 				error: '請在 .env 中設定 GEMINI_API_KEY',
 				product: 'Cloudflare',
-				hint: '或設定 USE_LOCAL_SERVICE=true 使用 Ollama',
+				hint: '或設定 USE_LOCAL_SERVICE=true 使用 vLLM',
+			});
+		}
+
+		// 如果使用 vLLM，檢查 Service URL
+		if (aiProvider === 'vllm' && !LLM_SERVICE_URL) {
+			return res.status(400).json({
+				error: '請在 .env 中設定 LLM_SERVICE_URL',
+				product: 'Cloudflare',
+				hint: '例如: http://localhost:8000/v1',
 			});
 		}
 
@@ -88,95 +101,82 @@ router.post('/analyze-waf-risks', async (req, res) => {
 		const aiPrompt = wafService.generateAIPrompt(analysisData);
 		console.log(`✅ Prompt 長度: ${aiPrompt.length} 字元`);
 
-		// Step 4: 呼叫 AI 進行分析（支援 Gemini 和 Ollama）
+		// Step 4: 呼叫 AI 進行分析（支援 Gemini 和 vLLM）
 		console.log(
-			`\n⭐ Step 3: 呼叫 ${aiProvider === 'ollama' ? 'Ollama' : 'Gemini'} AI 分析...`,
+			`\n⭐ Step 3: 呼叫 ${aiProvider === 'vllm' ? 'vLLM' : 'Gemini'} AI 分析...`,
 		);
 
 		let responseText;
 
-		if (aiProvider === 'ollama') {
-			// 使用 Ollama（增強版：支援超時和錯誤處理）
-			const ollamaUrl = process.env.OLLAMA_URL || 'http://localhost:11434';
-			const ollamaModel = model || 'llama3.3:70b';
-
-			console.log(`🦙 Ollama URL: ${ollamaUrl}`);
-			console.log(`🦙 Ollama 模型: ${ollamaModel}`);
+		if (aiProvider === 'vllm') {
+			// 使用 vLLM (OpenAI Compatible)
+			console.log(`� vLLM URL: ${LLM_SERVICE_URL}`);
+			console.log(`� vLLM Model: ${model}`);
 			console.log(`📏 Prompt 長度: ${aiPrompt.length} 字元`);
-
-			// 檢查 Prompt 長度（警告但不阻止）
-			if (aiPrompt.length > 50000) {
-				console.warn(
-					`⚠️ Prompt 非常長 (${aiPrompt.length} 字元)，可能需要較長處理時間`,
-				);
-			}
 
 			// 設定超時控制器（5 分鐘超時）
 			const controller = new AbortController();
 			const timeoutId = setTimeout(() => {
 				controller.abort();
-				console.error('❌ Ollama 請求超時（5 分鐘）');
+				console.error('❌ vLLM 請求超時（5 分鐘）');
 			}, 300000); // 5 分鐘
 
 			try {
 				const startTime = Date.now();
-				console.log('⏱️ 開始呼叫 Ollama API...');
+				console.log('⏱️ 開始呼叫 vLLM API...');
 
-				const ollamaResponse = await fetch(`${ollamaUrl}/api/generate`, {
+				// 使用 Helper 生成 Request Body
+				const requestBody = generateOpenAIRequestBody({
+					model,
+					systemPrompt: '你是一位資深的網路安全分析專家，專精於 Cloudflare WAF 日誌分析和威脅識別。',
+					userPrompt: aiPrompt,
+					options: { temperature: 0.7 }
+				});
+
+				const vllmResponse = await fetch(`${LLM_SERVICE_URL}/chat/completions`, {
 					method: 'POST',
 					headers: {
 						'Content-Type': 'application/json',
+						// 如果 vLLM 需要 API Key，可以在這裡加入
+						// 'Authorization': `Bearer ${process.env.VLLM_API_KEY || 'EMPTY'}`
 					},
-					body: JSON.stringify({
-						model: ollamaModel,
-						prompt: aiPrompt,
-						stream: false,
-						options: {
-							temperature: 0.7,
-							num_predict: 8192, // 增加到 8192 tokens
-							num_ctx: 8192, // 增加 context window
-							top_k: 40,
-							top_p: 0.9,
-							repeat_penalty: 1.1,
-						},
-					}),
+					body: JSON.stringify(requestBody),
 					signal: controller.signal,
 				});
 
 				clearTimeout(timeoutId);
 				const elapsedTime = ((Date.now() - startTime) / 1000).toFixed(2);
-				console.log(`⏱️ Ollama API 回應時間: ${elapsedTime} 秒`);
+				console.log(`⏱️ vLLM API 回應時間: ${elapsedTime} 秒`);
 
-				if (!ollamaResponse.ok) {
-					// 獲取詳細錯誤訊息
-					let errorDetails = '';
-					try {
-						const errorData = await ollamaResponse.json();
-						errorDetails = errorData.error || JSON.stringify(errorData);
-					} catch (_e) {
-						errorDetails = await ollamaResponse.text();
-					}
-
-					console.error(`❌ Ollama API 錯誤詳情: ${errorDetails}`);
-					throw new Error(
-						`Ollama API 錯誤 (${ollamaResponse.status}): ${errorDetails}`,
-					);
+				if (!vllmResponse.ok) {
+					const errorText = await vllmResponse.text();
+					console.error(`❌ vLLM API 錯誤: ${errorText}`);
+					throw new Error(`vLLM API Error: ${vllmResponse.status} ${errorText}`);
 				}
 
-				const ollamaData = await ollamaResponse.json();
-				responseText = ollamaData.response;
-				console.log(`✅ Ollama 回應長度: ${responseText.length} 字元`);
-
-				// 檢查回應是否為空
-				if (!responseText || responseText.trim().length === 0) {
-					console.warn('⚠️ Ollama 返回空回應，使用 Fallback');
-					throw new Error('Ollama 返回空回應');
+				const rawResponse = await vllmResponse.text();
+				let vllmData;
+				try {
+					vllmData = JSON.parse(rawResponse);
+				} catch (jsonError) {
+					console.error('❌ vLLM 回應非 JSON 格式:', rawResponse);
+					throw new Error(`vLLM API 回應解析失敗: ${jsonError.message}`);
 				}
+
+				// 使用 Helper 解析回應
+				try {
+					responseText = parseOpenAIResponse(vllmData);
+				} catch (e) {
+					console.warn('⚠️ vLLM 返回非預期格式', vllmData);
+					throw e;
+				}
+				console.log(`✅ vLLM 回應長度: ${responseText.length} 字元`);
+
 			} catch (fetchError) {
 				clearTimeout(timeoutId);
 
 				if (fetchError.name === 'AbortError') {
-					console.error('❌ Ollama 請求超時（5 分鐘），使用 Fallback 資料');
+					console.error('❌ vLLM 請求超時（5 分鐘），使用 Fallback 資料');
 					// 超時時使用 fallback
 					const aiAnalysisFallback =
 						wafService.generateFallbackRisks(analysisData);
