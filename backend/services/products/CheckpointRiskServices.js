@@ -24,7 +24,9 @@ const {
   PORT_SCAN_DETECTION,
   SPECIAL_RULE_TYPES,
   classifyEvent,
-  detectPortScan
+  detectPortScan,
+  // 🆕 VPN 用戶識別
+  checkVPNUser
 } = require('../../config/products/checkpoint/checkpointStandards');
 const checkpointELKConfig = require('../../config/products/checkpoint/checkpointELKConfig');
 
@@ -127,31 +129,53 @@ class CheckpointRiskServices {
       console.log('\n⭐ Step 7: 過濾正常流量...');
       const filteredStats = this.filterNormalTraffic(logEntries);
       console.log(`   過濾前: ${filteredStats.totalCount} 筆`);
-      console.log(`   需分析: ${filteredStats.suspiciousCount} 筆`);
+      console.log(`   需分析（可疑事件）: ${filteredStats.suspiciousCount} 筆`);
+      console.log(`   🆕 VPN 策略問題: ${filteredStats.vpnPolicyIssueCount} 筆（非攻擊）`);
       console.log(`   正常流量: ${filteredStats.normalCount} 筆（已過濾）`);
       
-      // Step 8: 🆕 按來源 IP 聚合
+      // Step 8: 🆕 按來源 IP 聚合（包含 VPN 策略問題）
       console.log('\n⭐ Step 8: 按來源 IP 聚合統計...');
-      const ipAggregatedStats = this.aggregateBySourceIP(filteredStats.suspicious);
+      // 合併可疑事件和 VPN 策略問題進行聚合
+      const allEventsToAggregate = [...filteredStats.suspicious, ...filteredStats.vpnPolicyIssues];
+      const ipAggregatedStats = this.aggregateBySourceIP(allEventsToAggregate);
       const uniqueSourceIPs = Object.keys(ipAggregatedStats).length;
       console.log(`   唯一來源 IP: ${uniqueSourceIPs} 個`);
       
-      // 檢測端口掃描
+      // 🆕 統計 VPN 用戶
+      const vpnUserIPs = Object.values(ipAggregatedStats).filter(stats => stats.isVPNUser);
+      const attackerIPs = Object.values(ipAggregatedStats).filter(stats => !stats.isVPNUser);
+      console.log(`   🆕 VPN 用戶 IP: ${vpnUserIPs.length} 個（非攻擊者）`);
+      console.log(`   🆕 攻擊者 IP: ${attackerIPs.length} 個`);
+      
+      // 檢測端口掃描（排除 VPN 用戶）
       const portScanIPs = Object.values(ipAggregatedStats)
-        .filter(stats => stats.portScanAnalysis && stats.portScanAnalysis.isPortScan);
+        .filter(stats => !stats.isVPNUser && stats.portScanAnalysis && stats.portScanAnalysis.isPortScan);
       console.log(`   端口掃描 IP: ${portScanIPs.length} 個`);
       
-      // Cleanup rule 命中
+      // Cleanup rule 命中（排除 VPN 用戶）
       const cleanupRuleIPs = Object.values(ipAggregatedStats)
-        .filter(stats => stats.ruleNames.some(r => r.toLowerCase().includes('cleanup')));
-      console.log(`   Cleanup rule 命中 IP: ${cleanupRuleIPs.length} 個`);
+        .filter(stats => !stats.isVPNUser && stats.ruleNames.some(r => r.toLowerCase().includes('cleanup')));
+      console.log(`   Cleanup rule 命中 IP（非 VPN）: ${cleanupRuleIPs.length} 個`);
       
-      // 取得 TOP 攻擊者
+      // 取得 TOP 攻擊者（排除 VPN 用戶）
       const topAttackers = this.getTopAttackers(ipAggregatedStats, 5);
-      console.log(`\n📊 TOP 5 攻擊者 IP:`);
-      topAttackers.forEach((attacker, i) => {
-        console.log(`   ${i + 1}. ${attacker.ip} (${attacker.country}) - ${attacker.behavior} - 風險分數: ${attacker.riskScore}`);
-      });
+      console.log(`\n📊 TOP 5 攻擊者 IP（排除 VPN 用戶）:`);
+      if (topAttackers.length === 0) {
+        console.log('   ✅ 無真實攻擊者（所有被阻擋的流量都來自 VPN 用戶）');
+      } else {
+        topAttackers.forEach((attacker, i) => {
+          console.log(`   ${i + 1}. ${attacker.ip} (${attacker.country}) - ${attacker.behavior} - 風險分數: ${attacker.riskScore}`);
+        });
+      }
+      
+      // 🆕 顯示 VPN 策略問題
+      const vpnPolicyIssues = this.getVPNPolicyIssues(ipAggregatedStats, 5);
+      if (vpnPolicyIssues.length > 0) {
+        console.log(`\n📊 VPN 策略問題 TOP 5（非攻擊，需檢視策略）:`);
+        vpnPolicyIssues.forEach((issue, i) => {
+          console.log(`   ${i + 1}. ${issue.ip} (${issue.userName || 'Unknown'}) - ${issue.eventCount} 次被阻擋`);
+        });
+      }
       
       // 綜合分析結果
       const analysisData = {
@@ -172,7 +196,11 @@ class CheckpointRiskServices {
         ipAggregatedStats: ipAggregatedStats,
         topAttackers: topAttackers,
         portScanIPs: portScanIPs.length,
-        cleanupRuleIPs: cleanupRuleIPs.length
+        cleanupRuleIPs: cleanupRuleIPs.length,
+        // 🆕 VPN 相關統計
+        vpnUserIPs: vpnUserIPs.length,
+        vpnPolicyIssues: vpnPolicyIssues,
+        attackerIPCount: attackerIPs.length
       };
       
       console.log('\n✅ 分析完成！');
@@ -226,6 +254,9 @@ class CheckpointRiskServices {
       timestamp = new Date().toISOString();
     }
     
+    // 🆕 提取 GeoIP 資訊（處理嵌套物件）
+    const geoipData = rawLog.geoip || {};
+    
     return {
       // 基本欄位
       timestamp: timestamp,
@@ -233,14 +264,35 @@ class CheckpointRiskServices {
       action: safeGet('action'),
       rule_uid: safeGet('rule_uid', ['ruleuid']),
       rule_name: safeGet('rule_name'),
+      // 🆕 提取 rule_name_match_table（Check Point 特有的陣列格式）
+      rule_name_match_table: rawLog['rule_name_._._match_table'] || rawLog.rule_name_match_table,
       
       // 來源/目的地
       src_ip: safeGet('src', ['src_ip', 'origin']),
       dst_ip: safeGet('dst', ['dst_ip']),
-      src_country: safeGet('src_country', ['origin_sic_name', 's_location']),
+      src_country: safeGet('src_country', ['origin_sic_name', 's_location']) || geoipData.country_name,
       dst_country: safeGet('dst_country', ['xlatedst_country', 'd_location']),
       src_machine_name: safeGet('src_machine_name', ['src_host']),
       dst_machine_name: safeGet('dst_machine_name', ['dst_host', 'dst_domain_name']),
+      
+      // 🆕 VPN 用戶身份相關欄位
+      src_user_name: safeGet('src_user_name', ['user']),
+      src_user_dn: safeGet('src_user_dn'),
+      user: safeGet('user'),
+      product: safeGet('product'),
+      
+      // 🆕 GeoIP 資訊
+      geoip: {
+        ip: geoipData.ip || null,
+        country_name: geoipData.country_name || null,
+        city_name: geoipData.city_name || null,
+        region_name: geoipData.region_name || null
+      },
+      
+      // 🆕 安全區域
+      security_inzone: safeGet('security_inzone'),
+      inzone: safeGet('inzone'),
+      outzone: safeGet('outzone'),
       
       // 應用程式
       appi_name: safeGet('appi_name', ['app_name', 'application']),
@@ -781,6 +833,43 @@ ${index + 1}. **${attacker.ip}** (${attacker.country})
   }
   
   /**
+   * 🆕 格式化 VPN 策略問題資訊（用於 AI Prompt）
+   */
+  formatVPNPolicyIssuesForPrompt(vpnPolicyIssues) {
+    if (!vpnPolicyIssues || vpnPolicyIssues.length === 0) {
+      return '無 VPN 用戶存取問題';
+    }
+    
+    const header = `⚠️ **重要提醒**：以下是已認證的 VPN 用戶流量被防火牆阻擋的情況。
+這些**不是攻擊行為**，而是**策略配置問題**，需要提醒管理員檢視。
+
+`;
+    
+    const userList = vpnPolicyIssues.map((user, index) => {
+      return `
+${index + 1}. **${user.userName}** (IP: ${user.ip})
+   - 帳戶 DN: ${user.userDN || 'N/A'}
+   - 被阻擋次數: ${user.dropCount} 次
+   - 阻擋率: ${user.blockRate}
+   - 安全區域 (security_inzone): **${user.securityZone}**
+   - 來源區域 (inzone): ${user.inzone}
+   - 阻擋規則 (rule_name): **${user.blockedByRules}**
+   - 嘗試存取的端口: ${user.targetPorts?.slice(0, 5).join(', ') || 'N/A'}
+   - 嘗試存取的目標 IP: ${user.targetIPs?.slice(0, 3).join(', ') || 'N/A'}`;
+    }).join('\n');
+    
+    const footer = `
+
+**分析重點**：
+1. 這些用戶已通過 VPN 身份驗證，表示是合法用戶
+2. 流量被阻擋通常是因為防火牆規則未正確配置
+3. 請在分析報告中**獨立列出這個問題**，並建議管理員檢視 VPN 存取策略
+4. **不要將這些 IP 列入攻擊者清單**`;
+    
+    return header + userList + footer;
+  }
+  
+  /**
    * 產生 AI 分析提示詞（動態從配置檔案提取）- 優化版
    */
   generateAIPrompt(analysisData) {
@@ -837,6 +926,12 @@ ${index + 1}. **${attacker.ip}** (${attacker.country})
 以下是風險分數最高的攻擊來源 IP，請在分析各威脅類型時，一併說明相關的攻擊來源：
 
 ${this.formatTopAttackersForPrompt(topAttackers)}
+
+---
+
+### 【⚠️ VPN 用戶存取問題】
+
+${this.formatVPNPolicyIssuesForPrompt(analysisData.vpnPolicyIssues)}
 
 ---
 
@@ -960,6 +1055,46 @@ ${JSON.stringify(analysisData, null, 2)}
 6. **可操作建議**：提供具體的 Check Point 緩解措施（使用 SmartConsole、SmartDashboard 等 Check Point 工具術語）
 7. **關聯分析**：識別相關聯的攻擊模式，說明攻擊者的可能意圖
 8. **繁體中文**：所有輸出內容必須使用繁體中文
+
+### 【⚠️ VPN 用戶存取問題處理】
+
+如果上方有列出「VPN 用戶存取問題」，請**務必**在分析報告中：
+
+1. **獨立列出一個風險項目**，類別為 \`VPN_POLICY_ISSUE\`，嚴重程度為 \`medium\`
+2. **明確標示這不是攻擊**，設定 \`isAttack: false\`
+3. **列出所有受影響的 VPN 用戶**，包含：
+   - 用戶名稱 (userName)
+   - IP 地址
+   - 安全區域 (securityZone)
+   - 阻擋規則 (blockedByRules)
+   - 被阻擋次數
+4. **提供策略檢視建議**，而非安全封鎖建議
+5. **不要將 VPN 用戶 IP 列入攻擊者清單**
+
+VPN 策略問題的輸出格式範例：
+\`\`\`json
+{
+  "id": "risk_xxx",
+  "title": "⚠️ VPN 用戶存取被阻擋（需檢視策略）",
+  "severity": "medium",
+  "category": "VPN_POLICY_ISSUE",
+  "layer": "POLICY_REVIEW",
+  "isAttack": false,
+  "vpnUsers": [
+    {
+      "userName": "用戶名稱",
+      "ip": "192.168.192.x",
+      "securityZone": "L3_untrust",
+      "blockedByRules": "Cleanup rule",
+      "dropCount": 數量
+    }
+  ],
+  "aiInsight": "檢測到 X 個已認證的 VPN 用戶流量被阻擋...（包含用戶名稱、安全區域、阻擋規則）",
+  "recommendations": [
+    { "priority": "high", "title": "檢視 VPN 存取策略", "description": "..." }
+  ]
+}
+\`\`\`
 
 請開始分析。
     `.trim();
@@ -1104,10 +1239,15 @@ ${JSON.stringify(analysisData, null, 2)}
       }
     }
     
-    // Risk 5: Cleanup Rule 命中（🆕 新增威脅類型）
+    // Risk 5: Cleanup Rule 命中（🆕 排除 VPN 用戶）
     if (ipAggregatedStats) {
+      // 🆕 只統計非 VPN 用戶的 Cleanup rule 命中
       const cleanupRuleIPs = Object.values(ipAggregatedStats)
-        .filter(stats => stats.ruleNames && stats.ruleNames.some(r => r.toLowerCase().includes('cleanup')));
+        .filter(stats => 
+          !stats.isVPNUser &&  // 排除 VPN 用戶
+          stats.ruleNames && 
+          stats.ruleNames.some(r => r.toLowerCase().includes('cleanup'))
+        );
       
       if (cleanupRuleIPs.length > 0) {
         const totalCleanupEvents = cleanupRuleIPs.reduce((sum, ip) => sum + ip.totalEvents, 0);
@@ -1121,7 +1261,7 @@ ${JSON.stringify(analysisData, null, 2)}
           attackCount: totalCleanupEvents,
           openIssues: totalCleanupEvents,
           resolvedIssues: 0,
-          // 🆕 TOP 攻擊者 IP
+          // 🆕 TOP 攻擊者 IP（排除 VPN 用戶）
           topAttackers: cleanupRuleIPs.slice(0, 5).map(stats => ({
             ip: stats.ip,
             country: stats.geoInfo?.country || 'Unknown',
@@ -1135,6 +1275,96 @@ ${JSON.stringify(analysisData, null, 2)}
           recommendations: [
             { priority: 'medium', title: '檢查是否為合法連線', description: '確認是否需要新增允許規則' },
             { priority: 'low', title: '監控來源 IP', description: '確認是否為惡意活動或誤報' }
+          ],
+          createdDate: this.formatDateTaipei(timeRange.start),
+          updatedDate: this.formatDateTaipei(timeRange.end)
+        });
+      }
+    }
+    
+    // 🆕 Risk 6: VPN 策略問題（非攻擊，需要檢視策略）
+    if (ipAggregatedStats) {
+      const vpnPolicyIssueIPs = Object.values(ipAggregatedStats)
+        .filter(stats => stats.isVPNUser && (stats.dropCount > 0 || stats.rejectCount > 0));
+      
+      if (vpnPolicyIssueIPs.length > 0) {
+        const totalVPNPolicyEvents = vpnPolicyIssueIPs.reduce((sum, ip) => sum + ip.totalEvents, 0);
+        
+        // 🆕 收集所有被阻擋的 VPN 用戶詳細資訊
+        const vpnUsersDetail = vpnPolicyIssueIPs.slice(0, 10).map(stats => ({
+          ip: stats.ip,
+          userName: stats.userName || 'Unknown',
+          userDN: stats.userDN || null,
+          eventCount: stats.totalEvents,
+          dropCount: stats.dropCount,
+          rejectCount: stats.rejectCount || 0,
+          blockRate: `${stats.blockRate}%`,
+          // 🆕 新增：安全區域資訊
+          securityZone: stats.securityZone || 'Unknown',
+          inzone: stats.inzone || 'Unknown',
+          // 🆕 新增：阻擋規則
+          ruleNames: stats.ruleNames || [],
+          blockedByRules: stats.ruleNames?.join(', ') || 'Unknown',
+          targetPorts: stats.targetPorts?.slice(0, 10) || [],
+          targetIPs: stats.targetIPs?.slice(0, 5) || []
+        }));
+        
+        // 🆕 生成用戶清單摘要
+        const userSummary = vpnUsersDetail.map(u => 
+          `• ${u.userName} (${u.ip}) - 被 "${u.blockedByRules}" 阻擋 ${u.dropCount} 次，安全區域: ${u.securityZone}`
+        ).join('\n');
+        
+        risks.push({
+          id: `risk_${String(riskId++).padStart(3, '0')}`,
+          title: '⚠️ VPN 用戶存取被阻擋（需檢視策略）',
+          severity: 'medium',  // 🆕 提升為中等嚴重度，因為需要注意
+          category: 'VPN_POLICY_ISSUE',
+          layer: 'POLICY_REVIEW',
+          description: `檢測到 ${vpnPolicyIssueIPs.length} 個已認證的 VPN 用戶流量被防火牆阻擋，共 ${totalVPNPolicyEvents} 次。這不是攻擊，但可能影響用戶正常存取。`,
+          attackCount: totalVPNPolicyEvents,
+          openIssues: totalVPNPolicyEvents,
+          resolvedIssues: 0,
+          isAttack: false,  // 明確標記非攻擊
+          
+          // 🆕 VPN 用戶詳細清單
+          vpnUsers: vpnUsersDetail,
+          
+          // 🆕 AI 洞察分析（包含用戶名稱、安全區域、阻擋規則）
+          aiInsight: `⚠️ **VPN 用戶存取問題警示**
+
+檢測到以下已認證的 VPN 用戶流量被防火牆阻擋：
+
+${userSummary}
+
+**問題分析：**
+這些用戶已通過 VPN 身份驗證，但其流量被防火牆阻擋。這通常表示：
+1. 防火牆規則未正確配置 VPN 用戶的存取權限
+2. VPN 用戶嘗試存取未授權的資源
+3. 安全區域 (security_inzone) 配置可能需要調整
+
+**注意：這不是攻擊行為，而是策略配置問題。**`,
+
+          recommendations: [
+            { 
+              priority: 'high', 
+              title: '檢視 VPN 存取策略', 
+              description: `確認這些 VPN 用戶是否應該被允許存取目標資源。受影響用戶：${vpnUsersDetail.map(u => u.userName).join(', ')}`
+            },
+            { 
+              priority: 'high', 
+              title: '檢查防火牆規則順序', 
+              description: `被阻擋的規則：${[...new Set(vpnUsersDetail.flatMap(u => u.ruleNames))].join(', ')}。確認是否需要在這些規則之前新增 VPN 允許規則。`
+            },
+            { 
+              priority: 'medium', 
+              title: '確認安全區域配置', 
+              description: `VPN 流量來自安全區域：${[...new Set(vpnUsersDetail.map(u => u.securityZone))].join(', ')}。確認此區域的存取政策是否正確。`
+            },
+            { 
+              priority: 'low', 
+              title: '通知相關用戶', 
+              description: '如果確認是策略問題，可能需要通知受影響的用戶目前無法存取某些資源。'
+            }
           ],
           createdDate: this.formatDateTaipei(timeRange.start),
           updatedDate: this.formatDateTaipei(timeRange.end)
@@ -1220,6 +1450,9 @@ ${JSON.stringify(analysisData, null, 2)}
       const srcIP = log.src_ip || log.src || 'Unknown';
       
       if (!stats[srcIP]) {
+        // 🆕 檢查是否為 VPN 用戶
+        const vpnUserInfo = checkVPNUser(log);
+        
         stats[srcIP] = {
           ip: srcIP,
           totalEvents: 0,
@@ -1237,7 +1470,13 @@ ${JSON.stringify(analysisData, null, 2)}
           },
           securityZone: log.security_inzone || 'Unknown',
           inzone: log.inzone || 'Unknown',
-          classifications: { KNOWN_ATTACK: 0, SCAN_SUSPICIOUS: 0, NORMAL_TRAFFIC: 0 },
+          // 🆕 VPN 用戶資訊
+          vpnUserInfo: vpnUserInfo,
+          isVPNUser: vpnUserInfo.isVPNUser,
+          userName: vpnUserInfo.userName || null,
+          userDN: vpnUserInfo.userDN || null,
+          // 🆕 新增分類：VPN_POLICY_ISSUE
+          classifications: { KNOWN_ATTACK: 0, SCAN_SUSPICIOUS: 0, NORMAL_TRAFFIC: 0, VPN_POLICY_ISSUE: 0 },
           sigIds: new Set(),
           threatSeverities: new Set(),
           services: new Set(),
@@ -1275,9 +1514,11 @@ ${JSON.stringify(analysisData, null, 2)}
       // 收集時間戳
       if (log.timestamp) ipStats.timestamps.push(new Date(log.timestamp).getTime());
       
-      // 分類統計
+      // 分類統計（包含 VPN_POLICY_ISSUE）
       const classification = classifyEvent(log);
-      ipStats.classifications[classification.classification]++;
+      if (ipStats.classifications[classification.classification] !== undefined) {
+        ipStats.classifications[classification.classification]++;
+      }
     });
     
     // 轉換 Set 為陣列，並計算衍生指標
@@ -1292,8 +1533,10 @@ ${JSON.stringify(analysisData, null, 2)}
       // 計算端口掃描偵測
       ipStats.portScanAnalysis = detectPortScan(ipStats.logs);
       
-      // 判斷主要分類
-      if (ipStats.classifications.KNOWN_ATTACK > 0) {
+      // 🆕 判斷主要分類（VPN 用戶優先識別）
+      if (ipStats.isVPNUser && ipStats.classifications.VPN_POLICY_ISSUE > 0) {
+        ipStats.primaryClassification = 'VPN_POLICY_ISSUE';
+      } else if (ipStats.classifications.KNOWN_ATTACK > 0) {
         ipStats.primaryClassification = 'KNOWN_ATTACK';
       } else if (ipStats.classifications.SCAN_SUSPICIOUS > 0) {
         ipStats.primaryClassification = 'SCAN_SUSPICIOUS';
@@ -1306,17 +1549,25 @@ ${JSON.stringify(analysisData, null, 2)}
         ? ((ipStats.dropCount + ipStats.rejectCount) / ipStats.totalEvents * 100).toFixed(1)
         : 0;
       
-      // 判斷行為類型
-      if (ipStats.sigIds.length > 0) {
+      // 🆕 判斷行為類型（VPN 用戶優先識別）
+      if (ipStats.isVPNUser) {
+        ipStats.behavior = 'VPN 用戶策略問題';
+        ipStats.isAttack = false;  // 明確標記非攻擊
+      } else if (ipStats.sigIds.length > 0) {
         ipStats.behavior = 'IPS 觸發';
+        ipStats.isAttack = true;
       } else if (ipStats.portScanAnalysis.isPortScan) {
         ipStats.behavior = '端口掃描';
+        ipStats.isAttack = true;
       } else if (ipStats.ruleNames.some(r => r.toLowerCase().includes('cleanup'))) {
         ipStats.behavior = 'Cleanup rule 命中';
+        ipStats.isAttack = true;
       } else if (ipStats.dropCount > 0 || ipStats.rejectCount > 0) {
         ipStats.behavior = '連線被阻擋';
+        ipStats.isAttack = true;
       } else {
         ipStats.behavior = '正常流量';
+        ipStats.isAttack = false;
       }
       
       // 移除原始日誌以節省記憶體
@@ -1328,15 +1579,17 @@ ${JSON.stringify(analysisData, null, 2)}
   
   /**
    * 取得 TOP N 攻擊者 IP（用於補充威脅類型資訊）
+   * 🆕 排除 VPN 用戶，只返回真正的攻擊者
    * @param {object} aggregatedStats - 聚合統計結果
    * @param {number} limit - 返回數量限制
    * @returns {array} TOP 攻擊者清單
    */
   getTopAttackers(aggregatedStats, limit = 5) {
-    // 過濾正常流量
+    // 🆕 過濾：排除 VPN 用戶，只保留真正的攻擊者
     let filteredIPs = Object.values(aggregatedStats).filter(stats => 
-      stats.classifications.KNOWN_ATTACK > 0 || 
-      stats.classifications.SCAN_SUSPICIOUS > 0
+      !stats.isVPNUser &&  // 排除 VPN 用戶
+      (stats.classifications.KNOWN_ATTACK > 0 || 
+       stats.classifications.SCAN_SUSPICIOUS > 0)
     );
     
     // 計算風險分數並排序
@@ -1388,32 +1641,73 @@ ${JSON.stringify(analysisData, null, 2)}
   }
   
   /**
+   * 🆕 取得 VPN 策略問題清單（包含詳細資訊）
+   * @param {object} aggregatedStats - 聚合統計結果
+   * @param {number} limit - 返回數量限制
+   * @returns {array} VPN 策略問題清單
+   */
+  getVPNPolicyIssues(aggregatedStats, limit = 10) {
+    return Object.values(aggregatedStats)
+      .filter(stats => stats.isVPNUser && (stats.dropCount > 0 || stats.rejectCount > 0))
+      .sort((a, b) => b.totalEvents - a.totalEvents)
+      .slice(0, limit)
+      .map(stats => ({
+        ip: stats.ip,
+        userName: stats.userName || 'Unknown',
+        userDN: stats.userDN || null,
+        eventCount: stats.totalEvents,
+        dropCount: stats.dropCount,
+        rejectCount: stats.rejectCount || 0,
+        blockRate: `${stats.blockRate}%`,
+        // 🆕 安全區域資訊
+        securityZone: stats.securityZone || 'Unknown',
+        inzone: stats.inzone || 'Unknown',
+        // 🆕 阻擋規則
+        ruleNames: stats.ruleNames || [],
+        blockedByRules: stats.ruleNames?.join(', ') || 'Unknown',
+        targetPorts: stats.targetPorts?.slice(0, 10) || [],
+        targetIPs: stats.targetIPs?.slice(0, 5) || [],
+        isVPNUser: true,
+        isAttack: false
+      }));
+  }
+  
+  /**
    * 過濾正常流量，只保留需要分析的事件
+   * 🆕 區分：真實攻擊 vs VPN 策略問題 vs 正常流量
    * @param {array} logEntries - 解析後的日誌陣列
    * @returns {object} 過濾結果
    */
   filterNormalTraffic(logEntries) {
-    const suspicious = [];
-    const normal = [];
+    const suspicious = [];       // 真實可疑事件（需要分析）
+    const vpnPolicyIssues = [];  // 🆕 VPN 策略問題（不視為攻擊）
+    const normal = [];           // 正常流量
     
     logEntries.forEach(log => {
       const classification = classifyEvent(log);
+      
       if (classification.classification === 'NORMAL_TRAFFIC') {
         normal.push(log);
+      } else if (classification.classification === 'VPN_POLICY_ISSUE') {
+        // 🆕 VPN 策略問題獨立分類
+        vpnPolicyIssues.push({ ...log, classification });
       } else {
+        // 真實可疑事件：KNOWN_ATTACK 或 SCAN_SUSPICIOUS
         suspicious.push({ ...log, classification });
       }
     });
     
     return {
       suspicious,
+      vpnPolicyIssues,  // 🆕 新增
       normal,
       suspiciousCount: suspicious.length,
+      vpnPolicyIssueCount: vpnPolicyIssues.length,  // 🆕 新增
       normalCount: normal.length,
       totalCount: logEntries.length
     };
   }
-
+  
   /**
    * 空結果
    */

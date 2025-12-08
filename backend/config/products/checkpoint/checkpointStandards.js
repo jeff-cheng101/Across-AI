@@ -925,6 +925,7 @@ function isRealSecurityThreat(log) {
  * 事件分類系統
  * - KNOWN_ATTACK: 已知攻擊（IPS 觸發、威脅防護檢測）
  * - SCAN_SUSPICIOUS: 掃描/可疑流量（Cleanup rule、端口掃描、非標準埠）
+ * - VPN_POLICY_ISSUE: VPN 策略問題（已認證用戶被阻擋）🆕
  * - NORMAL_TRAFFIC: 正常流量（不分析）
  */
 const EVENT_CLASSIFICATION = {
@@ -947,12 +948,29 @@ const EVENT_CLASSIFICATION = {
     severity: 'high',
     description: '端口掃描、探測行為或可疑連線',
     conditions: [
-      'action=Drop + rule_name=Cleanup rule',
-      'security_inzone=L3_untrust + 外部 IP',
+      'action=Drop + rule_name=Cleanup rule + 無用戶身份',
+      'security_inzone=L3_untrust + 外部 IP + 無用戶身份',
       '同一 IP 連線多個不同端口',
       '非標準埠連線'
     ],
     aiAnalysis: true
+  },
+  
+  // 🆕 VPN 策略問題（已認證用戶被阻擋，非攻擊）
+  VPN_POLICY_ISSUE: {
+    id: 'VPN_POLICY_ISSUE',
+    displayName: 'VPN 策略問題',
+    severity: 'low',
+    description: '已認證的 VPN 用戶流量被阻擋，可能是策略配置問題',
+    conditions: [
+      'src_user_name 或 src_user_dn 有值（已認證用戶）',
+      'action=Drop + rule_name=Cleanup rule',
+      'product 包含 VPN',
+      'geoip.country_name = Intranet'
+    ],
+    aiAnalysis: false,  // 不視為攻擊，不需要 AI 分析
+    isAttack: false,
+    actionRequired: 'POLICY_REVIEW'  // 需要檢視防火牆策略
   },
   
   NORMAL_TRAFFIC: {
@@ -1030,6 +1048,46 @@ const SPECIAL_RULE_TYPES = {
 };
 
 /**
+ * 🆕 檢查是否為已認證的 VPN 用戶
+ * @param {object} log - 日誌條目
+ * @returns {object} VPN 用戶資訊
+ */
+function checkVPNUser(log) {
+  // 檢查用戶身份欄位
+  const srcUserName = log.src_user_name || log.user || '';
+  const srcUserDN = log.src_user_dn || '';
+  const product = log.product || '';
+  const geoCountry = log.geoip?.country_name || log.src_country || '';
+  
+  // 是否有用戶身份（已認證）
+  const hasUserIdentity = !!(srcUserName.trim() || srcUserDN.trim());
+  
+  // 是否為 VPN 產品
+  const isVPNProduct = product.toLowerCase().includes('vpn');
+  
+  // 是否為內網流量
+  const isIntranet = geoCountry.toLowerCase() === 'intranet';
+  
+  // 是否為 VPN 分配的 IP 範圍（常見 VPN IP 範圍）
+  const srcIP = log.src || log.src_ip || '';
+  const isVPNIPRange = srcIP.startsWith('192.168.192.') || 
+                       srcIP.startsWith('192.168.193.') ||
+                       srcIP.startsWith('10.8.') ||
+                       srcIP.startsWith('10.9.');
+  
+  return {
+    isAuthenticatedUser: hasUserIdentity,
+    isVPNProduct: isVPNProduct,
+    isIntranet: isIntranet,
+    isVPNIPRange: isVPNIPRange,
+    userName: srcUserName.trim(),
+    userDN: srcUserDN.trim(),
+    // 🔑 核心判斷：是否為 VPN 用戶
+    isVPNUser: hasUserIdentity && (isVPNProduct || isIntranet || isVPNIPRange)
+  };
+}
+
+/**
  * 事件分類判斷函數
  * @param {object} log - 解析後的日誌條目
  * @returns {object} 分類結果
@@ -1045,37 +1103,53 @@ function classifyEvent(log) {
     };
   }
   
-  // 2. 檢查是否為掃描/可疑流量
+  // 🆕 1.5 檢查是否為已認證的 VPN 用戶
+  const vpnUserInfo = checkVPNUser(log);
   const action = (log.action || '').toLowerCase();
   const ruleName = log.rule_name || (log.rule_name_match_table && log.rule_name_match_table[0]) || '';
   const securityInzone = log.security_inzone || '';
   
-  // 2.1 被 Drop 且命中 Cleanup rule
-  if ((action === 'drop' || action === 'reject') && 
-      ruleName.toLowerCase().includes('cleanup')) {
+  // 🆕 如果是已認證的 VPN 用戶且被阻擋 → VPN 策略問題（非攻擊）
+  if (vpnUserInfo.isVPNUser && (action === 'drop' || action === 'reject')) {
     return {
-      classification: 'SCAN_SUSPICIOUS',
-      ...EVENT_CLASSIFICATION.SCAN_SUSPICIOUS,
-      reason: `被 ${ruleName} 規則阻擋，表示未匹配任何允許規則`
+      classification: 'VPN_POLICY_ISSUE',
+      ...EVENT_CLASSIFICATION.VPN_POLICY_ISSUE,
+      reason: `已認證用戶 "${vpnUserInfo.userName}" 的連線被 ${ruleName || '防火牆規則'} 阻擋，可能是策略配置問題`,
+      vpnUserInfo: vpnUserInfo,
+      isAttack: false  // 明確標記非攻擊
     };
   }
   
-  // 2.2 來自不信任區域且被阻擋
+  // 2. 檢查是否為掃描/可疑流量（無用戶身份的情況）
+  
+  // 2.1 被 Drop 且命中 Cleanup rule（無用戶身份）
   if ((action === 'drop' || action === 'reject') && 
-      (securityInzone === 'L3_untrust' || log.inzone === 'External')) {
+      ruleName.toLowerCase().includes('cleanup') &&
+      !vpnUserInfo.isAuthenticatedUser) {
     return {
       classification: 'SCAN_SUSPICIOUS',
       ...EVENT_CLASSIFICATION.SCAN_SUSPICIOUS,
-      reason: `來自不信任區域 (${securityInzone || log.inzone}) 的連線被阻擋`
+      reason: `被 ${ruleName} 規則阻擋，表示未匹配任何允許規則（無用戶身份）`
     };
   }
   
-  // 2.3 被阻擋的連線（一般性）
-  if (action === 'drop' || action === 'reject') {
+  // 2.2 來自不信任區域且被阻擋（無用戶身份）
+  if ((action === 'drop' || action === 'reject') && 
+      (securityInzone === 'L3_untrust' || log.inzone === 'External') &&
+      !vpnUserInfo.isAuthenticatedUser) {
     return {
       classification: 'SCAN_SUSPICIOUS',
       ...EVENT_CLASSIFICATION.SCAN_SUSPICIOUS,
-      reason: `連線被防火牆阻擋 (${log.action})`
+      reason: `來自不信任區域 (${securityInzone || log.inzone}) 的連線被阻擋（無用戶身份）`
+    };
+  }
+  
+  // 2.3 被阻擋的連線（一般性，無用戶身份）
+  if ((action === 'drop' || action === 'reject') && !vpnUserInfo.isAuthenticatedUser) {
+    return {
+      classification: 'SCAN_SUSPICIOUS',
+      ...EVENT_CLASSIFICATION.SCAN_SUSPICIOUS,
+      reason: `連線被防火牆阻擋 (${log.action})（無用戶身份）`
     };
   }
   
@@ -1174,5 +1248,8 @@ module.exports = {
   SPECIAL_RULE_TYPES,
   classifyEvent,
   getAttackReason,
-  detectPortScan
+  detectPortScan,
+  
+  // 🆕 VPN 用戶識別
+  checkVPNUser
 };
