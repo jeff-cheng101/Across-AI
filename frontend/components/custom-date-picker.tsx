@@ -5,12 +5,14 @@ import { ChevronLeft, ChevronRight } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
 
-interface CustomDatePickerProps {
+export interface CustomDatePickerProps {
   selected?: Date
   onSelect: (date: Date | undefined) => void
+  placeholder?: string  // 🆕 新增
+  disabled?: boolean    // 🆕 新增
 }
 
-export function CustomDatePicker({ selected, onSelect }: CustomDatePickerProps) {
+export function CustomDatePicker({ selected, onSelect, placeholder, disabled }: CustomDatePickerProps) {
   const [currentMonth, setCurrentMonth] = useState(selected || new Date())
 
   const daysInMonth = (date: Date) => {
