@@ -18,7 +18,13 @@ const {
   calculateThreatScore,
   classifyByThreatScore,
   isHighRiskThreat,
-  analyzeLogEntry
+  analyzeLogEntry,
+  // 新增：事件分類系統
+  EVENT_CLASSIFICATION,
+  PORT_SCAN_DETECTION,
+  SPECIAL_RULE_TYPES,
+  classifyEvent,
+  detectPortScan
 } = require('../../config/products/checkpoint/checkpointStandards');
 const checkpointELKConfig = require('../../config/products/checkpoint/checkpointELKConfig');
 
@@ -117,6 +123,36 @@ class CheckpointRiskServices {
       // Step 6: 資產分析（Top 5 受攻擊資產）
       const assetAnalysis = this.analyzeTopTargetedAssets(logEntries, realThreats);
       
+      // Step 7: 🆕 過濾正常流量
+      console.log('\n⭐ Step 7: 過濾正常流量...');
+      const filteredStats = this.filterNormalTraffic(logEntries);
+      console.log(`   過濾前: ${filteredStats.totalCount} 筆`);
+      console.log(`   需分析: ${filteredStats.suspiciousCount} 筆`);
+      console.log(`   正常流量: ${filteredStats.normalCount} 筆（已過濾）`);
+      
+      // Step 8: 🆕 按來源 IP 聚合
+      console.log('\n⭐ Step 8: 按來源 IP 聚合統計...');
+      const ipAggregatedStats = this.aggregateBySourceIP(filteredStats.suspicious);
+      const uniqueSourceIPs = Object.keys(ipAggregatedStats).length;
+      console.log(`   唯一來源 IP: ${uniqueSourceIPs} 個`);
+      
+      // 檢測端口掃描
+      const portScanIPs = Object.values(ipAggregatedStats)
+        .filter(stats => stats.portScanAnalysis && stats.portScanAnalysis.isPortScan);
+      console.log(`   端口掃描 IP: ${portScanIPs.length} 個`);
+      
+      // Cleanup rule 命中
+      const cleanupRuleIPs = Object.values(ipAggregatedStats)
+        .filter(stats => stats.ruleNames.some(r => r.toLowerCase().includes('cleanup')));
+      console.log(`   Cleanup rule 命中 IP: ${cleanupRuleIPs.length} 個`);
+      
+      // 取得 TOP 攻擊者
+      const topAttackers = this.getTopAttackers(ipAggregatedStats, 5);
+      console.log(`\n📊 TOP 5 攻擊者 IP:`);
+      topAttackers.forEach((attacker, i) => {
+        console.log(`   ${i + 1}. ${attacker.ip} (${attacker.country}) - ${attacker.behavior} - 風險分數: ${attacker.riskScore}`);
+      });
+      
       // 綜合分析結果
       const analysisData = {
         timeRange: actualTimeRange,
@@ -130,7 +166,13 @@ class CheckpointRiskServices {
         owaspAttacks: owaspAttacks,
         geoDistribution: geoDistribution,
         topAssets: assetAnalysis,
-        analysisResults: analysisResults
+        analysisResults: analysisResults,
+        // 🆕 新增欄位
+        filteredStats: filteredStats,
+        ipAggregatedStats: ipAggregatedStats,
+        topAttackers: topAttackers,
+        portScanIPs: portScanIPs.length,
+        cleanupRuleIPs: cleanupRuleIPs.length
       };
       
       console.log('\n✅ 分析完成！');
@@ -717,10 +759,32 @@ class CheckpointRiskServices {
   }
   
   /**
-   * 產生 AI 分析提示詞（動態從配置檔案提取）
+   * 格式化 TOP 攻擊者資訊（用於 AI Prompt）
+   */
+  formatTopAttackersForPrompt(topAttackers) {
+    if (!topAttackers || topAttackers.length === 0) {
+      return '無可疑攻擊來源 IP';
+    }
+    
+    return topAttackers.map((attacker, index) => {
+      return `
+${index + 1}. **${attacker.ip}** (${attacker.country})
+   - 事件數: ${attacker.eventCount}
+   - 阻擋數: ${attacker.dropCount}
+   - 阻擋率: ${attacker.blockRate}
+   - 行為: ${attacker.behavior}
+   - 風險分數: ${attacker.riskScore}
+   ${attacker.isPortScan ? `- 端口掃描: 是（掃描 ${attacker.scannedPorts} 個端口）` : ''}
+   ${attacker.highRiskPortsHit?.length > 0 ? `- 命中高危端口: ${attacker.highRiskPortsHit.join(', ')}` : ''}
+   - 目標端口: ${attacker.targetPorts?.slice(0, 5).join(', ')}${attacker.targetPorts?.length > 5 ? '...' : ''}`;
+    }).join('\n');
+  }
+  
+  /**
+   * 產生 AI 分析提示詞（動態從配置檔案提取）- 優化版
    */
   generateAIPrompt(analysisData) {
-    const { timeRange, totalEvents, totalThreats } = analysisData;
+    const { timeRange, totalEvents, totalThreats, filteredStats, topAttackers } = analysisData;
     
     // 動態提取配置說明
     const fieldMappingContext = this.generateFieldMappingContext();
@@ -762,7 +826,17 @@ class CheckpointRiskServices {
   - 結束: ${this.formatTimeTaipei(timeRange.end)}
 - **總日誌數**: ${totalEvents.toLocaleString()} 筆
 - **檢測到的威脅數**: ${totalThreats.toLocaleString()} 筆
+- **需分析事件**: ${filteredStats?.suspiciousCount?.toLocaleString() || totalThreats.toLocaleString()} 筆
+- **正常流量（已過濾）**: ${filteredStats?.normalCount?.toLocaleString() || 0} 筆
 - **分析時間**: ${this.formatTimeTaipei(new Date().toISOString())}
+
+---
+
+### 【TOP 攻擊來源 IP 統計】
+
+以下是風險分數最高的攻擊來源 IP，請在分析各威脅類型時，一併說明相關的攻擊來源：
+
+${this.formatTopAttackersForPrompt(topAttackers)}
 
 ---
 
@@ -835,14 +909,25 @@ ${JSON.stringify(analysisData, null, 2)}
       "id": "risk_001",
       "title": "威脅標題（繁體中文，從日誌中自動識別）",
       "severity": "critical/high/medium/low",
-      "category": "BLOCKED_ATTACK/THREAT_PREVENTION/HIGH_RISK_APP/URI_ATTACK/URL_FILTERING",
-      "layer": "FIREWALL_ACTION/THREAT_PREVENTION/APP_RISK_ASSESSMENT/URI_UA_ANALYSIS/URL_FILTERING",
+      "category": "BLOCKED_ATTACK/THREAT_PREVENTION/HIGH_RISK_APP/URI_ATTACK/URL_FILTERING/PORT_SCAN_DETECTED/CLEANUP_RULE_HIT",
+      "layer": "FIREWALL_ACTION/THREAT_PREVENTION/APP_RISK_ASSESSMENT/URI_UA_ANALYSIS/URL_FILTERING/BEHAVIOR_ANALYSIS",
       "description": "威脅詳細描述（繁體中文）",
       "affectedAssets": ["資產1", "資產2"],
       "attackCount": 數量,
-      "uniqueIPs": 唯一 IP 數量,
-      "topCountries": ["國家1", "國家2"],
-      "aiInsight": "AI 深度洞察分析（繁體中文，必須包含具體數字和 Check Point 專業術語）",
+      "openIssues": 未解決問題數,
+      "resolvedIssues": 已解決問題數,
+      "topAttackers": [
+        {
+          "ip": "攻擊來源 IP",
+          "country": "國家",
+          "eventCount": 事件數,
+          "dropCount": 阻擋數,
+          "blockRate": "阻擋率百分比",
+          "behavior": "行為描述（如：端口掃描、Cleanup rule 命中、IPS 觸發）",
+          "targetPorts": [目標端口清單]
+        }
+      ],
+      "aiInsight": "AI 深度洞察分析（繁體中文，必須包含具體數字、攻擊來源 IP 和 Check Point 專業術語）",
       "recommendations": [
         {
           "priority": "high/medium/low",
@@ -850,8 +935,6 @@ ${JSON.stringify(analysisData, null, 2)}
           "description": "具體的 Check Point 操作建議（繁體中文，例如：在 SmartConsole 中設定...）"
         }
       ],
-      "openIssues": 未解決問題數,
-      "resolvedIssues": 已解決問題數,
       "createdDate": "建立日期",
       "updatedDate": "更新日期"
     }
@@ -861,7 +944,8 @@ ${JSON.stringify(analysisData, null, 2)}
     "criticalCount": 嚴重風險數,
     "highCount": 高風險數,
     "mediumCount": 中風險數,
-    "lowCount": 低風險數
+    "lowCount": 低風險數,
+    "uniqueAttackerIPs": 唯一攻擊者 IP 數
   }
 }
 \`\`\`
@@ -871,9 +955,11 @@ ${JSON.stringify(analysisData, null, 2)}
 1. **自動識別威脅**：從日誌數據中自動識別威脅類型，不要使用預設清單
 2. **多層判斷**：根據上述五層判斷模型分類威脅，每個風險必須標明是哪一層判斷出來的
 3. **優先級排序**：按照威脅嚴重程度排序（critical > high > medium > low）
-4. **可操作建議**：提供具體的 Check Point 緩解措施（使用 SmartConsole、SmartDashboard 等 Check Point 工具術語）
-5. **關聯分析**：識別相關聯的攻擊模式
-6. **繁體中文**：所有輸出內容必須使用繁體中文
+4. **攻擊來源分析**：在每個威脅類型中，列出相關的 TOP 攻擊來源 IP（從上方 TOP 攻擊來源 IP 統計中選取）
+5. **新增威脅類型**：如果檢測到端口掃描行為或 Cleanup rule 命中，請新增對應的威脅類型
+6. **可操作建議**：提供具體的 Check Point 緩解措施（使用 SmartConsole、SmartDashboard 等 Check Point 工具術語）
+7. **關聯分析**：識別相關聯的攻擊模式，說明攻擊者的可能意圖
+8. **繁體中文**：所有輸出內容必須使用繁體中文
 
 請開始分析。
     `.trim();
@@ -882,16 +968,26 @@ ${JSON.stringify(analysisData, null, 2)}
   }
   
   /**
-   * 產生備用風險報告（當 AI 無法使用時）
+   * 產生備用風險報告（當 AI 無法使用時）- 優化版
+   * 維持威脅類型為中心 + 增加 TOP 攻擊者 IP
    */
   generateFallbackRisks(analysisData) {
-    const { timeRange, totalEvents, totalThreats, blockedTraffic, highRiskApps, threatPrevention, urlFiltering, owaspAttacks } = analysisData;
+    const { 
+      timeRange, totalEvents, totalThreats, 
+      blockedTraffic, highRiskApps, threatPrevention, 
+      urlFiltering, owaspAttacks,
+      ipAggregatedStats,  // 新增：IP 聚合統計
+      topAttackers        // 新增：TOP 攻擊者
+    } = analysisData;
     
     const risks = [];
     let riskId = 1;
     
-    // Risk 1: 被封鎖的流量
-    if (blockedTraffic.totalBlocked > 0) {
+    // 獲取 TOP 攻擊者（如果沒有傳入則重新計算）
+    const attackersList = topAttackers || (ipAggregatedStats ? this.getTopAttackers(ipAggregatedStats, 5) : []);
+    
+    // Risk 1: 被封鎖的流量（維持原有結構 + 新增 topAttackers）
+    if (blockedTraffic && blockedTraffic.totalBlocked > 0) {
       risks.push({
         id: `risk_${String(riskId++).padStart(3, '0')}`,
         title: '防火牆已封鎖的威脅流量',
@@ -899,22 +995,26 @@ ${JSON.stringify(analysisData, null, 2)}
         category: 'BLOCKED_ATTACK',
         layer: 'FIREWALL_ACTION',
         description: `防火牆檢測並封鎖了 ${blockedTraffic.totalBlocked} 筆威脅流量`,
-        affectedAssets: blockedTraffic.topBlockedApps.slice(0, 5).map(app => app.appName),
+        affectedAssets: blockedTraffic.topBlockedApps?.slice(0, 5).map(app => app.appName) || [],
         attackCount: blockedTraffic.totalBlocked,
-        uniqueIPs: blockedTraffic.topBlockedApps.reduce((sum, app) => sum + app.uniqueIPs, 0),
-        topApps: blockedTraffic.topBlockedApps.slice(0, 5),
-        aiInsight: '這些流量已被防火牆成功封鎖，表示安全規則正在發揮作用。',
+        openIssues: blockedTraffic.totalBlocked,
+        resolvedIssues: 0,
+        uniqueIPs: blockedTraffic.topBlockedApps?.reduce((sum, app) => sum + (app.uniqueIPs || 0), 0) || 0,
+        topApps: blockedTraffic.topBlockedApps?.slice(0, 5) || [],
+        // 🆕 新增：TOP 攻擊者 IP
+        topAttackers: attackersList.filter(a => a.dropCount > 0).slice(0, 5),
+        aiInsight: `檢測到 ${blockedTraffic.totalBlocked} 筆被封鎖的威脅流量${attackersList.length > 0 ? `，來自 ${attackersList.length} 個可疑來源 IP` : ''}。防火牆已成功阻擋這些威脅，建議持續監控。`,
         recommendations: [
-          { priority: 'medium', action: '檢查封鎖規則是否過於嚴格', reason: '避免誤封正常流量' },
-          { priority: 'low', action: '定期審查封鎖日誌', reason: '持續優化安全規則' }
+          { priority: 'medium', title: '檢查封鎖規則', description: '確認封鎖規則是否符合業務需求，避免誤封正常流量' },
+          { priority: 'low', title: '定期審查封鎖日誌', description: '持續優化安全規則，識別攻擊模式' }
         ],
         createdDate: this.formatDateTaipei(timeRange.start),
         updatedDate: this.formatDateTaipei(timeRange.end)
       });
     }
     
-    // Risk 2: 高風險應用程式
-    if (highRiskApps.totalHighRiskEvents > 0) {
+    // Risk 2: 高風險應用程式（維持原有結構 + 新增 topAttackers）
+    if (highRiskApps && highRiskApps.totalHighRiskEvents > 0) {
       risks.push({
         id: `risk_${String(riskId++).padStart(3, '0')}`,
         title: '高風險應用程式活動',
@@ -922,21 +1022,25 @@ ${JSON.stringify(analysisData, null, 2)}
         category: 'HIGH_RISK_APPLICATION',
         layer: 'APP_RISK_ASSESSMENT',
         description: `檢測到 ${highRiskApps.totalHighRiskEvents} 筆高風險應用程式（app_risk >= 4）活動`,
-        affectedAssets: highRiskApps.topHighRiskApps.slice(0, 5).map(app => app.appName),
+        affectedAssets: highRiskApps.topHighRiskApps?.slice(0, 5).map(app => app.appName) || [],
         attackCount: highRiskApps.totalHighRiskEvents,
-        topApps: highRiskApps.topHighRiskApps.slice(0, 5),
+        openIssues: highRiskApps.totalHighRiskEvents,
+        resolvedIssues: 0,
+        topApps: highRiskApps.topHighRiskApps?.slice(0, 5) || [],
+        // 🆕 新增：TOP 攻擊者 IP
+        topAttackers: attackersList.slice(0, 5),
         aiInsight: '這些應用程式具有高安全風險，建議限制或監控其使用。',
         recommendations: [
-          { priority: 'high', action: '審查高風險應用程式使用政策', reason: '降低安全風險' },
-          { priority: 'high', action: '考慮封鎖或限制高風險應用', reason: '保護企業資產' }
+          { priority: 'high', title: '審查高風險應用程式使用政策', description: '降低安全風險，確保符合企業安全規範' },
+          { priority: 'high', title: '考慮封鎖或限制高風險應用', description: '保護企業資產，防止資料外洩' }
         ],
         createdDate: this.formatDateTaipei(timeRange.start),
         updatedDate: this.formatDateTaipei(timeRange.end)
       });
     }
     
-    // Risk 3: Threat Prevention 檢測
-    if (threatPrevention.totalThreatPreventionEvents > 0) {
+    // Risk 3: Threat Prevention 檢測（維持原有結構 + 新增 topAttackers）
+    if (threatPrevention && threatPrevention.totalThreatPreventionEvents > 0) {
       risks.push({
         id: `risk_${String(riskId++).padStart(3, '0')}`,
         title: 'Threat Prevention 檢測到的威脅',
@@ -944,20 +1048,102 @@ ${JSON.stringify(analysisData, null, 2)}
         category: 'THREAT_PREVENTION_DETECTED',
         layer: 'THREAT_PREVENTION',
         description: `Threat Prevention 檢測到 ${threatPrevention.totalThreatPreventionEvents} 筆威脅`,
-        topThreats: threatPrevention.topThreats.slice(0, 5),
+        topThreats: threatPrevention.topThreats?.slice(0, 5) || [],
         attackCount: threatPrevention.totalThreatPreventionEvents,
+        openIssues: threatPrevention.totalThreatPreventionEvents,
+        resolvedIssues: 0,
+        // 🆕 新增：TOP 攻擊者 IP（IPS 觸發的）
+        topAttackers: attackersList.filter(a => a.behavior === 'IPS 觸發').slice(0, 5),
         aiInsight: 'Check Point Threat Prevention 檢測到多種威脅，需要立即調查。',
         recommendations: [
-          { priority: 'critical', action: '立即調查威脅來源', reason: '防止攻擊擴散' },
-          { priority: 'high', action: '更新 IPS 簽章', reason: '提升檢測能力' }
+          { priority: 'critical', title: '立即調查威脅來源', description: '防止攻擊擴散，隔離受影響系統' },
+          { priority: 'high', title: '更新 IPS 簽章', description: '提升檢測能力，防禦最新威脅' }
         ],
         createdDate: this.formatDateTaipei(timeRange.start),
         updatedDate: this.formatDateTaipei(timeRange.end)
       });
     }
     
-    // Risk 4: URL Filtering 違規
-    if (urlFiltering.totalURLFilteringViolations > 0) {
+    // Risk 4: 端口掃描活動（🆕 新增威脅類型）
+    if (ipAggregatedStats) {
+      const portScanIPs = Object.values(ipAggregatedStats)
+        .filter(stats => stats.portScanAnalysis && stats.portScanAnalysis.isPortScan);
+      
+      if (portScanIPs.length > 0) {
+        const totalPortScanEvents = portScanIPs.reduce((sum, ip) => sum + ip.totalEvents, 0);
+        risks.push({
+          id: `risk_${String(riskId++).padStart(3, '0')}`,
+          title: '端口掃描活動檢測',
+          severity: 'high',
+          category: 'PORT_SCAN_DETECTED',
+          layer: 'BEHAVIOR_ANALYSIS',
+          description: `檢測到 ${portScanIPs.length} 個來源 IP 進行端口掃描行為`,
+          attackCount: totalPortScanEvents,
+          openIssues: totalPortScanEvents,
+          resolvedIssues: 0,
+          // 🆕 TOP 攻擊者 IP
+          topAttackers: portScanIPs.slice(0, 5).map(stats => ({
+            ip: stats.ip,
+            country: stats.geoInfo?.country || 'Unknown',
+            eventCount: stats.totalEvents,
+            dropCount: stats.dropCount,
+            blockRate: `${stats.blockRate}%`,
+            behavior: '端口掃描',
+            scannedPorts: stats.portScanAnalysis?.uniquePortCount || 0,
+            highRiskPortsHit: stats.portScanAnalysis?.highRiskPortsHit || [],
+            targetPorts: stats.targetPorts?.slice(0, 10) || []
+          })),
+          aiInsight: `檢測到 ${portScanIPs.length} 個 IP 進行端口掃描，這通常是攻擊的前兆（偵察階段）。所有掃描行為已被防火牆成功阻擋。`,
+          recommendations: [
+            { priority: 'high', title: '監控這些 IP 的後續活動', description: '確認是否有進一步攻擊行為' },
+            { priority: 'medium', title: '確認高危端口服務狀態', description: '確保 SSH、RDP、SMB 等服務安全配置' }
+          ],
+          createdDate: this.formatDateTaipei(timeRange.start),
+          updatedDate: this.formatDateTaipei(timeRange.end)
+        });
+      }
+    }
+    
+    // Risk 5: Cleanup Rule 命中（🆕 新增威脅類型）
+    if (ipAggregatedStats) {
+      const cleanupRuleIPs = Object.values(ipAggregatedStats)
+        .filter(stats => stats.ruleNames && stats.ruleNames.some(r => r.toLowerCase().includes('cleanup')));
+      
+      if (cleanupRuleIPs.length > 0) {
+        const totalCleanupEvents = cleanupRuleIPs.reduce((sum, ip) => sum + ip.totalEvents, 0);
+        risks.push({
+          id: `risk_${String(riskId++).padStart(3, '0')}`,
+          title: 'Cleanup Rule 未授權存取嘗試',
+          severity: 'medium',
+          category: 'CLEANUP_RULE_HIT',
+          layer: 'FIREWALL_ACTION',
+          description: `${cleanupRuleIPs.length} 個來源 IP 的連線被 Cleanup rule 阻擋，表示未匹配任何允許規則`,
+          attackCount: totalCleanupEvents,
+          openIssues: totalCleanupEvents,
+          resolvedIssues: 0,
+          // 🆕 TOP 攻擊者 IP
+          topAttackers: cleanupRuleIPs.slice(0, 5).map(stats => ({
+            ip: stats.ip,
+            country: stats.geoInfo?.country || 'Unknown',
+            eventCount: stats.totalEvents,
+            dropCount: stats.dropCount,
+            blockRate: `${stats.blockRate}%`,
+            behavior: 'Cleanup rule 命中',
+            targetPorts: stats.targetPorts?.slice(0, 10) || []
+          })),
+          aiInsight: 'Cleanup rule 是防火牆的最後一道防線，命中此規則表示連線未被任何允許規則匹配。這可能是未授權的存取嘗試、掃描行為或配置問題。',
+          recommendations: [
+            { priority: 'medium', title: '檢查是否為合法連線', description: '確認是否需要新增允許規則' },
+            { priority: 'low', title: '監控來源 IP', description: '確認是否為惡意活動或誤報' }
+          ],
+          createdDate: this.formatDateTaipei(timeRange.start),
+          updatedDate: this.formatDateTaipei(timeRange.end)
+        });
+      }
+    }
+    
+    // Risk 6: URL Filtering 違規
+    if (urlFiltering && urlFiltering.totalURLFilteringViolations > 0) {
       risks.push({
         id: `risk_${String(riskId++).padStart(3, '0')}`,
         title: 'URL Filtering 政策違規',
@@ -965,20 +1151,23 @@ ${JSON.stringify(analysisData, null, 2)}
         category: 'URL_FILTERING_VIOLATION',
         layer: 'URL_FILTERING',
         description: `檢測到 ${urlFiltering.totalURLFilteringViolations} 筆 URL Filtering 違規`,
-        topCategories: urlFiltering.topCategories.slice(0, 5),
+        topCategories: urlFiltering.topCategories?.slice(0, 5) || [],
         attackCount: urlFiltering.totalURLFilteringViolations,
+        openIssues: urlFiltering.totalURLFilteringViolations,
+        resolvedIssues: 0,
+        topAttackers: attackersList.slice(0, 5),
         aiInsight: '使用者嘗試訪問違反公司政策的網站類別。',
         recommendations: [
-          { priority: 'medium', action: '加強員工安全意識培訓', reason: '減少政策違規' },
-          { priority: 'medium', action: '審查 URL Filtering 政策', reason: '確保政策合理性' }
+          { priority: 'medium', title: '加強員工安全意識培訓', description: '減少政策違規，提高安全意識' },
+          { priority: 'medium', title: '審查 URL Filtering 政策', description: '確保政策合理性，避免影響正常業務' }
         ],
         createdDate: this.formatDateTaipei(timeRange.start),
         updatedDate: this.formatDateTaipei(timeRange.end)
       });
     }
     
-    // Risk 5: OWASP 攻擊模式
-    if (owaspAttacks.totalOWASPAttacks > 0) {
+    // Risk 7: OWASP 攻擊模式
+    if (owaspAttacks && owaspAttacks.totalOWASPAttacks > 0) {
       risks.push({
         id: `risk_${String(riskId++).padStart(3, '0')}`,
         title: 'OWASP TOP 10 攻擊模式檢測',
@@ -986,13 +1175,16 @@ ${JSON.stringify(analysisData, null, 2)}
         category: 'URI_ATTACK_PATTERN',
         layer: 'URI_UA_ANALYSIS',
         description: `檢測到 ${owaspAttacks.totalOWASPAttacks} 筆符合 OWASP TOP 10 的攻擊模式`,
-        topAttackTypes: owaspAttacks.topAttackTypes.slice(0, 5),
+        topAttackTypes: owaspAttacks.topAttackTypes?.slice(0, 5) || [],
         attackCount: owaspAttacks.totalOWASPAttacks,
+        openIssues: owaspAttacks.totalOWASPAttacks,
+        resolvedIssues: 0,
+        topAttackers: attackersList.slice(0, 5),
         aiInsight: '檢測到多種 OWASP TOP 10 攻擊模式，包括 SQL 注入、XSS、命令注入等。',
         recommendations: [
-          { priority: 'critical', action: '立即調查攻擊來源和目標', reason: '防止資料洩露或系統入侵' },
-          { priority: 'high', action: '檢查 Web 應用程式安全性', reason: '修補已知漏洞' },
-          { priority: 'high', action: '啟用 WAF 防護', reason: '攔截 Web 應用攻擊' }
+          { priority: 'critical', title: '立即調查攻擊來源和目標', description: '防止資料洩露或系統入侵' },
+          { priority: 'high', title: '檢查 Web 應用程式安全性', description: '修補已知漏洞，更新依賴套件' },
+          { priority: 'high', title: '啟用 WAF 防護', description: '攔截 Web 應用攻擊' }
         ],
         createdDate: this.formatDateTaipei(timeRange.start),
         updatedDate: this.formatDateTaipei(timeRange.end)
@@ -1004,12 +1196,224 @@ ${JSON.stringify(analysisData, null, 2)}
       criticalCount: risks.filter(r => r.severity === 'critical').length,
       highCount: risks.filter(r => r.severity === 'high').length,
       mediumCount: risks.filter(r => r.severity === 'medium').length,
-      lowCount: risks.filter(r => r.severity === 'low').length
+      lowCount: risks.filter(r => r.severity === 'low').length,
+      // 🆕 新增統計
+      totalAnalyzedEvents: analysisData.filteredStats?.suspiciousCount || totalEvents,
+      filteredNormalTraffic: analysisData.filteredStats?.normalCount || 0,
+      uniqueAttackerIPs: attackersList.length
     };
     
     return { risks, summary };
   }
   
+  // ==================== 新增：IP 聚合分析方法 ====================
+  
+  /**
+   * 按來源 IP 聚合日誌統計
+   * @param {array} logEntries - 解析後的日誌陣列
+   * @returns {object} 聚合統計結果
+   */
+  aggregateBySourceIP(logEntries) {
+    const stats = {};
+    
+    logEntries.forEach(log => {
+      const srcIP = log.src_ip || log.src || 'Unknown';
+      
+      if (!stats[srcIP]) {
+        stats[srcIP] = {
+          ip: srcIP,
+          totalEvents: 0,
+          dropCount: 0,
+          rejectCount: 0,
+          acceptCount: 0,
+          alertCount: 0,
+          targetIPs: new Set(),
+          targetPorts: new Set(),
+          ruleNames: new Set(),
+          geoInfo: {
+            country: log.src_country || log.geoip?.country_name || 'Unknown',
+            city: log.geoip?.city_name || 'Unknown',
+            region: log.geoip?.region_name || 'Unknown'
+          },
+          securityZone: log.security_inzone || 'Unknown',
+          inzone: log.inzone || 'Unknown',
+          classifications: { KNOWN_ATTACK: 0, SCAN_SUSPICIOUS: 0, NORMAL_TRAFFIC: 0 },
+          sigIds: new Set(),
+          threatSeverities: new Set(),
+          services: new Set(),
+          timestamps: [],
+          logs: []  // 保留原始日誌供後續分析
+        };
+      }
+      
+      const ipStats = stats[srcIP];
+      ipStats.totalEvents++;
+      ipStats.logs.push(log);
+      
+      // 統計 Action
+      const action = (log.action || '').toLowerCase();
+      if (action === 'drop') ipStats.dropCount++;
+      else if (action === 'reject') ipStats.rejectCount++;
+      else if (action === 'accept') ipStats.acceptCount++;
+      else if (action === 'alert') ipStats.alertCount++;
+      
+      // 收集目標資訊
+      if (log.dst_ip || log.dst) ipStats.targetIPs.add(log.dst_ip || log.dst);
+      if (log.service || log.dst_port) ipStats.targetPorts.add(log.service || log.dst_port);
+      
+      // 收集規則名稱
+      const ruleName = log.rule_name || (log.rule_name_match_table && log.rule_name_match_table[0]);
+      if (ruleName) ipStats.ruleNames.add(ruleName);
+      
+      // 收集 IPS 資訊
+      if (log.sig_id) ipStats.sigIds.add(log.sig_id);
+      if (log.threat_severity) ipStats.threatSeverities.add(log.threat_severity);
+      
+      // 收集服務資訊
+      if (log.service_id) ipStats.services.add(log.service_id);
+      
+      // 收集時間戳
+      if (log.timestamp) ipStats.timestamps.push(new Date(log.timestamp).getTime());
+      
+      // 分類統計
+      const classification = classifyEvent(log);
+      ipStats.classifications[classification.classification]++;
+    });
+    
+    // 轉換 Set 為陣列，並計算衍生指標
+    Object.values(stats).forEach(ipStats => {
+      ipStats.targetIPs = Array.from(ipStats.targetIPs);
+      ipStats.targetPorts = Array.from(ipStats.targetPorts);
+      ipStats.ruleNames = Array.from(ipStats.ruleNames);
+      ipStats.sigIds = Array.from(ipStats.sigIds);
+      ipStats.threatSeverities = Array.from(ipStats.threatSeverities);
+      ipStats.services = Array.from(ipStats.services);
+      
+      // 計算端口掃描偵測
+      ipStats.portScanAnalysis = detectPortScan(ipStats.logs);
+      
+      // 判斷主要分類
+      if (ipStats.classifications.KNOWN_ATTACK > 0) {
+        ipStats.primaryClassification = 'KNOWN_ATTACK';
+      } else if (ipStats.classifications.SCAN_SUSPICIOUS > 0) {
+        ipStats.primaryClassification = 'SCAN_SUSPICIOUS';
+      } else {
+        ipStats.primaryClassification = 'NORMAL_TRAFFIC';
+      }
+      
+      // 計算被阻擋比例
+      ipStats.blockRate = ipStats.totalEvents > 0 
+        ? ((ipStats.dropCount + ipStats.rejectCount) / ipStats.totalEvents * 100).toFixed(1)
+        : 0;
+      
+      // 判斷行為類型
+      if (ipStats.sigIds.length > 0) {
+        ipStats.behavior = 'IPS 觸發';
+      } else if (ipStats.portScanAnalysis.isPortScan) {
+        ipStats.behavior = '端口掃描';
+      } else if (ipStats.ruleNames.some(r => r.toLowerCase().includes('cleanup'))) {
+        ipStats.behavior = 'Cleanup rule 命中';
+      } else if (ipStats.dropCount > 0 || ipStats.rejectCount > 0) {
+        ipStats.behavior = '連線被阻擋';
+      } else {
+        ipStats.behavior = '正常流量';
+      }
+      
+      // 移除原始日誌以節省記憶體
+      delete ipStats.logs;
+    });
+    
+    return stats;
+  }
+  
+  /**
+   * 取得 TOP N 攻擊者 IP（用於補充威脅類型資訊）
+   * @param {object} aggregatedStats - 聚合統計結果
+   * @param {number} limit - 返回數量限制
+   * @returns {array} TOP 攻擊者清單
+   */
+  getTopAttackers(aggregatedStats, limit = 5) {
+    // 過濾正常流量
+    let filteredIPs = Object.values(aggregatedStats).filter(stats => 
+      stats.classifications.KNOWN_ATTACK > 0 || 
+      stats.classifications.SCAN_SUSPICIOUS > 0
+    );
+    
+    // 計算風險分數並排序
+    return filteredIPs
+      .map(stats => {
+        let riskScore = 0;
+        
+        // 因素 1：被阻擋次數
+        riskScore += (stats.dropCount + stats.rejectCount) * 2;
+        
+        // 因素 2：IPS 告警
+        riskScore += stats.sigIds.length * 10;
+        riskScore += stats.threatSeverities.includes('High') ? 20 : 0;
+        riskScore += stats.threatSeverities.includes('Medium') ? 10 : 0;
+        
+        // 因素 3：端口掃描
+        if (stats.portScanAnalysis && stats.portScanAnalysis.isPortScan) {
+          riskScore += 15;
+          riskScore += (stats.portScanAnalysis.highRiskPortsHit?.length || 0) * 5;
+        }
+        
+        // 因素 4：來源區域
+        if (stats.securityZone === 'L3_untrust' || stats.inzone === 'External') {
+          riskScore += 10;
+        }
+        
+        // 因素 5：已知攻擊分類
+        if (stats.primaryClassification === 'KNOWN_ATTACK') {
+          riskScore += 25;
+        }
+        
+        return { ...stats, riskScore };
+      })
+      .sort((a, b) => b.riskScore - a.riskScore)
+      .slice(0, limit)
+      .map(stats => ({
+        ip: stats.ip,
+        country: stats.geoInfo.country,
+        eventCount: stats.totalEvents,
+        dropCount: stats.dropCount,
+        blockRate: `${stats.blockRate}%`,
+        behavior: stats.behavior,
+        targetPorts: stats.targetPorts.slice(0, 10),
+        isPortScan: stats.portScanAnalysis?.isPortScan || false,
+        scannedPorts: stats.portScanAnalysis?.uniquePortCount || 0,
+        highRiskPortsHit: stats.portScanAnalysis?.highRiskPortsHit || [],
+        riskScore: stats.riskScore
+      }));
+  }
+  
+  /**
+   * 過濾正常流量，只保留需要分析的事件
+   * @param {array} logEntries - 解析後的日誌陣列
+   * @returns {object} 過濾結果
+   */
+  filterNormalTraffic(logEntries) {
+    const suspicious = [];
+    const normal = [];
+    
+    logEntries.forEach(log => {
+      const classification = classifyEvent(log);
+      if (classification.classification === 'NORMAL_TRAFFIC') {
+        normal.push(log);
+      } else {
+        suspicious.push({ ...log, classification });
+      }
+    });
+    
+    return {
+      suspicious,
+      normal,
+      suspiciousCount: suspicious.length,
+      normalCount: normal.length,
+      totalCount: logEntries.length
+    };
+  }
+
   /**
    * 空結果
    */
@@ -1026,7 +1430,9 @@ ${JSON.stringify(analysisData, null, 2)}
       owaspAttacks: { totalOWASPAttacks: 0, topAttackTypes: [] },
       geoDistribution: [],
       topAssets: [],
-      analysisResults: []
+      analysisResults: [],
+      ipAggregatedStats: {},  // 新增
+      filteredStats: { suspiciousCount: 0, normalCount: 0, totalCount: 0 }  // 新增
     };
   }
 }

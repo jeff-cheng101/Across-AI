@@ -1455,6 +1455,68 @@ export default function CheckpointAIAnalysisPage() {
                             {assessment.aiInsight || `根據威脅情報分析，檢測到 ${assessment.openIssues} 次攻擊事件，共影響 ${assessment.affectedAssets} 個資產。建議立即採取防護措施並監控相關日誌。`}
                           </p>
                         </div>
+
+                        {/* 🆕 TOP 攻擊來源 IP 區塊 */}
+                        {assessment.topAttackers && assessment.topAttackers.length > 0 && (
+                          <div className="mt-4 p-4 bg-slate-800/50 border border-orange-500/30 rounded-lg">
+                            <div className="flex items-center gap-2 mb-3">
+                              <Globe className="w-5 h-5 text-orange-400" />
+                              <h4 className="text-white font-semibold">TOP 攻擊來源 IP</h4>
+                              <Badge variant="outline" className="ml-auto bg-orange-500/10 text-orange-400 border-orange-500/30 text-xs">
+                                {assessment.topAttackers.length} 個可疑來源
+                              </Badge>
+                            </div>
+                            <div className="space-y-2">
+                              {assessment.topAttackers.slice(0, 5).map((attacker: any, idx: number) => (
+                                <div 
+                                  key={idx} 
+                                  className="flex items-center justify-between p-3 bg-slate-900/50 rounded-lg border border-slate-700/50 hover:border-orange-500/30 transition-colors"
+                                >
+                                  <div className="flex items-center gap-3">
+                                    <span className="text-slate-500 text-sm font-mono w-6">{idx + 1}.</span>
+                                    <div>
+                                      <span className="text-white font-mono text-sm">{attacker.ip}</span>
+                                      <div className="flex items-center gap-2 mt-1">
+                                        <Badge variant="outline" className="text-xs bg-slate-700/50 text-slate-300 border-slate-600">
+                                          {attacker.country || 'Unknown'}
+                                        </Badge>
+                                        {attacker.isPortScan && (
+                                          <Badge variant="outline" className="text-xs bg-red-500/10 text-red-400 border-red-500/30">
+                                            端口掃描
+                                          </Badge>
+                                        )}
+                                      </div>
+                                    </div>
+                                  </div>
+                                  <div className="flex items-center gap-4 text-sm">
+                                    <div className="text-right">
+                                      <div className="text-slate-400">{attacker.eventCount} 次</div>
+                                      <div className="text-green-400 text-xs">阻擋率 {attacker.blockRate}</div>
+                                    </div>
+                                    <Badge className={`
+                                      ${attacker.behavior === 'IPS 觸發' ? 'bg-red-500/20 text-red-400 border-red-500/50' : 
+                                        attacker.behavior === '端口掃描' ? 'bg-orange-500/20 text-orange-400 border-orange-500/50' :
+                                        attacker.behavior === 'Cleanup rule 命中' ? 'bg-yellow-500/20 text-yellow-400 border-yellow-500/50' :
+                                        'bg-blue-500/20 text-blue-400 border-blue-500/50'}
+                                    `}>
+                                      {attacker.behavior}
+                                    </Badge>
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                            {/* 目標端口摘要 */}
+                            {assessment.topAttackers[0]?.targetPorts?.length > 0 && (
+                              <div className="mt-3 p-2 bg-slate-900/30 rounded text-xs text-slate-400">
+                                <span className="text-slate-500">常見目標端口：</span>
+                                <span className="ml-2 text-slate-300">
+                                  {[...new Set(assessment.topAttackers.flatMap((a: any) => a.targetPorts || []))].slice(0, 10).join(', ')}
+                                  {[...new Set(assessment.topAttackers.flatMap((a: any) => a.targetPorts || []))].length > 10 && '...'}
+                                </span>
+                              </div>
+                            )}
+                          </div>
+                        )}
                       </div>
                     ))}
                 </motion.div>
