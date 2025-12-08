@@ -73,7 +73,17 @@ export default function CheckpointAIAnalysisPage() {
   
   // 新增：時間範圍和分析資訊
   const [selectedTimeRange, setSelectedTimeRange] = useState('24h')
-  const [analysisMetadata, setAnalysisMetadata] = useState({
+  const [analysisMetadata, setAnalysisMetadata] = useState<{
+    totalEvents: number
+    timeRange: {
+      start: string
+      end: string
+      display?: { start: string; end: string }
+      actual?: { start: string; end: string }
+      hasLogs?: boolean
+    }
+    analysisTimestamp: string
+  }>({
     totalEvents: 0,
     timeRange: { start: '', end: '' },
     analysisTimestamp: ''
@@ -1528,7 +1538,7 @@ export default function CheckpointAIAnalysisPage() {
                               ))}
                             </div>
                             {/* 目標端口摘要 */}
-                            {assessment.topAttackers[0]?.targetPorts?.length > 0 && (
+                            {(assessment.topAttackers?.[0]?.targetPorts?.length ?? 0) > 0 && (
                               <div className="mt-3 p-2 bg-slate-900/30 rounded text-xs text-slate-400">
                                 <span className="text-slate-500">常見目標端口：</span>
                                 <span className="ml-2 text-slate-300">
