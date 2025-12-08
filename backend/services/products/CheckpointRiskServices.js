@@ -997,53 +997,60 @@ ${JSON.stringify(analysisData, null, 2)}
 
 請使用 JSON 格式輸出，**所有文字內容必須使用繁體中文**，必須包含以下結構：
 
+**⚠️ 重要：以下是格式範例，請根據實際數據填入具體數值，不要直接複製範例中的佔位符！**
+
 \`\`\`json
 {
   "risks": [
     {
       "id": "risk_001",
       "title": "威脅標題（繁體中文，從日誌中自動識別）",
-      "severity": "critical/high/medium/low",
-      "category": "BLOCKED_ATTACK/THREAT_PREVENTION/HIGH_RISK_APP/URI_ATTACK/URL_FILTERING/PORT_SCAN_DETECTED/CLEANUP_RULE_HIT",
-      "layer": "FIREWALL_ACTION/THREAT_PREVENTION/APP_RISK_ASSESSMENT/URI_UA_ANALYSIS/URL_FILTERING/BEHAVIOR_ANALYSIS",
+      "severity": "critical/high/medium/low（選擇其中一個）",
+      "category": "BLOCKED_ATTACK/THREAT_PREVENTION/HIGH_RISK_APP/URI_ATTACK/URL_FILTERING/PORT_SCAN_DETECTED/CLEANUP_RULE_HIT（選擇其中一個）",
+      "layer": "FIREWALL_ACTION/THREAT_PREVENTION/APP_RISK_ASSESSMENT/URI_UA_ANALYSIS/URL_FILTERING/BEHAVIOR_ANALYSIS（選擇其中一個）",
       "description": "威脅詳細描述（繁體中文）",
-      "affectedAssets": ["資產1", "資產2"],
-      "attackCount": 數量,
-      "openIssues": 未解決問題數,
-      "resolvedIssues": 已解決問題數,
+      "affectedAssets": 5,
+      "attackCount": 100,
+      "openIssues": 100,
+      "resolvedIssues": 0,
       "topAttackers": [
         {
-          "ip": "攻擊來源 IP",
-          "country": "國家",
-          "eventCount": 事件數,
-          "dropCount": 阻擋數,
-          "blockRate": "阻擋率百分比",
-          "behavior": "行為描述（如：端口掃描、Cleanup rule 命中、IPS 觸發）",
-          "targetPorts": [目標端口清單]
+          "ip": "實際的攻擊來源 IP",
+          "country": "實際的國家名稱",
+          "eventCount": 50,
+          "dropCount": 50,
+          "blockRate": "100%",
+          "behavior": "端口掃描/Cleanup rule 命中/IPS 觸發（選擇其中一個）",
+          "targetPorts": [443, 80, 22]
         }
       ],
       "aiInsight": "AI 深度洞察分析（繁體中文，必須包含具體數字、攻擊來源 IP 和 Check Point 專業術語）",
       "recommendations": [
         {
-          "priority": "high/medium/low",
+          "priority": "high/medium/low（選擇其中一個）",
           "title": "建議標題（繁體中文）",
           "description": "具體的 Check Point 操作建議（繁體中文，例如：在 SmartConsole 中設定...）"
         }
       ],
-      "createdDate": "建立日期",
-      "updatedDate": "更新日期"
+      "createdDate": "2025-12-08",
+      "updatedDate": "2025-12-08"
     }
   ],
   "summary": {
-    "totalRisks": 風險總數,
-    "criticalCount": 嚴重風險數,
-    "highCount": 高風險數,
-    "mediumCount": 中風險數,
-    "lowCount": 低風險數,
-    "uniqueAttackerIPs": 唯一攻擊者 IP 數
+    "totalRisks": 3,
+    "criticalCount": 1,
+    "highCount": 1,
+    "mediumCount": 1,
+    "lowCount": 0,
+    "uniqueAttackerIPs": 5
   }
 }
 \`\`\`
+
+**欄位說明：**
+- \`affectedAssets\`: **必須是數字**，表示受影響的網址/端點數量
+- \`openIssues\`: **必須是數字**，表示檢測到的事件次數
+- \`resolvedIssues\`: **必須是數字**，表示已阻擋的事件次數
 
 ### 【分析要點】
 
@@ -1060,8 +1067,8 @@ ${JSON.stringify(analysisData, null, 2)}
 
 如果上方有列出「VPN 用戶存取問題」，請**務必**在分析報告中：
 
-1. **獨立列出一個風險項目**，類別為 \`VPN_POLICY_ISSUE\`，嚴重程度為 \`medium\`
-2. **明確標示這不是攻擊**，設定 \`isAttack: false\`
+1. **獨立列出一個風險項目**，類別為 VPN_POLICY_ISSUE，嚴重程度為 medium
+2. **明確標示這不是攻擊**，設定 isAttack: false
 3. **列出所有受影響的 VPN 用戶**，包含：
    - 用戶名稱 (userName)
    - IP 地址
@@ -1072,26 +1079,32 @@ ${JSON.stringify(analysisData, null, 2)}
 5. **不要將 VPN 用戶 IP 列入攻擊者清單**
 
 VPN 策略問題的輸出格式範例：
+
+**⚠️ 重要：請根據實際的 VPN 用戶資料填入，不要使用佔位符！**
+
 \`\`\`json
 {
-  "id": "risk_xxx",
+  "id": "risk_006",
   "title": "⚠️ VPN 用戶存取被阻擋（需檢視策略）",
   "severity": "medium",
   "category": "VPN_POLICY_ISSUE",
   "layer": "POLICY_REVIEW",
   "isAttack": false,
+  "affectedAssets": 3,
+  "openIssues": 20,
+  "resolvedIssues": 0,
   "vpnUsers": [
     {
-      "userName": "用戶名稱",
-      "ip": "192.168.192.x",
+      "userName": "實際的用戶名稱（從 src_user_name 取得）",
+      "ip": "實際的 VPN IP",
       "securityZone": "L3_untrust",
       "blockedByRules": "Cleanup rule",
-      "dropCount": 數量
+      "dropCount": 20
     }
   ],
-  "aiInsight": "檢測到 X 個已認證的 VPN 用戶流量被阻擋...（包含用戶名稱、安全區域、阻擋規則）",
+  "aiInsight": "⚠️ **VPN 用戶存取問題警示**\n\n檢測到以下已認證的 VPN 用戶流量被防火牆阻擋：\n\n• 實際用戶名稱 (實際IP) - 被 \"Cleanup rule\" 阻擋 20 次，安全區域: L3_untrust\n\n**注意：這不是攻擊行為，而是策略配置問題。**",
   "recommendations": [
-    { "priority": "high", "title": "檢視 VPN 存取策略", "description": "..." }
+    { "priority": "high", "title": "檢視 VPN 存取策略", "description": "確認 VPN 用戶是否應該被允許存取目標資源" }
   ]
 }
 \`\`\`
@@ -1130,7 +1143,10 @@ VPN 策略問題的輸出格式範例：
         category: 'BLOCKED_ATTACK',
         layer: 'FIREWALL_ACTION',
         description: `防火牆檢測並封鎖了 ${blockedTraffic.totalBlocked} 筆威脅流量`,
-        affectedAssets: blockedTraffic.topBlockedApps?.slice(0, 5).map(app => app.appName) || [],
+        // 🆕 修正：affectedAssets 改為數字（唯一 IP 數量）
+        affectedAssets: blockedTraffic.topBlockedApps?.reduce((sum, app) => sum + (app.uniqueIPs || 0), 0) || 0,
+        // 保留原始的應用程式名稱列表供顯示
+        affectedAppNames: blockedTraffic.topBlockedApps?.slice(0, 5).map(app => app.appName) || [],
         attackCount: blockedTraffic.totalBlocked,
         openIssues: blockedTraffic.totalBlocked,
         resolvedIssues: 0,
@@ -1157,7 +1173,10 @@ VPN 策略問題的輸出格式範例：
         category: 'HIGH_RISK_APPLICATION',
         layer: 'APP_RISK_ASSESSMENT',
         description: `檢測到 ${highRiskApps.totalHighRiskEvents} 筆高風險應用程式（app_risk >= 4）活動`,
-        affectedAssets: highRiskApps.topHighRiskApps?.slice(0, 5).map(app => app.appName) || [],
+        // 🆕 修正：affectedAssets 改為數字（唯一 IP 數量）
+        affectedAssets: highRiskApps.topHighRiskApps?.reduce((sum, app) => sum + (app.uniqueIPs || 0), 0) || 0,
+        // 保留原始的應用程式名稱列表供顯示
+        affectedAppNames: highRiskApps.topHighRiskApps?.slice(0, 5).map(app => app.appName) || [],
         attackCount: highRiskApps.totalHighRiskEvents,
         openIssues: highRiskApps.totalHighRiskEvents,
         resolvedIssues: 0,
@@ -1187,6 +1206,8 @@ VPN 策略問題的輸出格式範例：
         attackCount: threatPrevention.totalThreatPreventionEvents,
         openIssues: threatPrevention.totalThreatPreventionEvents,
         resolvedIssues: 0,
+        // 🆕 受影響的網址數量
+        affectedAssets: threatPrevention.topThreats?.reduce((sum, t) => sum + (t.uniqueIPs || 0), 0) || 0,
         // 🆕 新增：TOP 攻擊者 IP（IPS 觸發的）
         topAttackers: attackersList.filter(a => a.behavior === 'IPS 觸發').slice(0, 5),
         aiInsight: 'Check Point Threat Prevention 檢測到多種威脅，需要立即調查。',
@@ -1216,6 +1237,10 @@ VPN 策略問題的輸出格式範例：
           attackCount: totalPortScanEvents,
           openIssues: totalPortScanEvents,
           resolvedIssues: 0,
+          // 🆕 受影響的網址數量（被掃描的目標數量）
+          affectedAssets: [...new Set(portScanIPs.flatMap(ip => ip.targetUrls || ip.targetIPs || []))].length || portScanIPs.length,
+          // 🆕 受影響網址清單（優先使用 domain 名稱）
+          affectedUrlList: [...new Set(portScanIPs.flatMap(ip => ip.targetUrls || ip.targetIPs || []))].slice(0, 10),
           // 🆕 TOP 攻擊者 IP
           topAttackers: portScanIPs.slice(0, 5).map(stats => ({
             ip: stats.ip,
@@ -1261,6 +1286,10 @@ VPN 策略問題的輸出格式範例：
           attackCount: totalCleanupEvents,
           openIssues: totalCleanupEvents,
           resolvedIssues: 0,
+          // 🆕 受影響的網址數量（被嘗試存取的目標數量）
+          affectedAssets: [...new Set(cleanupRuleIPs.flatMap(ip => ip.targetUrls || ip.targetIPs || []))].length || cleanupRuleIPs.length,
+          // 🆕 受影響網址清單（優先使用 domain 名稱）
+          affectedUrlList: [...new Set(cleanupRuleIPs.flatMap(ip => ip.targetUrls || ip.targetIPs || []))].slice(0, 10),
           // 🆕 TOP 攻擊者 IP（排除 VPN 用戶）
           topAttackers: cleanupRuleIPs.slice(0, 5).map(stats => ({
             ip: stats.ip,
@@ -1306,13 +1335,18 @@ VPN 策略問題的輸出格式範例：
           ruleNames: stats.ruleNames || [],
           blockedByRules: stats.ruleNames?.join(', ') || 'Unknown',
           targetPorts: stats.targetPorts?.slice(0, 10) || [],
-          targetIPs: stats.targetIPs?.slice(0, 5) || []
+          targetIPs: stats.targetIPs?.slice(0, 5) || [],
+          // 🆕 新增：目標網址（優先使用 domain 名稱）
+          targetUrls: stats.targetUrls?.slice(0, 5) || stats.targetIPs?.slice(0, 5) || []
         }));
         
         // 🆕 生成用戶清單摘要
         const userSummary = vpnUsersDetail.map(u => 
           `• ${u.userName} (${u.ip}) - 被 "${u.blockedByRules}" 阻擋 ${u.dropCount} 次，安全區域: ${u.securityZone}`
         ).join('\n');
+        
+        // 🆕 計算受影響的網址數量（優先使用 domain 名稱）
+        const affectedUrlsCount = [...new Set(vpnUsersDetail.flatMap(u => u.targetUrls || u.targetIPs || []))].length;
         
         risks.push({
           id: `risk_${String(riskId++).padStart(3, '0')}`,
@@ -1324,6 +1358,10 @@ VPN 策略問題的輸出格式範例：
           attackCount: totalVPNPolicyEvents,
           openIssues: totalVPNPolicyEvents,
           resolvedIssues: 0,
+          // 🆕 受影響的網址數量
+          affectedAssets: affectedUrlsCount || vpnPolicyIssueIPs.length,
+          // 🆕 受影響網址清單（優先使用 domain 名稱）
+          affectedUrlList: [...new Set(vpnUsersDetail.flatMap(u => u.targetUrls || u.targetIPs || []))].slice(0, 10),
           isAttack: false,  // 明確標記非攻擊
           
           // 🆕 VPN 用戶詳細清單
@@ -1385,6 +1423,8 @@ ${userSummary}
         attackCount: urlFiltering.totalURLFilteringViolations,
         openIssues: urlFiltering.totalURLFilteringViolations,
         resolvedIssues: 0,
+        // 🆕 受影響的網址數量
+        affectedAssets: urlFiltering.topCategories?.reduce((sum, cat) => sum + (cat.uniqueIPs || 0), 0) || 0,
         topAttackers: attackersList.slice(0, 5),
         aiInsight: '使用者嘗試訪問違反公司政策的網站類別。',
         recommendations: [
@@ -1409,6 +1449,8 @@ ${userSummary}
         attackCount: owaspAttacks.totalOWASPAttacks,
         openIssues: owaspAttacks.totalOWASPAttacks,
         resolvedIssues: 0,
+        // 🆕 受影響的網址數量
+        affectedAssets: owaspAttacks.topAttackTypes?.reduce((sum, type) => sum + (type.uniqueIPs || 0), 0) || 0,
         topAttackers: attackersList.slice(0, 5),
         aiInsight: '檢測到多種 OWASP TOP 10 攻擊模式，包括 SQL 注入、XSS、命令注入等。',
         recommendations: [
@@ -1461,6 +1503,7 @@ ${userSummary}
           acceptCount: 0,
           alertCount: 0,
           targetIPs: new Set(),
+          targetUrls: new Set(),  // 🆕 新增：收集目標網址（domain 名稱）
           targetPorts: new Set(),
           ruleNames: new Set(),
           geoInfo: {
@@ -1498,6 +1541,12 @@ ${userSummary}
       
       // 收集目標資訊
       if (log.dst_ip || log.dst) ipStats.targetIPs.add(log.dst_ip || log.dst);
+      // 🆕 收集目標網址（domain 名稱）- 優先使用 dst_machine_name
+      if (log.dst_machine_name) {
+        ipStats.targetUrls.add(log.dst_machine_name);
+      } else if (log.dst_ip || log.dst) {
+        ipStats.targetUrls.add(log.dst_ip || log.dst);  // 如果沒有 domain，使用 IP
+      }
       if (log.service || log.dst_port) ipStats.targetPorts.add(log.service || log.dst_port);
       
       // 收集規則名稱
@@ -1524,6 +1573,7 @@ ${userSummary}
     // 轉換 Set 為陣列，並計算衍生指標
     Object.values(stats).forEach(ipStats => {
       ipStats.targetIPs = Array.from(ipStats.targetIPs);
+      ipStats.targetUrls = Array.from(ipStats.targetUrls);  // 🆕 新增
       ipStats.targetPorts = Array.from(ipStats.targetPorts);
       ipStats.ruleNames = Array.from(ipStats.ruleNames);
       ipStats.sigIds = Array.from(ipStats.sigIds);
@@ -1667,6 +1717,8 @@ ${userSummary}
         blockedByRules: stats.ruleNames?.join(', ') || 'Unknown',
         targetPorts: stats.targetPorts?.slice(0, 10) || [],
         targetIPs: stats.targetIPs?.slice(0, 5) || [],
+        // 🆕 新增：目標網址（優先使用 domain 名稱）
+        targetUrls: stats.targetUrls?.slice(0, 5) || stats.targetIPs?.slice(0, 5) || [],
         isVPNUser: true,
         isAttack: false
       }));

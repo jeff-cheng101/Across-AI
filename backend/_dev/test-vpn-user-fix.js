@@ -323,4 +323,14 @@ console.log('  ✅ 被阻擋次數 (dropCount)');
 console.log('  ✅ 明確標示非攻擊 (isAttack: false)');
 console.log('  ✅ 嚴重程度為中等 (severity: medium)');
 console.log('  ✅ 策略檢視建議 (recommendations)');
+console.log('  ✅ 受影響網址數量 (affectedAssets: 數字類型)');
+
+console.log('\n');
+console.log('================================================================================');
+console.log('📋 UI 名詞修改總結');
+console.log('================================================================================');
+console.log('  ✅ Open Issues → 檢測次數');
+console.log('  ✅ Resolved → 已阻擋');
+console.log('  ✅ Affected Assets / 受影響資產 → 受影響網址');
+console.log('  ✅ affectedAssets 欄位改為數字類型（不再是陣列）');
 
