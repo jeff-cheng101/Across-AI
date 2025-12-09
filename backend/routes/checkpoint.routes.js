@@ -79,7 +79,7 @@ router.post('/analyze-risks', async (req, res) => {
     if (aiProvider === 'ollama') {
       // 使用 Ollama（增強版：支援超時和錯誤處理）
       const ollamaUrl = process.env.OLLAMA_URL || 'http://localhost:11434';
-      const ollamaModel = model || 'llama3.3:70b';
+      const ollamaModel = model || 'twister_llama33:latest';
       
       console.log(`🦙 Ollama URL: ${ollamaUrl}`);
       console.log(`🦙 Ollama 模型: ${ollamaModel}`);

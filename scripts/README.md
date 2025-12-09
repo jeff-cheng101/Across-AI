@@ -67,7 +67,7 @@ node scripts/collect-training-data.js \
   --product=cloudflare \
   --count=5 \
   --aiProvider=ollama \
-  --model=llama3.3:70b
+  --model=twister_llama33:latest
 ```
 
 ## 📋 命令列參數
@@ -118,7 +118,7 @@ node scripts/collect-training-data.js --product=f5 --count=10 --apiKey=YOUR_KEY
 node scripts/collect-training-data.js \
   --product=cloudflare \
   --aiProvider=ollama \
-  --model=llama3.3:70b \
+  --model=twister_llama33:latest \
   --count=10
 ```
 

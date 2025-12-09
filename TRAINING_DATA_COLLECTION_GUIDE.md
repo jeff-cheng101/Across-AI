@@ -56,7 +56,7 @@ node scripts/collect-training-data.js \
   --product=cloudflare \
   --count=5 \
   --aiProvider=ollama \
-  --model=llama3.3:70b
+  --model=twister_llama33:latest
 ```
 
 ### 步驟 3: 查看結果
@@ -111,7 +111,7 @@ node scripts/collect-training-data.js \
 node scripts/collect-training-data.js \
   --product=cloudflare \
   --aiProvider=ollama \
-  --model=llama3.3:70b \
+  --model=twister_llama33:latest \
   --count=10
 ```
 
@@ -147,7 +147,7 @@ node scripts/collect-training-data.js --product=f5 --count=20
 node scripts/collect-training-data.js --aiProvider=gemini --model=gemini-2.0-flash-exp
 
 # Ollama
-node scripts/collect-training-data.js --aiProvider=ollama --model=llama3.3:70b
+node scripts/collect-training-data.js --aiProvider=ollama --model=twister_llama33:latest
 ```
 
 ## 📊 訓練資料格式

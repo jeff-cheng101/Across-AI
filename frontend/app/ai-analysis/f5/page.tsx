@@ -188,7 +188,7 @@ export default function F5AIAnalysisPage() {
       const aiProvider = localStorage.getItem('aiProvider') || 'ollama'
       const apiKey = localStorage.getItem('geminiApiKey') || ''
       const aiModel = aiProvider === 'ollama' 
-        ? (localStorage.getItem('ollamaModel') || 'llama3.3:70b')
+        ? (localStorage.getItem('ollamaModel') || 'twister_llama33:latest')
         : 'gemini-2.0-flash-exp'
 
       console.log(`🤖 AI 提供者: ${aiProvider}`)

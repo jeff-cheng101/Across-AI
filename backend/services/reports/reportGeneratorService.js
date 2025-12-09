@@ -83,7 +83,7 @@ class ReportGeneratorService {
     if (provider === 'ollama') {
       // 使用 Ollama
       const ollamaUrl = process.env.OLLAMA_URL || 'http://localhost:11434';
-      const ollamaModel = model || 'llama3.3:70b';
+      const ollamaModel = model || 'twister_llama33:latest';
 
       console.log(`🦙 Ollama URL: ${ollamaUrl}`);
       console.log(`🦙 Ollama 模型: ${ollamaModel}`);

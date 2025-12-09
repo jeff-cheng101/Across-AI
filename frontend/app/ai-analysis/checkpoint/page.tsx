@@ -73,7 +73,17 @@ export default function CheckpointAIAnalysisPage() {
   
   // 新增：時間範圍和分析資訊
   const [selectedTimeRange, setSelectedTimeRange] = useState('24h')
-  const [analysisMetadata, setAnalysisMetadata] = useState({
+  const [analysisMetadata, setAnalysisMetadata] = useState<{
+    totalEvents: number
+    timeRange: {
+      start: string
+      end: string
+      display?: { start: string; end: string }
+      actual?: { start: string; end: string }
+      hasLogs?: boolean
+    }
+    analysisTimestamp: string
+  }>({
     totalEvents: 0,
     timeRange: { start: '', end: '' },
     analysisTimestamp: ''
@@ -121,7 +131,7 @@ export default function CheckpointAIAnalysisPage() {
       const aiProvider = localStorage.getItem('aiProvider') || 'ollama'
       const apiKey = localStorage.getItem('geminiApiKey') || process.env.NEXT_PUBLIC_GEMINI_API_KEY || ''
       const aiModel = aiProvider === 'ollama' 
-        ? (localStorage.getItem('ollamaModel') || 'llama3.3:70b')
+        ? (localStorage.getItem('ollamaModel') || 'twister_llama33:latest')
         : 'gemini-2.0-flash-exp'
 
       console.log(`🤖 AI 提供者: ${aiProvider}`)
@@ -829,8 +839,8 @@ export default function CheckpointAIAnalysisPage() {
           </Button>
         </div>
         <p className="text-slate-400">
-          基於 Checkpoint 安全數據的智能分析與建議 | 總計 {totalOpenIssues} 個開放問題，影響 {totalAffectedAssets}{" "}
-          個資產
+          基於 Checkpoint 安全數據的智能分析與建議 | 總計 {totalOpenIssues} 次檢測，影響 {totalAffectedAssets}{" "}
+          個網址
         </p>
         {error && (
           <div className="mt-2 p-3 bg-red-900/20 border border-red-500/50 rounded-lg text-red-400 text-sm">
@@ -1233,16 +1243,16 @@ export default function CheckpointAIAnalysisPage() {
                     </Badge>
                     <div className="text-3xl font-bold text-red-400">{categoryStats.high.count}</div>
                   </div>
-                  <div className="space-y-2 pt-3 border-t border-red-500/20">
-                    <div className="flex items-center justify-between text-sm">
-                      <span className="text-slate-400">開放問題</span>
-                      <span className="text-white font-semibold">{categoryStats.high.openIssues}</span>
+                    <div className="space-y-2 pt-3 border-t border-red-500/20">
+                      <div className="flex items-center justify-between text-sm">
+                        <span className="text-slate-400">檢測次數</span>
+                        <span className="text-white font-semibold">{categoryStats.high.openIssues}</span>
+                      </div>
+                      <div className="flex items-center justify-between text-sm">
+                        <span className="text-slate-400">受影響網址</span>
+                        <span className="text-white font-semibold">{categoryStats.high.affectedAssets}</span>
+                      </div>
                     </div>
-                    <div className="flex items-center justify-between text-sm">
-                      <span className="text-slate-400">受影響資產</span>
-                      <span className="text-white font-semibold">{categoryStats.high.affectedAssets}</span>
-                    </div>
-                  </div>
                   <div className="text-xs text-red-400/80 flex items-center gap-1">
                     <AlertTriangle className="w-3 h-3" />
                     需要立即處理
@@ -1273,16 +1283,16 @@ export default function CheckpointAIAnalysisPage() {
                     </Badge>
                     <div className="text-3xl font-bold text-yellow-400">{categoryStats.medium.count}</div>
                   </div>
-                  <div className="space-y-2 pt-3 border-t border-yellow-500/20">
-                    <div className="flex items-center justify-between text-sm">
-                      <span className="text-slate-400">開放問題</span>
-                      <span className="text-white font-semibold">{categoryStats.medium.openIssues}</span>
+                    <div className="space-y-2 pt-3 border-t border-yellow-500/20">
+                      <div className="flex items-center justify-between text-sm">
+                        <span className="text-slate-400">檢測次數</span>
+                        <span className="text-white font-semibold">{categoryStats.medium.openIssues}</span>
+                      </div>
+                      <div className="flex items-center justify-between text-sm">
+                        <span className="text-slate-400">受影響網址</span>
+                        <span className="text-white font-semibold">{categoryStats.medium.affectedAssets}</span>
+                      </div>
                     </div>
-                    <div className="flex items-center justify-between text-sm">
-                      <span className="text-slate-400">受影響資產</span>
-                      <span className="text-white font-semibold">{categoryStats.medium.affectedAssets}</span>
-                    </div>
-                  </div>
                   <div className="text-xs text-yellow-400/80 flex items-center gap-1">
                     <Clock className="w-3 h-3" />
                     建議盡快處理
@@ -1313,16 +1323,16 @@ export default function CheckpointAIAnalysisPage() {
                     </Badge>
                     <div className="text-3xl font-bold text-blue-400">{categoryStats.low.count}</div>
                   </div>
-                  <div className="space-y-2 pt-3 border-t border-blue-500/20">
-                    <div className="flex items-center justify-between text-sm">
-                      <span className="text-slate-400">開放問題</span>
-                      <span className="text-white font-semibold">{categoryStats.low.openIssues}</span>
+                    <div className="space-y-2 pt-3 border-t border-blue-500/20">
+                      <div className="flex items-center justify-between text-sm">
+                        <span className="text-slate-400">檢測次數</span>
+                        <span className="text-white font-semibold">{categoryStats.low.openIssues}</span>
+                      </div>
+                      <div className="flex items-center justify-between text-sm">
+                        <span className="text-slate-400">受影響網址</span>
+                        <span className="text-white font-semibold">{categoryStats.low.affectedAssets}</span>
+                      </div>
                     </div>
-                    <div className="flex items-center justify-between text-sm">
-                      <span className="text-slate-400">受影響資產</span>
-                      <span className="text-white font-semibold">{categoryStats.low.affectedAssets}</span>
-                    </div>
-                  </div>
                   <div className="text-xs text-blue-400/80 flex items-center gap-1">
                     <CheckCircle className="w-3 h-3" />
                     可排程處理
@@ -1353,9 +1363,9 @@ export default function CheckpointAIAnalysisPage() {
                       >
                         <div className="text-white font-medium mb-1 line-clamp-2">{risk.title}</div>
                         <div className="flex items-center gap-2 text-xs text-slate-400">
-                          <span>{risk.openIssues} 問題</span>
+                          <span>{risk.openIssues} 次檢測</span>
                           <span>•</span>
-                          <span>{risk.affectedAssets} 資產</span>
+                          <span>{risk.affectedAssets} 網址</span>
                         </div>
                       </div>
                     ))}
@@ -1433,28 +1443,112 @@ export default function CheckpointAIAnalysisPage() {
 
                         <div className="grid grid-cols-3 gap-4 pt-4 border-t border-white/10">
                           <div>
-                            <div className="text-xs text-slate-400 mb-1">Open Issues</div>
+                            <div className="text-xs text-slate-400 mb-1">檢測次數</div>
                             <div className="text-2xl font-bold text-white">{assessment.openIssues}</div>
                           </div>
                           <div>
-                            <div className="text-xs text-slate-400 mb-1">Resolved</div>
+                            <div className="text-xs text-slate-400 mb-1">已阻擋</div>
                             <div className="text-2xl font-bold text-green-400">{assessment.resolvedIssues}</div>
                           </div>
                           <div>
-                            <div className="text-xs text-slate-400 mb-1">Affected Assets</div>
+                            <div className="text-xs text-slate-400 mb-1">受影響網址</div>
                             <div className="text-2xl font-bold text-orange-400">{assessment.affectedAssets}</div>
                           </div>
                         </div>
+                        
+                        {/* 🆕 受影響網址清單 */}
+                        {assessment.affectedUrlList && assessment.affectedUrlList.length > 0 && (
+                          <div className="mt-4 p-3 bg-orange-900/20 border border-orange-500/30 rounded-lg">
+                            <div className="flex items-center gap-2 mb-2">
+                              <Globe className="w-4 h-4 text-orange-400" />
+                              <span className="text-sm text-orange-400 font-medium">受影響網址清單</span>
+                            </div>
+                            <div className="flex flex-wrap gap-2">
+                              {assessment.affectedUrlList.slice(0, 10).map((url: string, idx: number) => (
+                                <Badge key={idx} variant="outline" className="text-xs font-mono bg-slate-800/50 text-slate-300 border-slate-600">
+                                  {url}
+                                </Badge>
+                              ))}
+                              {assessment.affectedUrlList.length > 10 && (
+                                <Badge variant="outline" className="text-xs bg-orange-500/20 text-orange-400 border-orange-500/30">
+                                  +{assessment.affectedUrlList.length - 10} 更多
+                                </Badge>
+                              )}
+                            </div>
+                          </div>
+                        )}
 
                         <div className="mt-6 p-4 bg-cyan-900/20 border border-cyan-500/30 rounded-lg">
                           <div className="flex items-center gap-2 mb-3">
                             <Sparkles className="w-5 h-5 text-cyan-400" />
                             <h4 className="text-white font-semibold">AI 深度分析</h4>
                           </div>
-                          <p className="text-slate-300 leading-relaxed text-sm">
-                            {assessment.aiInsight || `根據威脅情報分析，檢測到 ${assessment.openIssues} 次攻擊事件，共影響 ${assessment.affectedAssets} 個資產。建議立即採取防護措施並監控相關日誌。`}
+                          <p className="text-slate-300 leading-relaxed text-sm whitespace-pre-wrap">
+                            {assessment.aiInsight || `根據威脅情報分析，檢測到 ${assessment.openIssues} 次攻擊事件，共影響 ${assessment.affectedAssets} 個網址。建議立即採取防護措施並監控相關日誌。`}
                           </p>
                         </div>
+
+                        {/* 🆕 TOP 攻擊來源 IP 區塊 */}
+                        {assessment.topAttackers && assessment.topAttackers.length > 0 && (
+                          <div className="mt-4 p-4 bg-slate-800/50 border border-orange-500/30 rounded-lg">
+                            <div className="flex items-center gap-2 mb-3">
+                              <Globe className="w-5 h-5 text-orange-400" />
+                              <h4 className="text-white font-semibold">TOP 攻擊來源 IP</h4>
+                              <Badge variant="outline" className="ml-auto bg-orange-500/10 text-orange-400 border-orange-500/30 text-xs">
+                                {assessment.topAttackers.length} 個可疑來源
+                              </Badge>
+                            </div>
+                            <div className="space-y-2">
+                              {assessment.topAttackers.slice(0, 5).map((attacker: any, idx: number) => (
+                                <div 
+                                  key={idx} 
+                                  className="flex items-center justify-between p-3 bg-slate-900/50 rounded-lg border border-slate-700/50 hover:border-orange-500/30 transition-colors"
+                                >
+                                  <div className="flex items-center gap-3">
+                                    <span className="text-slate-500 text-sm font-mono w-6">{idx + 1}.</span>
+                                    <div>
+                                      <span className="text-white font-mono text-sm">{attacker.ip}</span>
+                                      <div className="flex items-center gap-2 mt-1">
+                                        <Badge variant="outline" className="text-xs bg-slate-700/50 text-slate-300 border-slate-600">
+                                          {attacker.country || 'Unknown'}
+                                        </Badge>
+                                        {attacker.isPortScan && (
+                                          <Badge variant="outline" className="text-xs bg-red-500/10 text-red-400 border-red-500/30">
+                                            端口掃描
+                                          </Badge>
+                                        )}
+                                      </div>
+                                    </div>
+                                  </div>
+                                  <div className="flex items-center gap-4 text-sm">
+                                    <div className="text-right">
+                                      <div className="text-slate-400">{attacker.eventCount} 次</div>
+                                      <div className="text-green-400 text-xs">阻擋率 {attacker.blockRate}</div>
+                                    </div>
+                                    <Badge className={`
+                                      ${attacker.behavior === 'IPS 觸發' ? 'bg-red-500/20 text-red-400 border-red-500/50' : 
+                                        attacker.behavior === '端口掃描' ? 'bg-orange-500/20 text-orange-400 border-orange-500/50' :
+                                        attacker.behavior === 'Cleanup rule 命中' ? 'bg-yellow-500/20 text-yellow-400 border-yellow-500/50' :
+                                        'bg-blue-500/20 text-blue-400 border-blue-500/50'}
+                                    `}>
+                                      {attacker.behavior}
+                                    </Badge>
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                            {/* 目標端口摘要 */}
+                            {(assessment.topAttackers?.[0]?.targetPorts?.length ?? 0) > 0 && (
+                              <div className="mt-3 p-2 bg-slate-900/30 rounded text-xs text-slate-400">
+                                <span className="text-slate-500">常見目標端口：</span>
+                                <span className="ml-2 text-slate-300">
+                                  {[...new Set(assessment.topAttackers.flatMap((a: any) => a.targetPorts || []))].slice(0, 10).join(', ')}
+                                  {[...new Set(assessment.topAttackers.flatMap((a: any) => a.targetPorts || []))].length > 10 && '...'}
+                                </span>
+                              </div>
+                            )}
+                          </div>
+                        )}
                       </div>
                     ))}
                 </motion.div>

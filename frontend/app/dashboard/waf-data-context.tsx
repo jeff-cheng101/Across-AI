@@ -10,6 +10,7 @@ export interface WAFRiskData {
   openIssues: number
   resolvedIssues: number
   affectedAssets: number
+  affectedUrlList?: string[]  // 🆕 受影響網址清單
   tags: string[]
   description: string
   aiInsight?: string  // AI 深度分析（可選）
@@ -19,6 +20,16 @@ export interface WAFRiskData {
   internetExposed: boolean
   confirmedExploitable: boolean
   cveId?: string
+  // 🆕 TOP 攻擊者清單
+  topAttackers?: {
+    ip: string
+    country: string
+    eventCount: number
+    dropCount: number
+    blockRate: string
+    behavior: string
+    targetPorts?: number[]
+  }[]
   recommendations: {
     title: string
     description: string

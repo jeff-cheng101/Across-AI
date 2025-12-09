@@ -117,7 +117,7 @@ export default function CloudflareAIAnalysisPage() {
       const aiProvider = localStorage.getItem('aiProvider') || 'ollama'
       const apiKey = localStorage.getItem('geminiApiKey') || process.env.NEXT_PUBLIC_GEMINI_API_KEY || ''
       const aiModel = aiProvider === 'ollama' 
-        ? (localStorage.getItem('ollamaModel') || 'llama3.3:70b')
+        ? (localStorage.getItem('ollamaModel') || 'twister_llama33:latest')
         : 'gemini-2.0-flash-exp'
 
       console.log(`🤖 AI 提供者: ${aiProvider}`)
