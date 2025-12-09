@@ -3,16 +3,13 @@
 
 const express = require('express');
 const router = express.Router();
-const { GoogleGenerativeAI } = require('@google/generative-ai');
+const OpenAI = require('openai');
 const { elkMCPClient } = require('../services/elkMCPClient');
 const CloudflareWAFRiskService = require('../services/products/cloudflareWAFRiskService');
 const cloudflareELKConfig = require('../config/products/cloudflare/cloudflareELKConfig');
-const {
-	generateOpenAIRequestBody,
-	parseOpenAIResponse,
-} = require('../utils/openaiHelper');
 
 const { LLM_API_KEY, LLM_PROVIDER, LLM_SERVICE_URL, LLM_MODEL } = process.env;
+
 // 測試 Cloudflare ELK 連接
 router.get('/test-connection', async (_, res) => {
 	try {
@@ -41,32 +38,15 @@ router.get('/test-connection', async (_, res) => {
 // Cloudflare WAF 風險分析 API（主要端點）
 router.post('/analyze-waf-risks', async (req, res) => {
 	try {
-		// 從環境變數決定 AI 提供者，不再從請求參數讀取
-		const llmProvider = LLM_PROVIDER;
+		const { timeRange = '24h', model = LLM_MODEL || 'gemini-2.0-flash-exp' } =
+			req.body;
 
-		// 根據 AI 提供者設定預設模型
-		const DEFAULT_MODELS = {
-			ollama: 'llama3.3:70b',
-			vllm: 'meta-llama/Meta-Llama-3-70B-Instruct',
-			gemini: 'gemini-2.0-flash-exp',
-		};
-
-		const defaultModel = DEFAULT_MODELS[llmProvider] || DEFAULT_MODELS.gemini;
-
-		const { model = defaultModel, timeRange = '24h' } = req.body;
-
-		// 如果使用 Gemini，需要 API Key
-		if (llmProvider === 'gemini' && !LLM_API_KEY) {
-			return res.status(400).json({
-				error: '請在 .env 中設定 GEMINI_API_KEY',
-				product: 'Cloudflare',
-				hint: '或設定 AI_PROVIDER=ollama 使用 Ollama',
-			});
-		}
+		// 從環境變數取得 LLM 配置
+		const provider = LLM_PROVIDER || 'Gemini';
 
 		console.log(`\n🔍 ===== 開始 Cloudflare WAF 風險分析 API =====`);
 		console.log(`📅 時間範圍: ${timeRange}`);
-		console.log(`🤖 AI 提供者: ${llmProvider}`);
+		console.log(`🤖 AI 提供者: ${provider}`);
 		console.log(`🤖 AI 模型: ${model}`);
 		console.log(`📊 索引: ${cloudflareELKConfig.index}`);
 
@@ -84,36 +64,28 @@ router.post('/analyze-waf-risks', async (req, res) => {
 		const aiPrompt = wafService.generateAIPrompt(analysisData);
 		console.log(`✅ Prompt 長度: ${aiPrompt.length} 字元`);
 
-		// Step 4: 呼叫 AI 進行分析（支援 Gemini 和 Ollama）
-		console.log(
-			`\n⭐ Step 3: 呼叫 ${
-				llmProvider === 'ollama'
-					? 'Ollama'
-					: llmProvider === 'vllm'
-						? 'vLLM'
-						: 'Gemini'
-			} AI 分析...`,
-		);
+		// 檢查 Prompt 長度（警告但不阻止）
+		if (aiPrompt.length > 50000) {
+			console.warn(
+				`⚠️ Prompt 非常長 (${aiPrompt.length} 字元)，可能需要較長處理時間`,
+			);
+		}
 
-		let responseText;
+		// Step 4: 使用統一的 OpenAI API 呼叫 AI 進行分析
+		console.log(`\n⭐ Step 3: 呼叫 ${provider} AI 分析...`);
+		console.log(`🔗 API URL: ${LLM_SERVICE_URL}`);
+		console.log(`📏 Prompt 長度: ${aiPrompt.length} 字元`);
 
-		if (llmProvider === 'ollama') {
-			// 使用 Ollama（增強版：支援超時和錯誤處理
-			const ollamaUrl = LLM_SERVICE_URL || 'http://localhost:11434';
-			const ollamaModel = model || 'llama3.3:70b';
+		let responseText = '';
 
-			console.log(`🦙 Ollama URL: ${ollamaUrl}`);
-			console.log(`🦙 Ollama 模型: ${ollamaModel}`);
-			console.log(`📏 Prompt 長度: ${aiPrompt.length} 字元`);
+		/** @type {import("openai").default} */
+		const openai = new OpenAI({
+			baseURL: LLM_SERVICE_URL,
+			apiKey: LLM_API_KEY,
+		});
 
-			// 檢查 Prompt 長度（警告但不阻止）
-			if (aiPrompt.length > 50000) {
-				console.warn(
-					`⚠️ Prompt 非常長 (${aiPrompt.length} 字元)，可能需要較長處理時間`,
-				);
-			}
-
-			// 設定超時控制器（5 分鐘超時）
+		// 針對 Ollama 設定 5 分鐘超時
+		if (provider === 'Ollama') {
 			const controller = new AbortController();
 			const timeoutId = setTimeout(() => {
 				controller.abort();
@@ -124,62 +96,48 @@ router.post('/analyze-waf-risks', async (req, res) => {
 				const startTime = Date.now();
 				console.log('⏱️ 開始呼叫 Ollama API...');
 
-				const ollamaResponse = await fetch(`${ollamaUrl}/api/generate`, {
-					method: 'POST',
-					headers: {
-						'Content-Type': 'application/json',
+				const completion = await openai.chat.completions.create(
+					{
+						model: model,
+						messages: [
+							{
+								role: 'system',
+								content:
+									'你是個資安專家，專精於分析 Cloudflare WAF 日誌和威脅識別。請根據提供的日誌資料，分析潛在的安全風險。',
+							},
+							{
+								role: 'user',
+								content: aiPrompt,
+							},
+						],
+						response_format: { type: 'json_object' },
+						temperature: 0.7,
+						num_predict: 8192,
+						num_ctx: 8192,
+						top_k: 40,
+						top_p: 0.9,
+						repeat_penalty: 1.1,
 					},
-					body: JSON.stringify({
-						model: ollamaModel,
-						prompt: aiPrompt,
-						stream: false,
-						options: {
-							temperature: 0.7,
-							num_predict: 8192, // 增加到 8192 tokens
-							num_ctx: 8192, // 增加 context window
-							top_k: 40,
-							top_p: 0.9,
-							repeat_penalty: 1.1,
-						},
-					}),
-					signal: controller.signal,
-				});
+					{ signal: controller.signal },
+				);
 
 				clearTimeout(timeoutId);
 				const elapsedTime = ((Date.now() - startTime) / 1000).toFixed(2);
 				console.log(`⏱️ Ollama API 回應時間: ${elapsedTime} 秒`);
 
-				if (!ollamaResponse.ok) {
-					// 獲取詳細錯誤訊息
-					let errorDetails = '';
-					try {
-						const errorData = await ollamaResponse.json();
-						errorDetails = errorData.error || JSON.stringify(errorData);
-					} catch (_e) {
-						errorDetails = await ollamaResponse.text();
-					}
+				responseText = completion.choices[0]?.message?.content || '';
 
-					console.error(`❌ Ollama API 錯誤詳情: ${errorDetails}`);
-					throw new Error(
-						`Ollama API 錯誤 (${ollamaResponse.status}): ${errorDetails}`,
-					);
-				}
-
-				const ollamaData = await ollamaResponse.json();
-				responseText = ollamaData.response;
-				console.log(`✅ Ollama 回應長度: ${responseText.length} 字元`);
-
-				// 檢查回應是否為空
 				if (!responseText || responseText.trim().length === 0) {
 					console.warn('⚠️ Ollama 返回空回應，使用 Fallback');
 					throw new Error('Ollama 返回空回應');
 				}
+
+				console.log(`✅ Ollama 回應長度: ${responseText.length} 字元`);
 			} catch (fetchError) {
 				clearTimeout(timeoutId);
 
 				if (fetchError.name === 'AbortError') {
 					console.error('❌ Ollama 請求超時（5 分鐘），使用 Fallback 資料');
-					// 超時時使用 fallback
 					const aiAnalysisFallback =
 						wafService.generateFallbackRisks(analysisData);
 					return res.json({
@@ -199,66 +157,45 @@ router.post('/analyze-waf-risks', async (req, res) => {
 
 				throw fetchError;
 			}
-		} else if (llmProvider === 'vllm') {
-			// 使用 vLLM (OpenAI Compatible)
-			const vllmUrl =
-				LLM_SERVICE_URL || 'http://localhost:8000/v1/chat/completions';
-
-			console.log(`🚀 vLLM URL: ${vllmUrl}`);
-			console.log(`🚀 vLLM 模型: ${LLM_MODEL}`);
-			console.log(`📏 Prompt 長度: ${aiPrompt.length} 字元`);
-
+		} else {
+			// 其他 provider（Gemini、vLLM 等）
 			try {
 				const startTime = Date.now();
-				console.log('⏱️ 開始呼叫 vLLM API...');
+				console.log(`⏱️ 開始呼叫 ${provider} API...`);
 
-				const requestBody = generateOpenAIRequestBody({
-					model: LLM_MODEL,
-					systemPrompt:
-						'你是個資安專家，專精於分析 Cloudflare WAF 日誌和威脅識別。請根據提供的日誌資料，分析潛在的安全風險。',
-					userPrompt: aiPrompt,
-					options: {
-						temperature: 0.2,
-						max_tokens: 8192,
-					},
-				});
-
-				const vllmResponse = await fetch(vllmUrl, {
-					method: 'POST',
-					headers: {
-						'Content-Type': 'application/json',
-						Authorization: 'Bearer EMPTY',
-					},
-					body: JSON.stringify(requestBody),
+				const completion = await openai.chat.completions.create({
+					model: model,
+					messages: [
+						{
+							role: 'system',
+							content:
+								'你是個資安專家，專精於分析 Cloudflare WAF 日誌和威脅識別。請根據提供的日誌資料，分析潛在的安全風險。',
+						},
+						{
+							role: 'user',
+							content: aiPrompt,
+						},
+					],
+					response_format: { type: 'json_object' },
+					temperature: 0.7,
+					max_tokens: 8192,
 				});
 
 				const elapsedTime = ((Date.now() - startTime) / 1000).toFixed(2);
-				console.log(`⏱️ vLLM API 回應時間: ${elapsedTime} 秒`);
+				console.log(`⏱️ ${provider} API 回應時間: ${elapsedTime} 秒`);
 
-				if (!vllmResponse.ok) {
-					const errorText = await vllmResponse.text();
-					console.error(
-						`❌ vLLM API 錯誤: ${vllmResponse.status} - ${errorText}`,
-					);
-					throw new Error(`vLLM API Error: ${vllmResponse.status}`);
+				responseText = completion.choices[0]?.message?.content || '';
+
+				if (!responseText || responseText.trim().length === 0) {
+					console.warn(`⚠️ ${provider} 返回空回應，使用 Fallback`);
+					throw new Error(`${provider} 返回空回應`);
 				}
 
-				const responseData = await vllmResponse.json();
-				responseText = parseOpenAIResponse(responseData);
-				console.log(`✅ vLLM 回應長度: ${responseText.length} 字元`);
-			} catch (error) {
-				console.error('❌ vLLM 呼叫失敗:', error);
-				throw error;
+				console.log(`✅ ${provider} 回應長度: ${responseText.length} 字元`);
+			} catch (apiError) {
+				console.error(`❌ ${provider} API 呼叫失敗:`, apiError.message);
+				throw apiError;
 			}
-		} else {
-			// 使用 Gemini
-			const genAI = new GoogleGenerativeAI(LLM_API_KEY);
-			const geminiModel = genAI.getGenerativeModel({
-				model: model || 'gemini-2.0-flash-exp',
-			});
-			const result = await geminiModel.generateContent(aiPrompt);
-			responseText = result.response.text();
-			console.log(`✅ Gemini 回應長度: ${responseText.length} 字元`);
 		}
 
 		// Step 5: 解析 AI 回應（JSON 格式）
@@ -305,8 +242,8 @@ router.post('/analyze-waf-risks', async (req, res) => {
 			metadata: {
 				totalEvents: analysisData.totalEvents,
 				timeRange: analysisData.timeRange,
-				aiProvider: llmProvider,
-				model,
+				aiProvider: provider,
+				model: model,
 				analysisTimestamp: new Date().toISOString(),
 			},
 		});
