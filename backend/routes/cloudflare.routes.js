@@ -102,7 +102,8 @@ router.post('/analyze-waf-risks', async (req, res) => {
     }, 300000); // 5 分鐘
 
     try {
-      console.time(`⏱️ 開始呼叫 ${provider} API...`);
+      const timerLabel = `⏱️ ${provider} API 回應時間`;
+      console.time(timerLabel);
 
       const completion = await openai.chat.completions.create(
         {
@@ -124,7 +125,7 @@ router.post('/analyze-waf-risks', async (req, res) => {
       );
 
       clearTimeout(timeoutId);
-      console.timeEnd(`⏱️ ${provider} API 回應時間`);
+      console.timeEnd(timerLabel);
 
       responseText = completion.choices[0]?.message?.content || '';
 
