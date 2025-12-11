@@ -38,11 +38,21 @@ router.get('/test-connection', async (_, res) => {
 // Cloudflare WAF 風險分析 API（主要端點）
 router.post('/analyze-waf-risks', async (req, res) => {
   try {
-    const { timeRange = '24h', model = LLM_MODEL || 'gemini-2.0-flash-exp' } =
-      req.body;
+    const { timeRange = '24h' } = req.body;
 
     // 從環境變數取得 LLM 配置
+    const model = LLM_MODEL || 'gemini-2.0-flash-exp';
     const provider = LLM_PROVIDER || 'Gemini';
+    const apiKey = LLM_API_KEY;
+    const serviceUrl = LLM_SERVICE_URL;
+
+    // 驗證必要配置
+    if (!serviceUrl) {
+      return res.status(400).json({
+        error: '請先設定 LLM Service URL',
+        product: 'Cloudflare',
+      });
+    }
 
     console.log(`\n🔍 ===== 開始 Cloudflare WAF 風險分析 API =====`);
     console.log(`📅 時間範圍: ${timeRange}`);
@@ -73,97 +83,30 @@ router.post('/analyze-waf-risks', async (req, res) => {
 
     // Step 4: 使用統一的 OpenAI API 呼叫 AI 進行分析
     console.log(`\n⭐ Step 3: 呼叫 ${provider} AI 分析...`);
-    console.log(`🔗 API URL: ${LLM_SERVICE_URL}`);
+    console.log(`🔗 API URL: ${serviceUrl}`);
     console.log(`📏 Prompt 長度: ${aiPrompt.length} 字元`);
 
     let responseText = '';
 
     /** @type {import("openai").default} */
     const openai = new OpenAI({
-      baseURL: LLM_SERVICE_URL,
-      apiKey: LLM_API_KEY,
+      baseURL: serviceUrl,
+      apiKey: apiKey,
     });
 
-    // 針對 Ollama 設定 5 分鐘超時
-    if (provider === 'Ollama') {
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => {
-        controller.abort();
-        console.error('❌ Ollama 請求超時（5 分鐘）');
-      }, 300000); // 5 分鐘
+    // 為所有 LLM 服務設定 5 分鐘超時
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => {
+      controller.abort();
+      console.error(`❌ ${provider} 請求超時（5 分鐘）`);
+    }, 300000); // 5 分鐘
 
-      try {
-        const startTime = Date.now();
-        console.log('⏱️ 開始呼叫 Ollama API...');
+    try {
+      const timerLabel = `⏱️ ${provider} API 回應時間`;
+      console.time(timerLabel);
 
-        const completion = await openai.chat.completions.create(
-          {
-            model: model,
-            messages: [
-              {
-                role: 'system',
-                content:
-                  '你是個資安專家，專精於分析 Cloudflare WAF 日誌和威脅識別。請根據提供的日誌資料，分析潛在的安全風險。',
-              },
-              {
-                role: 'user',
-                content: aiPrompt,
-              },
-            ],
-            response_format: { type: 'json_object' },
-            temperature: 0.7,
-            num_predict: 8192,
-            num_ctx: 8192,
-            top_k: 40,
-            top_p: 0.9,
-            repeat_penalty: 1.1,
-          },
-          { signal: controller.signal },
-        );
-
-        clearTimeout(timeoutId);
-        const elapsedTime = ((Date.now() - startTime) / 1000).toFixed(2);
-        console.log(`⏱️ Ollama API 回應時間: ${elapsedTime} 秒`);
-
-        responseText = completion.choices[0]?.message?.content || '';
-
-        if (!responseText || responseText.trim().length === 0) {
-          console.warn('⚠️ Ollama 返回空回應，使用 Fallback');
-          throw new Error('Ollama 返回空回應');
-        }
-
-        console.log(`✅ Ollama 回應長度: ${responseText.length} 字元`);
-      } catch (fetchError) {
-        clearTimeout(timeoutId);
-
-        if (fetchError.name === 'AbortError') {
-          console.error('❌ Ollama 請求超時（5 分鐘），使用 Fallback 資料');
-          const aiAnalysisFallback =
-            wafService.generateFallbackRisks(analysisData);
-          return res.json({
-            success: true,
-            product: 'Cloudflare',
-            risks: aiAnalysisFallback.risks || [],
-            metadata: {
-              totalEvents: analysisData.totalEvents,
-              timeRange: analysisData.timeRange,
-              aiProvider: 'fallback',
-              model: 'N/A',
-              analysisTimestamp: new Date().toISOString(),
-              note: 'AI 分析超時，使用預設風險資料',
-            },
-          });
-        }
-
-        throw fetchError;
-      }
-    } else {
-      // 其他 provider（Gemini、vLLM 等）
-      try {
-        const startTime = Date.now();
-        console.log(`⏱️ 開始呼叫 ${provider} API...`);
-
-        const completion = await openai.chat.completions.create({
+      const completion = await openai.chat.completions.create(
+        {
           model: model,
           messages: [
             {
@@ -177,25 +120,45 @@ router.post('/analyze-waf-risks', async (req, res) => {
             },
           ],
           response_format: { type: 'json_object' },
-          temperature: 0.7,
-          max_tokens: 8192,
-        });
+        },
+        { signal: controller.signal },
+      );
 
-        const elapsedTime = ((Date.now() - startTime) / 1000).toFixed(2);
-        console.log(`⏱️ ${provider} API 回應時間: ${elapsedTime} 秒`);
+      clearTimeout(timeoutId);
+      console.timeEnd(timerLabel);
 
-        responseText = completion.choices[0]?.message?.content || '';
+      responseText = completion.choices[0]?.message?.content || '';
 
-        if (!responseText || responseText.trim().length === 0) {
-          console.warn(`⚠️ ${provider} 返回空回應，使用 Fallback`);
-          throw new Error(`${provider} 返回空回應`);
-        }
-
-        console.log(`✅ ${provider} 回應長度: ${responseText.length} 字元`);
-      } catch (apiError) {
-        console.error(`❌ ${provider} API 呼叫失敗:`, apiError.message);
-        throw apiError;
+      if (!responseText || responseText.trim().length === 0) {
+        console.warn(`⚠️ ${provider} 返回空回應，使用 Fallback`);
+        throw new Error(`${provider} 返回空回應`);
       }
+
+      console.log(`✅ ${provider} 回應長度: ${responseText.length} 字元`);
+    } catch (apiError) {
+      clearTimeout(timeoutId);
+
+      if (apiError.name === 'AbortError') {
+        console.error(`❌ ${provider} 請求超時（5 分鐘），使用 Fallback 資料`);
+        const aiAnalysisFallback =
+          wafService.generateFallbackRisks(analysisData);
+        return res.json({
+          success: true,
+          product: 'Cloudflare',
+          risks: aiAnalysisFallback.risks || [],
+          metadata: {
+            totalEvents: analysisData.totalEvents,
+            timeRange: analysisData.timeRange,
+            aiProvider: 'fallback',
+            model: 'N/A',
+            analysisTimestamp: new Date().toISOString(),
+            note: 'AI 分析超時，使用預設風險資料',
+          },
+        });
+      }
+
+      console.error(`❌ ${provider} API 呼叫失敗:`, apiError.message);
+      throw apiError;
     }
 
     // Step 5: 解析 AI 回應（JSON 格式）
