@@ -7,6 +7,7 @@ const OpenAI = require('openai');
 const { elkMCPClient } = require('../services/elkMCPClient');
 const CheckpointRiskServices = require('../services/products/CheckpointRiskServices');
 const checkpointELKConfig = require('../config/products/checkpoint/checkpointELKConfig');
+const { logOpenAICompatibleRequest, logOpenAICompatibleResponse } = require('../utils/ollamaLogger');
 
 const { LLM_API_KEY, LLM_PROVIDER, LLM_SERVICE_URL, LLM_MODEL } = process.env;
 
@@ -116,32 +117,42 @@ router.post('/analyze-risks', async (req, res) => {
     }, 300000); // 5 分鐘
 
     try {
-      const timerLabel = `⏱️ ${provider} API 回應時間`;
-      console.time(timerLabel);
+      const startTime = Date.now();
+      console.log(`⏱️ 開始呼叫 ${provider} API...`);
+
+      // 構建請求參數
+      const requestParams = {
+        model: model,
+        messages: [
+          {
+            role: 'system',
+            content:
+              '你是個資安專家，專精於分析 Check Point 防火牆日誌和威脅識別。請根據提供的日誌資料，分析潛在的安全風險。',
+          },
+          {
+            role: 'user',
+            content: aiPrompt,
+          },
+        ],
+        response_format: { type: 'json_object' },
+        temperature: 0.7,
+        max_tokens: 8192,
+      };
+
+      // 📤 記錄完整請求訊息
+      logOpenAICompatibleRequest(serviceUrl, requestParams);
 
       const completion = await openai.chat.completions.create(
-        {
-          model: model,
-          messages: [
-            {
-              role: 'system',
-              content:
-                '你是個資安專家，專精於分析 Check Point 防火牆日誌和威脅識別。請根據提供的日誌資料，分析潛在的安全風險。',
-            },
-            {
-              role: 'user',
-              content: aiPrompt,
-            },
-          ],
-          response_format: { type: 'json_object' },
-          temperature: 0.7,
-          max_tokens: 8192,
-        },
+        requestParams,
         { signal: controller.signal },
       );
 
       clearTimeout(timeoutId);
-      console.timeEnd(timerLabel);
+      const elapsedTime = ((Date.now() - startTime) / 1000).toFixed(2);
+      console.log(`⏱️ ${provider} API 回應時間: ${elapsedTime} 秒`);
+
+      // 📥 記錄完整回應訊息
+      logOpenAICompatibleResponse(completion, elapsedTime);
 
       responseText = completion.choices[0]?.message?.content || '';
 

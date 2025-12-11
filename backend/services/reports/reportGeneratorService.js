@@ -4,6 +4,7 @@
 const fs = require('fs');
 const path = require('path');
 const { GoogleGenerativeAI } = require('@google/generative-ai');
+const { logOllamaRequest, logOllamaResponse } = require('../../utils/ollamaLogger');
 
 class ReportGeneratorService {
   constructor() {
@@ -98,21 +99,27 @@ class ReportGeneratorService {
         const startTime = Date.now();
         console.log('⏱️ 開始呼叫 Ollama API...');
 
+        // 構建請求 body
+        const requestBody = {
+          model: ollamaModel,
+          prompt: prompt,
+          stream: false,
+          options: {
+            temperature: 0.3,  // 報告生成使用較低溫度以確保一致性
+            num_predict: 16384,
+            num_ctx: 16384,
+            top_k: 40,
+            top_p: 0.9
+          }
+        };
+
+        // 📤 記錄完整請求訊息
+        logOllamaRequest(`${ollamaUrl}/api/generate`, requestBody);
+
         const ollamaResponse = await fetch(`${ollamaUrl}/api/generate`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            model: ollamaModel,
-            prompt: prompt,
-            stream: false,
-            options: {
-              temperature: 0.3,  // 報告生成使用較低溫度以確保一致性
-              num_predict: 16384,
-              num_ctx: 16384,
-              top_k: 40,
-              top_p: 0.9
-            }
-          }),
+          body: JSON.stringify(requestBody),
           signal: controller.signal
         });
 
@@ -120,18 +127,25 @@ class ReportGeneratorService {
         const elapsedTime = ((Date.now() - startTime) / 1000).toFixed(2);
         console.log(`⏱️ Ollama API 回應時間: ${elapsedTime} 秒`);
 
+        // 先讀取回應文本（只能讀取一次）
+        const responseText_raw = await ollamaResponse.text();
+        
         if (!ollamaResponse.ok) {
-          let errorDetails = '';
+          let errorDetails = responseText_raw;
           try {
-            const errorData = await ollamaResponse.json();
+            const errorData = JSON.parse(responseText_raw);
             errorDetails = errorData.error || JSON.stringify(errorData);
           } catch (e) {
-            errorDetails = await ollamaResponse.text();
+            // 已經是文本了，直接使用
           }
           throw new Error(`Ollama API 錯誤 (${ollamaResponse.status}): ${errorDetails}`);
         }
 
-        const ollamaData = await ollamaResponse.json();
+        const ollamaData = JSON.parse(responseText_raw);
+
+        // 📥 記錄完整回應訊息
+        logOllamaResponse(ollamaData, elapsedTime);
+
         responseText = ollamaData.response;
         console.log(`✅ Ollama 回應長度: ${responseText.length} 字元`);
 

@@ -4,6 +4,7 @@
 const express = require('express');
 const router = express.Router();
 const { GoogleGenerativeAI } = require('@google/generative-ai');
+const { logOllamaRequest, logOllamaResponse } = require('../utils/ollamaLogger');
 
 // 獲取可用的 AI 模型列表
 router.get('/models', (_req, res) => {
@@ -52,29 +53,45 @@ router.post('/test-ai', async (req, res) => {
         });
       }
       
+      // 構建請求 body
+      const requestBody = {
+        model,
+        prompt: testPrompt,
+        stream: false,
+        options: {
+          temperature: 0.7,
+          num_predict: 100
+        }
+      };
+
+      // 📤 記錄完整請求訊息
+      logOllamaRequest(`${ollamaUrl}/api/generate`, requestBody);
+
+      const startTime = Date.now();
+
       // 執行測試生成
       const ollamaResponse = await fetch(`${ollamaUrl}/api/generate`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({
-          model,
-          prompt: testPrompt,
-          stream: false,
-          options: {
-            temperature: 0.7,
-            num_predict: 100
-          }
-        })
+        body: JSON.stringify(requestBody)
       });
+
+      const elapsedTime = ((Date.now() - startTime) / 1000).toFixed(2);
+      
+      // 先讀取回應文本（只能讀取一次）
+      const responseText_raw = await ollamaResponse.text();
       
       if (!ollamaResponse.ok) {
-        const errorText = await ollamaResponse.text();
-        throw new Error(`Ollama API 錯誤 (${ollamaResponse.status}): ${errorText}`);
+        throw new Error(`Ollama API 錯誤 (${ollamaResponse.status}): ${responseText_raw}`);
       }
       
-      const ollamaData = await ollamaResponse.json();
+      const ollamaData = JSON.parse(responseText_raw);
+
+      // 📥 記錄完整回應訊息
+      logOllamaResponse(ollamaData, elapsedTime);
+
       responseText = ollamaData.response;
       
       console.log(`✅ Ollama 回應: ${responseText.substring(0, 100)}...`);
