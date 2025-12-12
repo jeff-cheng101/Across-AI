@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from "react"
 import { motion, AnimatePresence } from "framer-motion"
-import { Shield, TrendingUp, AlertTriangle, CheckCircle, XCircle, Globe, Clock, Sparkles, Calendar, Activity, RefreshCw, CalendarIcon, Loader2, ChevronDown, ChevronUp, FileText, ExternalLink, Download } from "lucide-react"
+import { Shield, TrendingUp, AlertTriangle, CheckCircle, XCircle, Globe, Clock, Sparkles, Calendar, Activity, RefreshCw, CalendarIcon, Loader2, ChevronDown, ChevronUp, FileText, ExternalLink, Download, Ban, ShieldCheck } from "lucide-react"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
@@ -12,6 +12,17 @@ import { useWAFData } from "@/app/dashboard/waf-data-context"
 import { useToast } from "@/hooks/use-toast"
 import { saveActionRecord, type ActionRecord } from "@/lib/action-records"
 import { ReportDownloadDialog } from "@/components/report-download-dialog"
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog"
+import { Label } from "@/components/ui/label"
+import authenticator from "@/app/util/authenticator"
+import request from "@/app/routes/request"
 
 // API 基礎 URL - 從環境變數讀取，預設為 localhost
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:8081'
@@ -53,6 +64,9 @@ export default function CloudflareAIAnalysisPage() {
   const [selectedAction, setSelectedAction] = useState<{ title: string; description: string; issueId: string } | null>(
     null,
   ) // 操作步驟選擇的項目
+  // 外網 IP 擷取/顯示
+  const [externalIps, setExternalIps] = useState<string[]>([])
+  const [showExternalIps, setShowExternalIps] = useState(false)
   
   // 新增：時間範圍和分析資訊
   const [selectedTimeRange, setSelectedTimeRange] = useState('24h')
@@ -87,6 +101,45 @@ export default function CloudflareAIAnalysisPage() {
   const { wafRisks, setWafRisks } = useWAFData()
   const { toast } = useToast()
 
+  // IPv4 正則（嚴格 0-255）
+  const IPV4_REGEX =
+    /\b(?:(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)\.){3}(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)\b/g
+
+  const isPublicIPv4 = (ip: string) => {
+    const parts = ip.split(".").map((p) => Number(p))
+    if (parts.length !== 4 || parts.some((n) => Number.isNaN(n) || n < 0 || n > 255)) return false
+
+    const [a, b] = parts
+
+    // 私有/保留/特殊用途（排除）
+    if (a === 10) return false // 10.0.0.0/8
+    if (a === 127) return false // 127.0.0.0/8
+    if (a === 0) return false // 0.0.0.0/8
+    if (a === 169 && b === 254) return false // 169.254.0.0/16
+    if (a === 172 && b >= 16 && b <= 31) return false // 172.16.0.0/12
+    if (a === 192 && b === 168) return false // 192.168.0.0/16
+    if (a === 100 && b >= 64 && b <= 127) return false // 100.64.0.0/10 (CGNAT)
+    if (a >= 224) return false // 224.0.0.0/4 (multicast) + 240.0.0.0/4 (reserved)
+    if (ip === "255.255.255.255") return false
+
+    // 文件/測試用途（排除）
+    if (a === 192 && b === 0 && parts[2] === 2) return false // 192.0.2.0/24
+    if (a === 198 && (b === 18 || b === 19)) return false // 198.18.0.0/15
+    if (a === 198 && b === 51 && parts[2] === 100) return false // 198.51.100.0/24
+    if (a === 203 && b === 0 && parts[2] === 113) return false // 203.0.113.0/24
+
+    return true
+  }
+
+  const extractExternalIpsFromRisks = (risks: any[]) => {
+    // 直接對整份結果做 stringify，避免漏抓深層欄位（如 aiInsight / description / raw log 等）
+    const text = JSON.stringify(risks ?? [])
+    const matches = text.match(IPV4_REGEX) || []
+    const unique = Array.from(new Set(matches)).filter(isPublicIPv4)
+    unique.sort((x, y) => x.localeCompare(y, "en"))
+    return unique
+  }
+
   // 操作指引相關狀態
   const [expandedGuides, setExpandedGuides] = useState<Set<string>>(new Set())
   const [operationGuides, setOperationGuides] = useState<{[key: string]: any}>({})
@@ -105,6 +158,11 @@ export default function CloudflareAIAnalysisPage() {
   
   // 報告下載對話框狀態
   const [reportDialogOpen, setReportDialogOpen] = useState(false)
+
+  // 黑名單/白名單對話框狀態
+  const [blacklistDialogOpen, setBlacklistDialogOpen] = useState(false)
+  const [whitelistDialogOpen, setWhitelistDialogOpen] = useState(false)
+  const [isSubmittingList, setIsSubmittingList] = useState(false)
 
   // 載入 Cloudflare WAF 風險分析資料
   const loadCloudflareWAFRisks = async () => {
@@ -692,6 +750,144 @@ export default function CloudflareAIAnalysisPage() {
   const totalResolvedIssues = wafRisks.reduce((sum, risk) => sum + (risk.resolvedIssues || 0), 0)
   const totalAffectedAssets = wafRisks.reduce((sum, risk) => sum + (risk.affectedAssets || 0), 0)
 
+  const handleExtractExternalIps = () => {
+    if (!wafRisks || wafRisks.length === 0) {
+      toast({
+        title: "無分析結果",
+        description: "請先執行 AI 分析後再擷取外網 IP",
+        variant: "destructive",
+      })
+      return
+    }
+
+    const ips = extractExternalIpsFromRisks(wafRisks as any[])
+    setExternalIps(ips)
+    setShowExternalIps(true)
+
+    toast({
+      title: "外網 IP 擷取完成",
+      description: ips.length > 0 ? `共找到 ${ips.length} 個外網 IP` : "未找到外網 IP（可能僅有內網/保留網段或未包含 IP）",
+    })
+  }
+
+  // 打開黑名單對話框
+  const handleOpenBlacklistDialog = () => {
+    setBlacklistDialogOpen(true)
+  }
+
+  // 打開白名單對話框
+  const handleOpenWhitelistDialog = () => {
+    setWhitelistDialogOpen(true)
+  }
+
+  // 提交黑名單
+  const handleSubmitBlacklist = async () => {
+    const authValue = authenticator.authValue
+    const contractNo = authValue?.contract?.contractNo
+
+    if (!contractNo) {
+      toast({
+        title: "錯誤",
+        description: "無法取得合約資訊，請重新登入",
+        variant: "destructive"
+      })
+      return
+    }
+
+    // 使用已擷取的外網 IP
+    const allIps = [...externalIps]
+
+    if (allIps.length === 0) {
+      toast({
+        title: "錯誤",
+        description: "請先擷取外網 IP",
+        variant: "destructive"
+      })
+      return
+    }
+
+    setIsSubmittingList(true)
+
+    try {
+      // 呼叫後端 API
+      const response = await request.post(`/cloudflare_setting/waf_policy/${contractNo}/blacklist`, {
+        blackIpList: allIps,
+        subdomains: [] // 這裡可以根據需求填入子域名
+      })
+
+      if (response.status === 200) {
+        toast({
+          title: "✅ 黑名單已更新",
+          description: `已將 ${allIps.length} 個 IP 加入黑名單`,
+        })
+        setBlacklistDialogOpen(false)
+      }
+    } catch (error: any) {
+      console.error('新增黑名單失敗:', error)
+      toast({
+        title: "❌ 新增失敗",
+        description: error.response?.data?.message || "無法新增黑名單，請稍後再試",
+        variant: "destructive"
+      })
+    } finally {
+      setIsSubmittingList(false)
+    }
+  }
+
+  // 提交白名單
+  const handleSubmitWhitelist = async () => {
+    const authValue = authenticator.authValue
+    const contractNo = authValue?.contract?.contractNo
+
+    if (!contractNo) {
+      toast({
+        title: "錯誤",
+        description: "無法取得合約資訊，請重新登入",
+        variant: "destructive"
+      })
+      return
+    }
+
+    // 使用已擷取的外網 IP
+    const allIps = [...externalIps]
+
+    if (allIps.length === 0) {
+      toast({
+        title: "錯誤",
+        description: "請先擷取外網 IP",
+        variant: "destructive"
+      })
+      return
+    }
+
+    setIsSubmittingList(true)
+
+    try {
+      // 呼叫後端 API
+      const response = await request.post(`/cloudflare_setting/waf_policy/${contractNo}/whitelist`, {
+        whiteIpList: allIps,
+        subdomains: [] // 這裡可以根據需求填入子域名
+      })
+
+      if (response.status === 200) {
+        toast({
+          title: "✅ 白名單已更新",
+          description: `已將 ${allIps.length} 個 IP 加入白名單`,
+        })
+        setWhitelistDialogOpen(false)
+      }
+    } catch (error: any) {
+      console.error('新增白名單失敗:', error)
+      toast({
+        title: "❌ 新增失敗",
+        description: error.response?.data?.message || "無法新增白名單，請稍後再試",
+        variant: "destructive"
+      })
+    } finally {
+      setIsSubmittingList(false)
+    }
+  }
+
   // 點擊「查看操作步驟」按鈕時的處理
   const handleExecuteAction = async (
     actionTitle: string, 
@@ -799,6 +995,25 @@ export default function CloudflareAIAnalysisPage() {
             </div>
           )}
           <div className="ml-auto flex gap-2">
+            {/* 擷取外網 IP - 只在有分析結果時顯示 */}
+            {wafRisks.length > 0 && (
+              <>
+                <Button
+                  onClick={() => {
+                    if (showExternalIps) {
+                      setShowExternalIps(false)
+                      return
+                    }
+                    handleExtractExternalIps()
+                  }}
+                  disabled={isLoading}
+                  variant="outline"
+                  className="border-purple-500 text-purple-300 hover:bg-purple-900/20 font-semibold px-4 py-2"
+                >
+                  {showExternalIps ? "收起外網 IP" : "擷取外網 IP"}
+                </Button>
+              </>
+            )}
             {/* 報告下載按鈕 - 只在有分析結果時顯示 */}
             {wafRisks.length > 0 && (
               <Button
@@ -809,6 +1024,32 @@ export default function CloudflareAIAnalysisPage() {
               >
                 <Download className="w-4 h-4 mr-2" />
                 生成報告
+              </Button>
+            )}
+            
+            {/* 黑名單按鈕 - 只在有分析結果時顯示 */}
+            {wafRisks.length > 0 && (
+              <Button
+                onClick={handleOpenBlacklistDialog}
+                disabled={isLoading}
+                variant="outline"
+                className="border-red-500 text-red-400 hover:bg-red-900/20 font-semibold px-4 py-2"
+              >
+                <Ban className="w-4 h-4 mr-2" />
+                黑名單
+              </Button>
+            )}
+            
+            {/* 白名單按鈕 - 只在有分析結果時顯示 */}
+            {wafRisks.length > 0 && (
+              <Button
+                onClick={handleOpenWhitelistDialog}
+                disabled={isLoading}
+                variant="outline"
+                className="border-emerald-500 text-emerald-400 hover:bg-emerald-900/20 font-semibold px-4 py-2"
+              >
+                <ShieldCheck className="w-4 h-4 mr-2" />
+                白名單
               </Button>
             )}
             
@@ -851,6 +1092,47 @@ export default function CloudflareAIAnalysisPage() {
           </div>
         )}
       </motion.div>
+
+      {/* 外網 IP 顯示區 */}
+      {showExternalIps && wafRisks.length > 0 && (
+        <motion.div
+          initial={{ opacity: 0, y: 10 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.3 }}
+          className="mb-6"
+        >
+          <Card className="bg-slate-900/40 border-purple-500/30 backdrop-blur-sm">
+            <CardHeader className="pb-2">
+              <CardTitle className="text-white text-base flex items-center justify-between">
+                <span>外網 IP 位址</span>
+                <Badge variant="outline" className="bg-purple-500/10 text-purple-300 border-purple-500/30">
+                  {externalIps.length} 個
+                </Badge>
+              </CardTitle>
+              <CardDescription className="text-slate-400">
+                從目前分析結果中以正則擷取 IPv4，並排除內網/保留網段
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="pt-2">
+              {externalIps.length === 0 ? (
+                <div className="text-sm text-slate-400">未找到外網 IP</div>
+              ) : (
+                <div className="flex flex-wrap gap-2">
+                  {externalIps.map((ip) => (
+                    <Badge
+                      key={ip}
+                      variant="outline"
+                      className="bg-slate-800/40 text-slate-200 border-white/10 font-mono"
+                    >
+                      {ip}
+                    </Badge>
+                  ))}
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        </motion.div>
+      )}
 
       {/* 分析資訊區 */}
       <motion.div
@@ -1217,6 +1499,144 @@ export default function CloudflareAIAnalysisPage() {
           analysisTimestamp: analysisMetadata.analysisTimestamp
         }}
       />
+
+      {/* 黑名單對話框 */}
+      <Dialog open={blacklistDialogOpen} onOpenChange={setBlacklistDialogOpen}>
+        <DialogContent className="bg-slate-900 border-red-500/30 text-white max-w-lg">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-red-400">
+              <Ban className="w-5 h-5" />
+              新增黑名單
+            </DialogTitle>
+            <DialogDescription className="text-slate-400">
+              以下外網 IP 將被加入 Cloudflare WAF 黑名單並封鎖。
+            </DialogDescription>
+          </DialogHeader>
+          
+          <div className="space-y-4 py-4">
+            {/* 顯示將要加入的外網 IP */}
+            {externalIps.length > 0 ? (
+              <div className="space-y-2">
+                <Label className="text-slate-300">將加入黑名單的 IP（共 {externalIps.length} 個）：</Label>
+                <div className="max-h-48 overflow-y-auto p-3 bg-slate-800/50 rounded-lg border border-red-500/30">
+                  <div className="flex flex-wrap gap-2">
+                    {externalIps.map((ip) => (
+                      <Badge
+                        key={ip}
+                        variant="outline"
+                        className="bg-red-900/20 text-red-300 border-red-500/50 font-mono"
+                      >
+                        {ip}
+                      </Badge>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <div className="p-4 bg-yellow-900/20 border border-yellow-500/30 rounded-lg text-yellow-300 text-sm">
+                <AlertTriangle className="w-4 h-4 inline mr-2" />
+                尚未擷取外網 IP，請先點擊「擷取外網 IP」按鈕
+              </div>
+            )}
+          </div>
+
+          <DialogFooter className="gap-2">
+            <Button
+              variant="outline"
+              onClick={() => setBlacklistDialogOpen(false)}
+              className="bg-slate-800 border-slate-600 text-slate-300 hover:bg-slate-700"
+            >
+              取消
+            </Button>
+            <Button
+              onClick={handleSubmitBlacklist}
+              disabled={isSubmittingList || externalIps.length === 0}
+              className="bg-red-600 hover:bg-red-700 text-white"
+            >
+              {isSubmittingList ? (
+                <>
+                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                  處理中...
+                </>
+              ) : (
+                <>
+                  <Ban className="w-4 h-4 mr-2" />
+                  確認加入黑名單
+                </>
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* 白名單對話框 */}
+      <Dialog open={whitelistDialogOpen} onOpenChange={setWhitelistDialogOpen}>
+        <DialogContent className="bg-slate-900 border-emerald-500/30 text-white max-w-lg">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-emerald-400">
+              <ShieldCheck className="w-5 h-5" />
+              新增白名單
+            </DialogTitle>
+            <DialogDescription className="text-slate-400">
+              以下外網 IP 將被加入 Cloudflare WAF 白名單，繞過安全規則。
+            </DialogDescription>
+          </DialogHeader>
+          
+          <div className="space-y-4 py-4">
+            {/* 顯示將要加入的外網 IP */}
+            {externalIps.length > 0 ? (
+              <div className="space-y-2">
+                <Label className="text-slate-300">將加入白名單的 IP（共 {externalIps.length} 個）：</Label>
+                <div className="max-h-48 overflow-y-auto p-3 bg-slate-800/50 rounded-lg border border-emerald-500/30">
+                  <div className="flex flex-wrap gap-2">
+                    {externalIps.map((ip) => (
+                      <Badge
+                        key={ip}
+                        variant="outline"
+                        className="bg-emerald-900/20 text-emerald-300 border-emerald-500/50 font-mono"
+                      >
+                        {ip}
+                      </Badge>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <div className="p-4 bg-yellow-900/20 border border-yellow-500/30 rounded-lg text-yellow-300 text-sm">
+                <AlertTriangle className="w-4 h-4 inline mr-2" />
+                尚未擷取外網 IP，請先點擊「擷取外網 IP」按鈕
+              </div>
+            )}
+          </div>
+
+          <DialogFooter className="gap-2">
+            <Button
+              variant="outline"
+              onClick={() => setWhitelistDialogOpen(false)}
+              className="bg-slate-800 border-slate-600 text-slate-300 hover:bg-slate-700"
+            >
+              取消
+            </Button>
+            <Button
+              onClick={handleSubmitWhitelist}
+              disabled={isSubmittingList || externalIps.length === 0}
+              className="bg-emerald-600 hover:bg-emerald-700 text-white"
+            >
+              {isSubmittingList ? (
+                <>
+                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                  處理中...
+                </>
+              ) : (
+                <>
+                  <ShieldCheck className="w-4 h-4 mr-2" />
+                  確認加入白名單
+                </>
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {wafRisks.length > 0 && (
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
