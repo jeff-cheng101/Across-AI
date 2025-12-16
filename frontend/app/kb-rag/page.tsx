@@ -15,7 +15,7 @@ export default function KBRAGPage() {
 
   // 從環境變數讀取 URL，如果沒有設定則使用預設值
   // 支援 /apps、/datasets 或其他 Dify 路徑
-  const iframeUrl = process.env.NEXT_PUBLIC_KB_RAG_URL || "https://twister5.phison.com/datasets"
+  const iframeUrl = process.env.NEXT_PUBLIC_KB_RAG_URL || "https://twister5poc.phison.com/datasets"
 
   return (
     <div className="min-h-screen bg-[#08131D] text-white p-8">

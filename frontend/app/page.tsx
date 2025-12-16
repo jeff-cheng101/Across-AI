@@ -47,9 +47,9 @@ export default function Home() {
         return { success: false, error: 'Dify credentials not configured' }
       }
 
-      console.log('🌐 直接呼叫 Dify API:', 'https://twister5.phison.com/dify/console/api/login')
+      console.log('🌐 直接呼叫 Dify API:', 'https://twister5poc.phison.com/dify/console/api/login')
       
-      const response = await fetch('https://twister5.phison.com/dify/console/api/login', {
+      const response = await fetch('https://twister5poc.phison.com/dify/console/api/login', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

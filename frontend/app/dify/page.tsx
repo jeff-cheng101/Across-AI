@@ -9,7 +9,7 @@ import { EmbeddedIframe } from "@/components/embedded-iframe"
 export default function DifyPage() {
   const [mounted, setMounted] = useState(false)
   const iframeUrl = process.env.NEXT_PUBLIC_DIFY_WORKFLOW_URL ||
-    "https://twister5.phison.com/app/9dd18b0d-460b-44f3-a6fb-88bb8a76ad22/workflow"
+    "https://twister5poc.phison.com/app/4a730717-1563-4359-8036-49ed3d452482/workflow"
 
   useEffect(() => {
     setMounted(true)
