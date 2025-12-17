@@ -51,7 +51,7 @@ export function useReportDownload() {
       const aiProvider = localStorage.getItem('aiProvider') || 'ollama'
       const apiKey = localStorage.getItem('geminiApiKey') || ''
       const aiModel = aiProvider === 'ollama' 
-        ? (localStorage.getItem('ollamaModel') || 'twister_llama33:latest')
+        ? (localStorage.getItem('ollamaModel') || 'llama3.3:70b')
         : 'gemini-2.0-flash-exp'
 
       setProgress(20)
