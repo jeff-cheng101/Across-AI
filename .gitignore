@@ -28,4 +28,6 @@ Thumbs.db
 *.temp
 .cache/
 
-
+# 環境變數
+.env
+!.env.example
