@@ -7,6 +7,7 @@ const OpenAI = require('openai');
 const { elkMCPClient } = require('../services/elkMCPClient');
 const F5WAFRiskService = require('../services/products/f5WAFRiskService');
 const f5ELKConfig = require('../config/products/f5/f5ELKConfig');
+const { analyzeSystemPrompt } = require('../prompts/analyze-system-prompt');
 const {
   logOpenAICompatibleRequest,
   logOpenAICompatibleResponse,
@@ -73,7 +74,7 @@ router.post('/analyze-waf-risks', async (req, res) => {
 
     // Step 3: 生成 AI Prompt
     console.log('\n⭐ Step 2: 生成 AI 分析 Prompt...');
-    const aiPrompt = wafService.generateAIPrompt(analysisData);
+    const aiPrompt = wafService.generateAIPrompt(analysisData.elkData);
     console.log(`✅ Prompt 長度: ${aiPrompt.length} 字元`);
 
     // Step 4: 使用統一的 OpenAI API 呼叫 AI 進行分析
@@ -113,8 +114,7 @@ router.post('/analyze-waf-risks', async (req, res) => {
         messages: [
           {
             role: 'system',
-            content:
-              '你是個資安專家，專精於分析 F5 WAF 日誌和威脅識別。請根據提供的日誌資料，分析潛在的安全風險。',
+            content: analyzeSystemPrompt,
           },
           {
             role: 'user',
@@ -122,8 +122,6 @@ router.post('/analyze-waf-risks', async (req, res) => {
           },
         ],
         response_format: { type: 'json_object' },
-        temperature: 0.7,
-        max_tokens: 8192,
       };
 
       // 📤 記錄完整請求訊息
