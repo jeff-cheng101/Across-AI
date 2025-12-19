@@ -18,9 +18,14 @@ import {
   CheckCircle,
   TrendingUp,
 } from "lucide-react"
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
+import { Button } from "@/components/ui/button"
+import { CustomDatePicker } from "@/components/custom-date-picker"
 
-export default function CATODashboard() {
+export default function CatoDashboard() {
   const [activeTab, setActiveTab] = useState("overview")
+  const [dateFrom, setDateFrom] = useState<Date | undefined>(new Date(Date.now() - 7 * 24 * 60 * 60 * 1000))
+  const [dateTo, setDateTo] = useState<Date | undefined>(new Date())
 
   // 站點概況數據
   const siteStats = {
@@ -148,7 +153,7 @@ export default function CATODashboard() {
   ]
 
   const tabs = [
-    { id: "overview", label: "總覽", sublabel: "Overview" },
+    { id: "overview", label: "總覽" },
     { id: "sase", label: "SASE" },
   ]
 
@@ -719,7 +724,7 @@ export default function CATODashboard() {
                 />
               </div>
               <select className="px-3 py-1.5 bg-slate-800 border border-slate-700 rounded-md text-sm text-slate-300">
-                <option>直��的PoP</option>
+                <option>直的PoP</option>
                 <option>Taipei</option>
               </select>
               <select className="px-3 py-1.5 bg-slate-800 border border-slate-700 rounded-md text-sm text-slate-300">
@@ -804,30 +809,108 @@ export default function CATODashboard() {
   }
 
   return (
-    <div className="min-h-screen bg-[#08131D] p-8">
-      <motion.div
-        initial={{ y: -20, opacity: 0 }}
-        animate={{ y: 0, opacity: 1 }}
-        transition={{ duration: 0.5 }}
-        className="flex gap-2 mb-6 rounded-md"
-      >
-        {tabs.map((tab) => (
-          <button
-            key={tab.id}
-            onClick={() => setActiveTab(tab.id)}
-            className={`px-6 py-2.5 text-sm font-medium transition-all duration-200 rounded-md ${
-              activeTab === tab.id
-                ? "bg-white text-black"
-                : "bg-slate-800/50 text-slate-400 hover:bg-slate-800 hover:text-white"
-            }`}
-          >
-            {tab.label}
-            {tab.sublabel && <span className="ml-2 text-xs opacity-70">({tab.sublabel})</span>}
-          </button>
-        ))}
-      </motion.div>
+    <div className="min-h-screen bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950 text-white p-8">
+      <div className="max-w-[1800px] mx-auto">
+        <motion.div
+          initial={{ y: -20, opacity: 0 }}
+          animate={{ y: 0, opacity: 1 }}
+          transition={{ duration: 0.3 }}
+          className="mb-6 flex items-center gap-4 bg-slate-900/40 backdrop-blur-md border border-white/10 p-4 rounded-md"
+        >
+          <div className="flex items-center gap-2 text-slate-300">
+            <Search className="w-4 h-4" />
+            <span className="text-sm font-medium">資料時間範圍：</span>
+          </div>
 
-      {renderContent()}
+          {/* 開始日期 */}
+          <div className="flex items-center gap-2">
+            <span className="text-sm text-slate-400">開始日期</span>
+            <Popover>
+              <PopoverTrigger asChild>
+                <Button variant="outline" className="bg-slate-800 border-slate-700 hover:bg-slate-700 text-white">
+                  {dateFrom ? dateFrom.toLocaleDateString("zh-TW") : "選擇日期"}
+                </Button>
+              </PopoverTrigger>
+              <PopoverContent className="w-auto p-0 bg-slate-900 border-slate-700">
+                <CustomDatePicker selected={dateFrom} onSelect={setDateFrom} />
+              </PopoverContent>
+            </Popover>
+          </div>
+
+          {/* 結束日期 */}
+          <div className="flex items-center gap-2">
+            <span className="text-sm text-slate-400">結束日期</span>
+            <Popover>
+              <PopoverTrigger asChild>
+                <Button variant="outline" className="bg-slate-800 border-slate-700 hover:bg-slate-700 text-white">
+                  {dateTo ? dateTo.toLocaleDateString("zh-TW") : "選擇日期"}
+                </Button>
+              </PopoverTrigger>
+              <PopoverContent className="w-auto p-0 bg-slate-900 border-slate-700">
+                <CustomDatePicker selected={dateTo} onSelect={setDateTo} />
+              </PopoverContent>
+            </Popover>
+          </div>
+
+          {/* 快速選擇按鈕 */}
+          <div className="flex items-center gap-2 ml-auto">
+            <span className="text-sm text-slate-400">快速選擇：</span>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="text-slate-300 hover:text-white hover:bg-slate-800"
+              onClick={() => {
+                setDateFrom(new Date(Date.now() - 24 * 60 * 60 * 1000))
+                setDateTo(new Date())
+              }}
+            >
+              近24小時
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="text-slate-300 hover:text-white hover:bg-slate-800"
+              onClick={() => {
+                setDateFrom(new Date(Date.now() - 7 * 24 * 60 * 60 * 1000))
+                setDateTo(new Date())
+              }}
+            >
+              近7天
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="text-slate-300 hover:text-white hover:bg-slate-800"
+              onClick={() => {
+                setDateFrom(new Date(Date.now() - 30 * 24 * 60 * 60 * 1000))
+                setDateTo(new Date())
+              }}
+            >
+              近30天
+            </Button>
+          </div>
+        </motion.div>
+
+        {/* Tabs */}
+        <div className="flex gap-2 mb-6">
+          {tabs.map((tab) => (
+            <button
+              key={tab.id}
+              onClick={() => setActiveTab(tab.id)}
+              className={`px-6 py-2.5 text-sm font-medium transition-all duration-200 rounded-md ${
+                activeTab === tab.id
+                  ? "bg-white text-black"
+                  : "bg-slate-800/50 text-slate-400 hover:bg-slate-800 hover:text-white"
+              }`}
+            >
+              {tab.label}
+              {tab.sublabel && <span className="ml-2 text-xs opacity-70">({tab.sublabel})</span>}
+            </button>
+          ))}
+        </div>
+
+        {renderContent()}
+      </div>
     </div>
   )
 }

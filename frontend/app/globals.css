@@ -21,13 +21,14 @@ body {
     --secondary-foreground: 210 40% 90%;
     --muted: 210 45% 25%;
     --muted-foreground: 210 20% 65%;
-    --accent: 195 65% 35%; /* 調整 accent 顏色為更��的版本以提供更好的文字對比度 */
+    --accent: 195 65% 35%; /* 調整 accent 顏色為更深的版本以提供更好的文字對比度 */
     --accent-foreground: 0 0% 100%;
     --destructive: 0 60% 50%;
     --destructive-foreground: 210 40% 90%;
     --border: 210 45% 25%;
     --input: 210 45% 25%;
-    --ring: 195 65% 52%; /* #45A4C0 */
+    /* Changed ring color from cyan to gray-black for subdued focus states */
+    --ring: 210 15% 40%; /* Gray-black color instead of cyan */
     --chart-1: 195 65% 52%; /* #45A4C0 */
     --chart-2: 160 60% 45%;
     --chart-3: 30 80% 55%;
@@ -50,7 +51,8 @@ body {
     --sidebar-accent: 210 45% 20%;
     --sidebar-accent-foreground: 210 40% 90%;
     --sidebar-border: 210 45% 25%;
-    --sidebar-ring: 195 65% 52%; /* #45A4C0 */
+    /* Changed sidebar ring color to match main ring color */
+    --sidebar-ring: 210 15% 40%; /* Gray-black color instead of cyan */
   }
 
   /* 移除 .dark 選擇器，因為現在只有 dark 模式 */

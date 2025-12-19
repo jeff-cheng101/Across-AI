@@ -37,11 +37,10 @@ export default function ScrollToTop() {
       <Button
         onClick={scrollToTop}
         size="sm"
-        className="group h-10 w-10 rounded-full shadow-lg hover:shadow-xl transition-all duration-300 hover:scale-110"
-        style={{ backgroundColor: "#EFC457" }}
+        className="group h-10 w-10 rounded-full shadow-lg hover:shadow-xl transition-all duration-300 hover:scale-110 bg-gray-500/20 backdrop-blur-md border border-white/10 hover:bg-gray-400/30"
         aria-label="回到頂部"
       >
-        <ChevronUp className="h-4 w-4 text-black transition-transform duration-300 group-hover:scale-110 group-hover:-translate-y-0.5" />
+        <ChevronUp className="h-4 w-4 text-white transition-transform duration-300 group-hover:scale-110 group-hover:-translate-y-0.5" />
         <span className="sr-only">回到頂部</span>
       </Button>
 

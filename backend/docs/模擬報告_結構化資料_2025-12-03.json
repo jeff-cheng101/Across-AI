@@ -1,0 +1,247 @@
+{
+  "reportMetadata": {
+    "generatedAt": "2025-12-03T02:15:36.285Z",
+    "platform": "cloudflare",
+    "reportType": "網頁攻擊",
+    "overallRiskLevel": 3,
+    "summary": "偵測到 3 項風險，其中 1 項為高/嚴重等級"
+  },
+  "step1_basicInfo": {
+    "reportTime": "2025/12/03 上午10:15",
+    "organizationName": "群聯電子股份有限公司",
+    "reviewOrganization": "資訊安全部",
+    "reporterName": "資安管理員",
+    "phone": "03-5526888",
+    "fax": "",
+    "email": "security@phison.com",
+    "isProxy": false,
+    "proxyOrganization": "",
+    "investigationVendor": "Across Security"
+  },
+  "step2_eventProcess": {
+    "eventDiscoveryTime": "2025/12/3 上午10:05:37",
+    "eventClassification": {
+      "category": "webAttack",
+      "webAttack": {
+        "webTampering": false,
+        "maliciousComment": false,
+        "maliciousPage": false,
+        "phishingPage": false,
+        "webTrojan": false,
+        "dataLeak": false,
+        "webModified": true
+      },
+      "intrusion": {
+        "systemIntrusion": true,
+        "malwareImplant": false,
+        "abnormalConnection": true,
+        "spamSending": false,
+        "dataLeak": false,
+        "abnormalAccountLogin": false,
+        "externalAttackScan": true,
+        "unauthorizedAccess": false
+      },
+      "dos": {
+        "serviceInterruption": false,
+        "performanceDegradation": false
+      }
+    },
+    "eventDescription": "【WAF 攻擊評分異常檢測】\n偵測到 2 筆請求的 WAF 攻擊評分低於安全閾值（< 90）。WAF Attack Score 為 Cloudflare 的機器學習模型評估結果，分數越低表示越可能為惡意請求。最低分數為 83，來源 IP 包含：220.228.194.155, 2408:8719:40f:10:30::\n\n【來自高風險地區的請求】\n偵測到 1 筆來自中國的請求，存取路徑包含：/media/vendor/awesomplete/css/awesomplete.css。其中已有 1 筆觸發了自定義防火牆規則 (ID: afce0103f8b747a896dc36d0a0774c86)。\n\n【RCE 遠端代碼執行攻擊偵測】\n偵測到 2 筆請求的 RCE 攻擊評分偏低（最低 87）。RCE（Remote Code Execution）攻擊可能導致伺服器被完全控制。涉及的端點：sstportal.phison.com, www.phison.com",
+    "isExercise": false,
+    "affectsOtherAgencies": false,
+    "affectedInfrastructure": [],
+    "reportSource": "自行發現（Cloudflare WAF 監控）"
+  },
+  "step3_impactAssessment": {
+    "confidentiality": {
+      "level": 2,
+      "levelDescription": "2級（中）",
+      "justification": "偵測到 RCE 攻擊嘗試，可能導致機密資料外洩"
+    },
+    "integrity": {
+      "level": 3,
+      "levelDescription": "3級（高）",
+      "justification": "偵測到遠端代碼執行嘗試，可能影響系統完整性"
+    },
+    "availability": {
+      "level": 1,
+      "levelDescription": "1級（低）",
+      "justification": "服務運作正常，未偵測到 DoS/DDoS 攻擊"
+    },
+    "overallLevel": 3,
+    "overallLevelDescription": "整體風險等級：3級（高）"
+  },
+  "step4_supportNeeded": {
+    "needSupport": true,
+    "supportContent": "建議請專業資安團隊協助深入調查 RCE 攻擊嘗試"
+  },
+  "step5_emergencyResponse": {
+    "recordsRetention": {
+      "hostEventLog": {
+        "retained": true,
+        "duration": "1-6個月"
+      },
+      "firewallLog": {
+        "retained": true,
+        "duration": "1-6個月"
+      },
+      "websiteLog": {
+        "retained": true,
+        "duration": "1-6個月"
+      },
+      "maliciousSamples": {
+        "retained": false,
+        "count": 0
+      },
+      "otherRecords": "Cloudflare WAF 日誌已保存於 ELK Stack"
+    },
+    "analysisAndAssessment": {
+      "abnormalConnections": "偵測到來自以下 IP 的異常連線：\n- 220.228.194.155 (台灣/台中) - WAF Score: 89, RCE Score: 92\n- 2408:8719:40f:10:30:: (中國/濟南) - WAF Score: 83, RCE Score: 87\n\n這些請求的 WAF 攻擊評分低於安全閾值，顯示潛在威脅。",
+      "abnormalAccountUsage": "無異常帳號使用跡象",
+      "unauthorizedFiles": "無",
+      "databaseTampering": "無",
+      "dataLeakDetails": "無資料外洩跡象",
+      "additionalAssessment": "Cloudflare WAF 機器學習模型已偵測並記錄這些可疑請求。其中來自中國的請求已觸發自定義防火牆規則 (ID: afce0103f8b747a896dc36d0a0774c86)。"
+    },
+    "containmentAndRecovery": {
+      "removedMaliciousFiles": {
+        "removed": false,
+        "count": 0,
+        "details": "無惡意檔案"
+      },
+      "blockedIPs": {
+        "blocked": true,
+        "ipList": [
+          "220.228.194.155",
+          "2408:8719:40f:10:30::"
+        ],
+        "blockingDevice": "Cloudflare WAF"
+      },
+      "disabledAccounts": {
+        "disabled": false,
+        "accountList": []
+      },
+      "removedLeakedData": false,
+      "notifiedParties": false,
+      "disconnectedHost": false,
+      "requestedSearchEngineRemoval": {
+        "requested": false,
+        "engines": []
+      },
+      "codeReview": {
+        "completed": false,
+        "completionDate": ""
+      },
+      "systemRebuild": {
+        "completed": false,
+        "completionDate": ""
+      },
+      "additionalMeasures": "已啟用 Cloudflare WAF 監控，持續追蹤可疑活動"
+    },
+    "responseSummary": "Cloudflare WAF 已成功偵測 5 個可疑請求。目前已採取記錄 (log) 動作，建議評估是否需要升級為阻擋 (block) 動作。",
+    "recoveryStatus": "已完成損害控制",
+    "recoveryTime": ""
+  },
+  "step6_closureReport": {
+    "affectedDevices": {
+      "computers": 0,
+      "servers": 5,
+      "otherDeviceType": "",
+      "otherDeviceCount": 0
+    },
+    "networkInfo": {
+      "externalIPs": [
+        "220.228.194.155",
+        "2408:8719:40f:10:30::"
+      ],
+      "internalIPs": [],
+      "affectedURLs": [
+        "sstportal.phison.com",
+        "www.phison.com"
+      ]
+    },
+    "systemInfo": {
+      "osType": "Linux系列",
+      "osVersion": "",
+      "ismsCompliant": true,
+      "mainSystemVendor": "Cloudflare",
+      "systemBuilder": "IT Department"
+    },
+    "socInfo": {
+      "hasSOC": true,
+      "socType": "委外建置",
+      "socVendor": "Across SOC",
+      "inSOCScope": true,
+      "socAlertReceived": true,
+      "alertId": "CF-WAF-2025120301"
+    },
+    "securityDevices": {
+      "hasDevices": true,
+      "devices": [
+        {
+          "type": "應用程式防火牆",
+          "deviceId": "Cloudflare WAF"
+        },
+        {
+          "type": "威脅情報服務",
+          "deviceId": "Cloudflare Threat Intelligence"
+        }
+      ]
+    },
+    "rootCause": {
+      "category": "外部攻擊嘗試",
+      "categoryDetail": "WAF 偵測到來自台灣及中國 IP 的可疑請求，RCE 攻擊評分偏低",
+      "isVendorFault": false,
+      "vendorName": "",
+      "vendorId": "",
+      "vendorAgreed": false,
+      "cannotDetermine": false,
+      "cannotDetermineReason": "",
+      "investigationDetails": "WAF 攻擊評分異常檢測: AI 分析發現這些請求的 WAF 攻擊評分（89, 83）顯示潛在威脅。雖然 Cloudflare 未採取阻擋行動，但建議持續監控這些來源 IP 的行為模式。特別注意來自中國 IP (2408:8719:40f:10:30::) 的請求已觸發自定義防火牆規則。\n\n來自高風險地區的請求: 這些請求來自中國濟南 (Jinan)，使用 IPv6 地址。雖然目前僅採取 \"log\" 動作記錄，但建議評估是否需要更嚴格的地理位置封鎖策略，特別是對於敏感資源的存取。\n\nRCE 遠端代碼執行攻擊偵測: RCE 攻擊評分低於 95 表示 Cloudflare 的 ML 模型偵測到潛在的遠端代碼執行嘗試。來源 IP 220.228.194.155 (台灣) 的 RCE 評分為 92，2408:8719:40f:10:30:: (中國) 的評分為 87。建議立即檢視這些請求的詳細內容並強化防護。"
+    },
+    "remediation": {
+      "systemSecurity": {
+        "passwordChangeEvaluated": true,
+        "hostPasswordChangeEvaluated": true,
+        "systemUpdated": true,
+        "updateDetails": "檢視 WAF 規則敏感度設定\n建立自定義 WAF 規則\n評估地理位置封鎖策略",
+        "networkNeighborDisabled": false,
+        "robotsTxtConfigured": true,
+        "authenticationEnhanced": false,
+        "authenticationDetails": "",
+        "uploadRestricted": true,
+        "uploadRestrictedTypes": "可執行檔、腳本檔",
+        "dbAccessRestricted": true,
+        "dbHostIPRestricted": true,
+        "webdavDisabled": true
+      },
+      "managementAndTraining": {
+        "networkArchitectureReviewed": true,
+        "internalSecurityTest": true,
+        "securityTraining": false,
+        "securityPlanRevised": false
+      },
+      "otherMeasures": "強化自定義防火牆規則\n啟用 Cloudflare WAF Managed Rules\n檢查應用程式漏洞\n實施 Rate Limiting"
+    },
+    "securityPersonnel": {
+      "name": "資安工程師",
+      "title": "資深資安工程師"
+    },
+    "closureTime": ""
+  },
+  "aiGeneratedInsights": {
+    "attackPatternAnalysis": "本次分析共偵測到 3 項安全風險：\n\n1. WAF 攻擊評分異常檢測 (MEDIUM)\n   AI 分析發現這些請求的 WAF 攻擊評分（89, 83）顯示潛在威脅。雖然 Cloudflare 未採取阻擋行動，但建議持續監控這些來源 IP 的行為模式。特別注意來自中國 IP (2408:8719:40f:10:30::) 的請求已觸發自定義防火牆規則。\n\n2. 來自高風險地區的請求 (LOW)\n   這些請求來自中國濟南 (Jinan)，使用 IPv6 地址。雖然目前僅採取 \"log\" 動作記錄，但建議評估是否需要更嚴格的地理位置封鎖策略，特別是對於敏感資源的存取。\n\n3. RCE 遠端代碼執行攻擊偵測 (HIGH)\n   RCE 攻擊評分低於 95 表示 Cloudflare 的 ML 模型偵測到潛在的遠端代碼執行嘗試。來源 IP 220.228.194.155 (台灣) 的 RCE 評分為 92，2408:8719:40f:10:30:: (中國) 的評分為 87。建議立即檢視這些請求的詳細內容並強化防護。",
+    "threatActorProfile": "根據攻擊模式分析，攻擊者可能使用自動化掃描工具探測網站漏洞。來源地區包含台灣及中國，使用標準瀏覽器 User-Agent 進行偽裝。建議密切關注這些 IP 的後續活動。",
+    "recommendedPriorities": [
+      "檢視 WAF 規則敏感度設定",
+      "建立自定義 WAF 規則",
+      "評估地理位置封鎖策略"
+    ],
+    "longTermRecommendations": [
+      "定期審查 WAF 規則配置，確保防護策略與最新威脅情報同步",
+      "實施 Zero Trust 架構，強化邊界防護",
+      "建立自動化威脅回應機制，縮短事件回應時間",
+      "定期進行滲透測試，主動發現潛在漏洞"
+    ]
+  }
+}

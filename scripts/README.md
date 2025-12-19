@@ -67,7 +67,7 @@ node scripts/collect-training-data.js \
   --product=cloudflare \
   --count=5 \
   --aiProvider=ollama \
-  --model=gpt-oss:20b
+  --model=llama3.3:70b
 ```
 
 ## 📋 命令列參數
@@ -118,7 +118,7 @@ node scripts/collect-training-data.js --product=f5 --count=10 --apiKey=YOUR_KEY
 node scripts/collect-training-data.js \
   --product=cloudflare \
   --aiProvider=ollama \
-  --model=gpt-oss:20b \
+  --model=llama3.3:70b \
   --count=10
 ```
 

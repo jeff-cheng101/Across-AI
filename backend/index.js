@@ -1,4 +1,5 @@
 // backend/index.js
+require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 const { GoogleGenerativeAI } = require('@google/generative-ai');
@@ -10,7 +11,9 @@ const { ELK_CONFIG, OWASP_REFERENCES, identifyOWASPType } = require('./config/el
 // 產品專屬路由模組
 const cloudflareRoutes = require('./routes/cloudflare.routes');
 const f5Routes = require('./routes/f5.routes');
+const checkpointRoutes = require('./routes/checkpoint.routes');
 const commonRoutes = require('./routes/common.routes');
+const reportRoutes = require('./routes/report.routes');
 
 const app = express();
 app.use(cors());
@@ -19,7 +22,9 @@ app.use(express.json());
 // 註冊產品專屬路由
 app.use('/api/cloudflare', cloudflareRoutes);
 app.use('/api/f5', f5Routes);
+app.use('/api/checkpoint', checkpointRoutes);
 app.use('/api', commonRoutes);
+app.use('/api/reports', reportRoutes);
 
 // --- 常數設定 ---
 const LOG_FILE_PATH = '../CF-http_log.txt';

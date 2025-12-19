@@ -217,12 +217,20 @@ const CLOUDFLARE_FIELD_MAPPING = {
     example: "[\"ee448f20e7024cdda29f8ec20aa2ffd0\", \"c2a2f414a67c409f90cccb6c5bba0215\"]"
   },
 
+  security_rule_description: {
+    elk_field: "SecurityRuleDescription",
+    data_type: "text",
+    description: "觸發終止動作之安全性規則的規則描述",
+    ai_context: "用於判斷規則是否為 log 模式，檢查是否包含 'log' 字眼，區分偵測規則和阻擋規則",
+    example: "Cloudflare-Managed-WAF-SQLi-Block, Custom-WAF-Log-Rule, ALL-HTTP-BlockKeywords"
+  },
+
   security_sources: {
     elk_field: "SecuritySources",
     data_type: "keyword",
     description: "執行動作的安全產品來源",
-    ai_context: "執行動作的安全產品來源", 
-    example: "[\"firewallCustom\", \"firewallManaged\"]"
+    ai_context: "用於識別觸發動作的安全產品（waf / firewallManaged / firewallCustom / rateLimit / l7ddos / botManagement / botFight / dlp），區分不同安全產品的防護效果", 
+    example: "[\"firewallCustom\", \"firewallManaged\"], [\"waf\", \"botManagement\"]"
   },
 
   // === WAF 攻擊分數 ===

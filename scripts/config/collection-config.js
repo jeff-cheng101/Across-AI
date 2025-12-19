@@ -45,7 +45,7 @@ module.exports = {
 
   // ==================== API 配置 ====================
   api: {
-    baseUrl: 'http://localhost:8080', // 後端 API 位址
+    baseUrl: 'http://localhost:8081', // 後端 API 位址
     timeout: 120000,                   // 請求超時時間（毫秒）= 2分鐘
     retryAttempts: 3,                  // 失敗重試次數
     retryDelay: 5000,                  // 重試間隔（毫秒）= 5秒
@@ -92,9 +92,9 @@ module.exports = {
     ollama: {
       name: 'Ollama (Local)',
       requiresApiKey: false,
-      defaultModel: 'gpt-oss:20b',
+      defaultModel: 'llama3.3:70b',
       models: [
-        'gpt-oss:20b',
+        'llama3.3:70b',
         'llama3:8b',
         'mistral:7b'
       ]

@@ -782,6 +782,363 @@ const F5_OPERATION_GUIDES = {
         solution: '分析被阻擋的請求，找出誤報的簽章或參數，針對特定端點停用相關檢查或加入白名單。'
       }
     ]
+  },
+
+  // ========================================
+  // 封鎖攻擊來源 IP
+  // ========================================
+  BLOCK_MALICIOUS_IP: {
+    id: 'BLOCK_MALICIOUS_IP',
+    title: '封鎖攻擊來源 IP',
+    category: 'IP Blocking',
+    severity: 'critical',
+    estimatedTime: '5-10 分鐘',
+    prerequisites: [
+      '需要具備 F5 BIG-IP Advanced WAF 管理員權限',
+      '已登入 F5 BIG-IP 管理介面',
+      '已從日誌中確認攻擊來源 IP',
+      '確保該 IP 不是內部系統或合作夥伴 IP'
+    ],
+    steps: [
+      {
+        stepNumber: 1,
+        title: '進入 Security Policy 設定',
+        description: '導航到 IP Address Exceptions 頁面',
+        actions: [
+          '登入 F5 BIG-IP 管理介面',
+          '前往 Security → Application Security → Security Policies',
+          '選擇目標 Security Policy 並點擊進入'
+        ],
+        screenshot: null,
+        notes: '確保選擇正確的 Policy，該 Policy 必須已套用到 Virtual Server'
+      },
+      {
+        stepNumber: 2,
+        title: '新增 IP 位址例外',
+        description: '將攻擊來源 IP 加入黑名單',
+        actions: [
+          '在 Policy 頁面中，點選左側選單的「IP Address Exceptions」',
+          '點擊右上角的「Create」按鈕',
+          '在「IP Address」欄位輸入要封鎖的 IP（例如：104.28.217.137）',
+          '在「IP Mask」欄位輸入子網路遮罩（單一 IP 使用 255.255.255.255）',
+          '在「Block Requests」下拉選單中選擇「Always Block」',
+          '可選：勾選「Ignore Anomalies」（忽略此 IP 的異常檢測）',
+          '點擊「Create」按鈕'
+        ],
+        screenshot: null,
+        notes: '也可以封鎖整個 IP 段（例如：104.28.217.0/24），使用適當的子網路遮罩'
+      },
+      {
+        stepNumber: 3,
+        title: '確認違規類型已啟用',
+        description: '確保 VIOL_BLACKLISTED_IP 違規已啟用並設定為阻擋',
+        actions: [
+          '在 Policy 頁面中，點選「Violations」',
+          '找到「VIOL_BLACKLISTED_IP」違規項目',
+          '確認「Enabled」已勾選',
+          '確認「Block」已勾選',
+          '確認「Alarm」已勾選（啟用告警通知）',
+          '點擊「Save」儲存設定'
+        ],
+        screenshot: null,
+        notes: '如果違規未啟用，即使 IP 在黑名單中，請求也不會被阻擋'
+      },
+      {
+        stepNumber: 4,
+        title: '套用 Policy 變更',
+        description: '將設定變更套用到運行中的 Policy',
+        actions: [
+          '點擊頁面右上角的「Apply Policy」按鈕',
+          '確認變更內容無誤',
+          '點擊「Apply」確認',
+          '等待系統套用完成（通常 5-15 秒）',
+          '確認頁面顯示「Policy applied successfully」訊息'
+        ],
+        screenshot: null,
+        notes: '套用變更不會中斷現有連線，但建議在低流量時段進行'
+      },
+      {
+        stepNumber: 5,
+        title: '驗證封鎖效果',
+        description: '測試 IP 是否已被成功封鎖',
+        actions: [
+          '從被封鎖的 IP（或使用 VPN/Proxy 模擬該 IP）嘗試訪問受保護的網站',
+          '確認請求被阻擋並返回 Blocking Page',
+          '前往 Security → Event Logs → Application → Requests',
+          '篩選 Request Status = Blocked',
+          '確認日誌中顯示「VIOL_BLACKLISTED_IP」違規',
+          '檢查 Support ID 以追蹤特定請求'
+        ],
+        screenshot: null,
+        notes: '如果測試請求未被阻擋，檢查 Virtual Server 是否正確套用該 Security Policy'
+      },
+      {
+        stepNumber: 6,
+        title: '（選用）批量封鎖 IP 清單',
+        description: '如果需要封鎖多個 IP，可以使用批量匯入',
+        actions: [
+          '準備 IP 清單檔案（CSV 或 JSON 格式）',
+          '前往 Security → Application Security → IP Address Exceptions',
+          '點擊「Import」按鈕',
+          '選擇檔案並上傳',
+          '確認匯入的 IP 清單',
+          '套用 Policy'
+        ],
+        screenshot: null,
+        notes: '批量匯入適合需要封鎖大量 IP 的情況，例如來自特定 ASN 的攻擊'
+      }
+    ],
+    references: [
+      {
+        title: 'F5 IP Address Exceptions 官方文件',
+        url: 'https://support.f5.com/csp/knowledge-center',
+        type: 'official'
+      },
+      {
+        title: 'F5 Schema - whitelist-ips 說明',
+        url: '/backend/docs/f5/v17.1/schema-description.md#whitelist-ips',
+        type: 'internal'
+      },
+      {
+        title: 'VIOL_BLACKLISTED_IP 違規說明',
+        url: '/backend/docs/f5/v17.1/violations-description.md#viol_blacklisted_ip',
+        type: 'internal'
+      }
+    ],
+    relatedViolations: ['VIOL_BLACKLISTED_IP', 'VIOL_MALICIOUS_IP'],
+    troubleshooting: [
+      {
+        issue: 'IP 已加入黑名單但仍可訪問',
+        solution: '1. 檢查 Virtual Server 是否正確套用該 Security Policy。2. 確認 VIOL_BLACKLISTED_IP 違規已啟用並設定為 Block。3. 檢查是否有其他 Never Block 規則覆蓋了黑名單設定。4. 確認 IP 位址和子網路遮罩是否正確。'
+      },
+      {
+        issue: '誤封內部系統 IP',
+        solution: '立即前往 IP Address Exceptions，找到該 IP 並將 Block Requests 改為「Never Block」或直接刪除該 IP Exception。套用 Policy 後，內部系統應立即恢復訪問。'
+      },
+      {
+        issue: '封鎖後攻擊者更換 IP 繼續攻擊',
+        solution: '考慮使用以下進階防護：1. 封鎖整個 IP 段（/24 或 /16）。2. 啟用 IP Intelligence 功能自動封鎖已知惡意 IP。3. 啟用 Behavioral DoS 功能偵測異常流量模式。4. 啟用 Bot Defense 功能識別自動化攻擊工具。'
+      },
+      {
+        issue: 'IP 黑名單太多影響效能',
+        solution: 'F5 Advanced WAF 可以處理大量 IP 黑名單，但建議：1. 定期清理過期的封鎖 IP。2. 使用 IP Intelligence 取代手動黑名單。3. 考慮在上游防火牆層級封鎖（如 Firewall、IPS）。'
+      }
+    ]
+  },
+
+  // ========================================
+  // 強化輸入驗證與參數檢查
+  // ========================================
+  PARAMETER_VALIDATION: {
+    id: 'PARAMETER_VALIDATION',
+    title: '強化輸入驗證與參數檢查',
+    category: 'Input Validation',
+    severity: 'high',
+    estimatedTime: '15-25 分鐘',
+    prerequisites: [
+      '需要具備 F5 BIG-IP Advanced WAF 管理員權限',
+      '已登入 F5 BIG-IP 管理介面',
+      '了解應用程式的參數結構和資料類型',
+      '建議先使用 Policy Builder 學習模式了解正常流量'
+    ],
+    steps: [
+      {
+        stepNumber: 1,
+        title: '進入 Security Policy 設定',
+        description: '開啟要設定的 Security Policy',
+        actions: [
+          '登入 F5 BIG-IP 管理介面',
+          '前往 Security → Application Security → Security Policies',
+          '選擇目標 Security Policy 並進入編輯頁面'
+        ],
+        screenshot: null,
+        notes: '確保選擇正確的 Policy'
+      },
+      {
+        stepNumber: 2,
+        title: '識別需要驗證的參數',
+        description: '從日誌或學習建議中識別關鍵參數',
+        actions: [
+          '前往「Parameters」頁面',
+          '查看現有參數列表',
+          '識別需要加強驗證的參數（如：id、user_id、email、amount 等）',
+          '可從 Event Logs 中查看被攻擊的參數名稱'
+        ],
+        screenshot: null,
+        notes: '優先保護與資料庫查詢、金額計算、檔案存取相關的參數'
+      },
+      {
+        stepNumber: 3,
+        title: '設定參數資料類型檢查',
+        description: '為參數設定正確的資料類型',
+        actions: [
+          '在「Parameters」頁面中，選擇要設定的參數（或點擊「Create」新增）',
+          '在「Data Type」下拉選單中選擇適當的類型：',
+          '  - Integer：整數（如 id、count）',
+          '  - Decimal：小數（如 price、amount）',
+          '  - Email：電子郵件格式',
+          '  - Phone：電話號碼格式',
+          '  - Alpha-Numeric：字母數字（如 username）',
+          '點擊「Update」或「Create」儲存'
+        ],
+        screenshot: null,
+        notes: '正確的資料類型可以自動阻擋大部分注入攻擊'
+      },
+      {
+        stepNumber: 4,
+        title: '設定參數長度限制',
+        description: '限制參數值的最大和最小長度',
+        actions: [
+          '在參數設定頁面中，找到「Value Length」區塊',
+          '設定「Minimum Length」（最小長度）',
+          '設定「Maximum Length」（最大長度，建議根據實際需求設定）',
+          '勾選「Check」啟用長度檢查',
+          '點擊「Update」儲存'
+        ],
+        screenshot: null,
+        notes: '例如：username 通常 3-50 字元，email 通常 5-100 字元'
+      },
+      {
+        stepNumber: 5,
+        title: '設定參數正則表達式驗證（進階）',
+        description: '使用正則表達式定義參數格式',
+        actions: [
+          '在參數設定頁面中，找到「Regular Expression」區塊',
+          '輸入正則表達式（例如：^[a-zA-Z0-9_]+$ 只允許字母數字底線）',
+          '勾選「Check」啟用正則表達式檢查',
+          '點擊「Update」儲存'
+        ],
+        screenshot: null,
+        notes: '正則表達式提供最精確的驗證，但需要謹慎設定避免誤報'
+      },
+      {
+        stepNumber: 6,
+        title: '設定參數數值範圍（適用於數字）',
+        description: '限制數字參數的值範圍',
+        actions: [
+          '對於 Integer 或 Decimal 類型的參數',
+          '在「Numeric Value」區塊',
+          '設定「Minimum Value」（最小值）',
+          '設定「Maximum Value」（最大值）',
+          '勾選「Check」啟用數值檢查',
+          '點擊「Update」儲存'
+        ],
+        screenshot: null,
+        notes: '例如：年齡 0-150，商品數量 1-9999'
+      },
+      {
+        stepNumber: 7,
+        title: '限制參數元字符（Meta Characters）',
+        description: '防止危險的特殊字符',
+        actions: [
+          '在參數設定頁面中，找到「Meta Characters」區塊',
+          '勾選「Check Meta Characters」',
+          '確保以下危險字符被限制或禁止：',
+          '  - 單引號 (\')、雙引號 (")：SQL 注入',
+          '  - 分號 (;)、管道 (|)、& 符號：命令注入',
+          '  - 尖括號 (<>)：XSS 攻擊',
+          '點擊「Update」儲存'
+        ],
+        screenshot: null,
+        notes: '可以選擇「Allow」允許特定字符，或「Deny」拒絕所有未列出的字符'
+      },
+      {
+        stepNumber: 8,
+        title: '啟用參數驗證違規並設定阻擋',
+        description: '確保違規類型已啟用',
+        actions: [
+          '前往「Violations」頁面',
+          '確認以下違規已啟用且設定為「Block」：',
+          '  - VIOL_PARAMETER_DATA_TYPE',
+          '  - VIOL_PARAMETER_VALUE_LENGTH',
+          '  - VIOL_PARAMETER_VALUE_REGEXP',
+          '  - VIOL_PARAMETER_NUMERIC_VALUE',
+          '  - VIOL_PARAMETER_VALUE_METACHAR',
+          '全部勾選「Enabled」、「Block」和「Alarm」',
+          '點擊「Save」儲存'
+        ],
+        screenshot: null,
+        notes: '這些違規對應前面設定的各項驗證規則'
+      },
+      {
+        stepNumber: 9,
+        title: '套用 Policy 並驗證',
+        description: '套用設定並測試驗證效果',
+        actions: [
+          '點擊「Apply Policy」按鈕',
+          '確認變更無誤後點擊「Apply」',
+          '等待系統套用完成',
+          '在測試環境測試各種參數輸入：',
+          '  - 測試超長字串',
+          '  - 測試錯誤的資料類型（如在數字欄位輸入文字）',
+          '  - 測試 SQL 注入 payload（如 \' OR 1=1--）',
+          '確認這些異常輸入被正確阻擋'
+        ],
+        screenshot: null,
+        notes: '務必先在測試環境驗證，避免影響正常業務'
+      },
+      {
+        stepNumber: 10,
+        title: '使用學習模式優化（選用但建議）',
+        description: '啟用學習模式自動調整參數設定',
+        actions: [
+          '前往「Policy Building」→「Learning and Blocking Settings」',
+          '啟用「Parameters」學習',
+          '設定學習模式為「Automatic」或「Manual」',
+          '運行 1-2 週收集正常流量數據',
+          '審查學習建議並套用到 Policy',
+          '逐步調整參數驗證規則'
+        ],
+        screenshot: null,
+        notes: '學習模式可以大幅減少誤報，建議在正式環境使用'
+      }
+    ],
+    references: [
+      {
+        title: 'F5 Parameter Protection 官方文件',
+        url: 'https://support.f5.com/csp/knowledge-center',
+        type: 'official'
+      },
+      {
+        title: 'F5 Schema - Parameters 說明',
+        url: '/backend/docs/f5/v17.1/schema-description.md#parameters',
+        type: 'internal'
+      },
+      {
+        title: 'F5 參數驗證違規說明',
+        url: '/backend/docs/f5/v17.1/violations-description.md',
+        type: 'internal'
+      }
+    ],
+    relatedViolations: [
+      'VIOL_PARAMETER',
+      'VIOL_PARAMETER_DATA_TYPE',
+      'VIOL_PARAMETER_VALUE_LENGTH',
+      'VIOL_PARAMETER_VALUE_REGEXP',
+      'VIOL_PARAMETER_NUMERIC_VALUE',
+      'VIOL_PARAMETER_VALUE_METACHAR',
+      'VIOL_PARAMETER_STATIC_VALUE',
+      'VIOL_PARAMETER_EMPTY_VALUE',
+      'VIOL_PARAMETER_NAME_METACHAR'
+    ],
+    troubleshooting: [
+      {
+        issue: '正常流量被誤判為違規',
+        solution: '1. 檢查參數驗證規則是否過於嚴格。2. 使用學習模式（Learning Mode）收集正常流量數據。3. 調整參數的資料類型、長度限制或正則表達式。4. 針對特定 URL 或參數停用某些檢查。'
+      },
+      {
+        issue: '不確定應該設定什麼樣的驗證規則',
+        solution: '1. 先啟用學習模式運行 1-2 週。2. 分析日誌中的參數值分布。3. 參考應用程式的 API 文件或程式碼。4. 從寬鬆的規則開始，逐步加嚴。5. 優先保護敏感參數（如 id、user_id、amount）。'
+      },
+      {
+        issue: '設定後攻擊仍然成功',
+        solution: '1. 檢查違規類型是否已啟用且設定為「Block」。2. 確認 Virtual Server 是否正確套用該 Policy。3. 檢查是否有其他 Bypass 規則。4. 考慮同時啟用攻擊簽章（Attack Signatures）。5. 調低 violation_rating 閾值。'
+      },
+      {
+        issue: '參數太多，逐一設定太耗時',
+        solution: '1. 先設定全域參數（*）的基本驗證規則。2. 只針對關鍵參數（如 SQL 查詢、檔案路徑）設定嚴格規則。3. 使用學習模式自動生成參數配置。4. 考慮使用 JSON Schema 或 OpenAPI 規範自動匯入參數定義。'
+      }
+    ]
   }
 };
 
@@ -838,7 +1195,31 @@ function mapRecommendationToGuideId(title, category) {
     '監控攻擊': 'MONITOR_ATTACK_SOURCES',
     'monitor': 'MONITOR_ATTACK_SOURCES',
     'Event Logs': 'MONITOR_ATTACK_SOURCES',
-    'Reporting': 'MONITOR_ATTACK_SOURCES'
+    'Reporting': 'MONITOR_ATTACK_SOURCES',
+    
+    // 新增：IP 封鎖相關
+    '封鎖來源 IP': 'BLOCK_MALICIOUS_IP',
+    '封鎖來源': 'BLOCK_MALICIOUS_IP',
+    '封鎖 IP': 'BLOCK_MALICIOUS_IP',
+    'IP 黑名單': 'BLOCK_MALICIOUS_IP',
+    'IP Blacklist': 'BLOCK_MALICIOUS_IP',
+    '阻止進一步': 'BLOCK_MALICIOUS_IP',
+    '黑名單': 'BLOCK_MALICIOUS_IP',
+    'Block IP': 'BLOCK_MALICIOUS_IP',
+    '防火牆封鎖': 'BLOCK_MALICIOUS_IP',
+    
+    // 新增：參數驗證相關
+    '強化輸入驗證': 'PARAMETER_VALIDATION',
+    '輸入驗證': 'PARAMETER_VALIDATION',
+    '參數驗證': 'PARAMETER_VALIDATION',
+    '參數檢查': 'PARAMETER_VALIDATION',
+    'Input Validation': 'PARAMETER_VALIDATION',
+    'Parameter Validation': 'PARAMETER_VALIDATION',
+    '參數化查詢': 'PARAMETER_VALIDATION',
+    '白名單檢查': 'PARAMETER_VALIDATION',
+    '資料類型檢查': 'PARAMETER_VALIDATION',
+    '長度限制': 'PARAMETER_VALIDATION',
+    '正則表達式': 'PARAMETER_VALIDATION'
   };
   
   // 先用標題比對
