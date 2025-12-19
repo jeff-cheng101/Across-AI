@@ -8,6 +8,7 @@ const { elkMCPClient } = require('../services/elkMCPClient');
 const CheckpointRiskServices = require('../services/products/CheckpointRiskServices');
 const checkpointELKConfig = require('../config/products/checkpoint/checkpointELKConfig');
 const { analyzeSystemPrompt } = require('../prompts/analyze-system-prompt');
+const { callWithRetry } = require('../utils/llm/openaiCompatible');
 const {
   logOpenAICompatibleRequest,
   logOpenAICompatibleResponse,
@@ -145,11 +146,27 @@ router.post('/analyze-risks', async (req, res) => {
       // 📤 記錄完整請求訊息
       logOpenAICompatibleRequest(serviceUrl, requestParams);
 
-      const completion = await openai.chat.completions.create(requestParams, {
-        signal: controller.signal,
-      });
+      const maxConcurrency = Number.parseInt(process.env.LLM_MAX_CONCURRENCY || '', 10);
+      const maxRetries = Number.parseInt(process.env.LLM_MAX_RETRIES || '', 10);
+      const baseDelayMs = Number.parseInt(process.env.LLM_RETRY_BASE_DELAY_MS || '', 10);
+      const maxDelayMs = Number.parseInt(process.env.LLM_RETRY_MAX_DELAY_MS || '', 10);
 
-      clearTimeout(timeoutId);
+      const completion = await callWithRetry(
+        () =>
+          openai.chat.completions.create(requestParams, {
+            signal: controller.signal,
+          }),
+        {
+          key: serviceUrl,
+          maxConcurrency: Number.isFinite(maxConcurrency) ? maxConcurrency : 2,
+          maxRetries: Number.isFinite(maxRetries) ? maxRetries : 3,
+          baseDelayMs: Number.isFinite(baseDelayMs) ? baseDelayMs : 500,
+          maxDelayMs: Number.isFinite(maxDelayMs) ? maxDelayMs : 8000,
+          signal: controller.signal,
+          log: (m) => console.log(m),
+        },
+      );
+
       const elapsedTime = ((Date.now() - startTime) / 1000).toFixed(2);
       console.log(`⏱️ ${provider} API 回應時間: ${elapsedTime} 秒`);
 
@@ -165,8 +182,6 @@ router.post('/analyze-risks', async (req, res) => {
 
       console.log(`✅ ${provider} 回應長度: ${responseText.length} 字元`);
     } catch (apiError) {
-      clearTimeout(timeoutId);
-
       if (apiError.name === 'AbortError') {
         console.error(`❌ ${provider} 請求超時（5 分鐘），使用 Fallback 資料`);
         const aiAnalysisFallback =
@@ -190,8 +205,39 @@ router.post('/analyze-risks', async (req, res) => {
         });
       }
 
+      const status = apiError?.status;
+      const shouldFallback = status === 429 || status === 408 || (status >= 500 && status <= 599) || !status;
+
+      if (shouldFallback) {
+        console.error(
+          `❌ ${provider} API 暫時不可用（status=${status ?? 'unknown'}），使用 Fallback 資料：`,
+          apiError.message,
+        );
+        const aiAnalysisFallback =
+          checkpointService.generateFallbackRisks(analysisData);
+        return res.json({
+          success: true,
+          product: 'CheckPoint',
+          productDisplayName: 'Check Point Firewall',
+          risks: aiAnalysisFallback.risks || [],
+          metadata: {
+            totalEvents: analysisData.totalEvents,
+            realThreats: analysisData.realThreats,
+            realAttacks: analysisData.realAttacks,
+            timeRange: analysisData.timeRange,
+            layerStats: analysisData.layerStats,
+            aiProvider: 'fallback',
+            model: 'N/A',
+            analysisTimestamp: new Date().toISOString(),
+            note: `AI 分析失敗（status=${status ?? 'unknown'}），使用預設風險資料`,
+          },
+        });
+      }
+
       console.error(`❌ ${provider} API 呼叫失敗:`, apiError.message);
       throw apiError;
+    } finally {
+      clearTimeout(timeoutId);
     }
 
     // Step 5: 解析 AI 回應（JSON 格式）

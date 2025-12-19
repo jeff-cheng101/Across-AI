@@ -56,9 +56,10 @@ class CheckpointRiskServices {
     try {
       // Step 1: 透過 ELK MCP 查詢 Check Point 日誌
       console.log('\n⭐ Step 1: 透過 MCP 查詢 Check Point 日誌...');
-      const elkData = await this.elkClient.queryElasticsearch(timeRange, {
-        indexPattern: this.elkConfig.index,
-      });
+      // const elkData = await this.elkClient.queryElasticsearch(timeRange, {
+      //   indexPattern: this.elkConfig.index,
+      // });
+      const elkData = require('../../templates/elk-data-100.json'); // 使用模擬資料進行測試 
 
       if (!elkData.hits || elkData.hits.length === 0) {
         console.log('⚠️ 未找到日誌資料');
