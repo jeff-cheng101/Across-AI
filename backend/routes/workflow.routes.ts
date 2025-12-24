@@ -78,17 +78,30 @@ type ProxyResult =
   | { ok: false; status: number; data: unknown }
   | null;
 
+const REQUEST_TIMEOUT_MS = 30000; // 30 秒超時
+
 async function proxyDifyRequest(
   apiKey: string,
   body: z.infer<typeof WorkflowRequestBodySchema>,
+  workflowType: string,
 ): Promise<ProxyResult> {
   const baseUrl = process.env.DIFY_BASE_URL;
   if (!baseUrl) {
-    console.error('❌ DIFY_BASE_URL 環境變數未設定');
+    console.error('❌ DIFY_BASE_URL 環境變數未設定', {
+      timestamp: new Date().toISOString(),
+      workflowType,
+    });
     return null;
   }
 
   const url = `${baseUrl}/v1/workflows/run`;
+  const startTime = Date.now();
+
+  // 建立 AbortController 用於超時控制
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => {
+    controller.abort();
+  }, REQUEST_TIMEOUT_MS);
 
   try {
     const response = await fetch(url, {
@@ -98,13 +111,28 @@ async function proxyDifyRequest(
         Authorization: `Bearer ${apiKey}`,
       },
       body: JSON.stringify(body),
+      signal: controller.signal,
     });
+
+    clearTimeout(timeoutId);
+    const duration = Date.now() - startTime;
 
     let data: unknown = {};
     try {
       data = await response.json();
-    } catch {
-      console.error('❌ Dify API 回應非 JSON 格式');
+    } catch (parseError) {
+      console.error('❌ Dify API 回應非 JSON 格式', {
+        timestamp: new Date().toISOString(),
+        workflowType,
+        url,
+        status: response.status,
+        statusText: response.statusText,
+        duration: `${duration}ms`,
+        error:
+          parseError instanceof Error
+            ? parseError.message
+            : parseError?.toString() || 'Unknown error',
+      });
     }
 
     return {
@@ -113,7 +141,34 @@ async function proxyDifyRequest(
       data,
     };
   } catch (error) {
-    console.error('❌ Dify API 請求失敗:', error);
+    clearTimeout(timeoutId);
+    const duration = Date.now() - startTime;
+
+    // 判斷是否為超時錯誤
+    if (error instanceof Error && error.name === 'AbortError') {
+      console.error('❌ Dify API 請求超時', {
+        timestamp: new Date().toISOString(),
+        workflowType,
+        url,
+        timeout: `${REQUEST_TIMEOUT_MS}ms`,
+        duration: `${duration}ms`,
+      });
+    } else {
+      console.error('❌ Dify API 請求失敗', {
+        timestamp: new Date().toISOString(),
+        workflowType,
+        url,
+        duration: `${duration}ms`,
+        error:
+          error instanceof Error
+            ? {
+                name: error.name,
+                message: error.message,
+                stack: error.stack,
+              }
+            : String(error),
+      });
+    }
     return null;
   }
 }
@@ -143,12 +198,20 @@ async function proxyDifyRequest(
  * { "success": false, "error": "錯誤訊息" }
  */
 router.post('/:type', async (req: Request, res: Response<ApiResponse>) => {
+  const requestStartTime = Date.now();
+  const typeParam = req.params.type;
+
   try {
     // 1. 驗證 path parameter: type
-    const typeParam = req.params.type;
     const typeResult = WorkflowTypeSchema.safeParse(typeParam);
 
     if (!typeResult.success) {
+      console.warn('⚠️ 無效的 workflow 類型', {
+        timestamp: new Date().toISOString(),
+        providedType: typeParam,
+        allowedTypes: ['ip-block-quick'],
+        validationErrors: typeResult.error.issues || [],
+      });
       return res.status(400).json({
         success: false,
         error: '無效的請求參數',
@@ -160,7 +223,11 @@ router.post('/:type', async (req: Request, res: Response<ApiResponse>) => {
     // 2. 取得 API Key
     const apiKey = getWorkflowApiKey(workflowType);
     if (!apiKey) {
-      console.error(`❌ Workflow "${workflowType}" API Key 未配置`);
+      console.error('❌ Workflow API Key 未配置', {
+        timestamp: new Date().toISOString(),
+        workflowType,
+        envVar: `DIFY_WORKFLOW_API_KEY_${workflowType.toUpperCase().replace(/-/g, '_')}`,
+      });
       return res.status(500).json({
         success: false,
         error: '服務錯誤',
@@ -170,6 +237,16 @@ router.post('/:type', async (req: Request, res: Response<ApiResponse>) => {
     // 3. 驗證 request body 基本結構
     const bodyResult = WorkflowRequestBodySchema.safeParse(req.body);
     if (!bodyResult.success) {
+      console.warn('⚠️ Request body 驗證失敗', {
+        timestamp: new Date().toISOString(),
+        workflowType,
+        validationErrors: bodyResult.error.issues || [],
+        receivedBody: {
+          hasInputs: !!req.body?.inputs,
+          hasResponseMode: !!req.body?.response_mode,
+          hasUser: !!req.body?.user,
+        },
+      });
       return res.status(400).json({
         success: false,
         error: '無效的請求內容',
@@ -180,6 +257,12 @@ router.post('/:type', async (req: Request, res: Response<ApiResponse>) => {
     const inputsSchema = getInputsSchema(workflowType);
     const inputsResult = inputsSchema.safeParse(bodyResult.data.inputs);
     if (!inputsResult.success) {
+      console.warn('⚠️ Inputs 驗證失敗', {
+        timestamp: new Date().toISOString(),
+        workflowType,
+        validationErrors: inputsResult.error.issues || [],
+        receivedInputs: Object.keys(bodyResult.data.inputs || {}),
+      });
       return res.status(400).json({
         success: false,
         error: '無效的輸入參數',
@@ -187,16 +270,31 @@ router.post('/:type', async (req: Request, res: Response<ApiResponse>) => {
     }
 
     // 5. 發送請求到 Dify
-    console.log(`🚀 執行 Workflow: ${workflowType}`);
-
-    const result = await proxyDifyRequest(apiKey, {
-      inputs: inputsResult.data,
-      response_mode: bodyResult.data.response_mode,
+    console.log('🚀 執行 Workflow', {
+      timestamp: new Date().toISOString(),
+      workflowType,
       user: bodyResult.data.user,
+      responseMode: bodyResult.data.response_mode,
     });
+
+    const result = await proxyDifyRequest(
+      apiKey,
+      {
+        inputs: inputsResult.data,
+        response_mode: bodyResult.data.response_mode,
+        user: bodyResult.data.user,
+      },
+      workflowType,
+    );
 
     // 6. 檢查請求結果
     if (result === null) {
+      const duration = Date.now() - requestStartTime;
+      console.error('❌ Workflow 執行失敗（請求結果為 null）', {
+        timestamp: new Date().toISOString(),
+        workflowType,
+        duration: `${duration}ms`,
+      });
       return res.status(500).json({
         success: false,
         error: '服務錯誤',
@@ -204,7 +302,14 @@ router.post('/:type', async (req: Request, res: Response<ApiResponse>) => {
     }
 
     if (!result.ok) {
-      console.error(`❌ Dify API 回應錯誤: ${result.status}`);
+      const duration = Date.now() - requestStartTime;
+      console.error('❌ Dify API 回應錯誤', {
+        timestamp: new Date().toISOString(),
+        workflowType,
+        status: result.status,
+        duration: `${duration}ms`,
+        responseData: result.data,
+      });
       return res.status(500).json({
         success: false,
         error: '服務錯誤',
@@ -213,7 +318,14 @@ router.post('/:type', async (req: Request, res: Response<ApiResponse>) => {
 
     const responseResult = DifySuccessResponseSchema.safeParse(result.data);
     if (!responseResult.success) {
-      console.error('❌ Dify API 回應格式異常');
+      const duration = Date.now() - requestStartTime;
+      console.error('❌ Dify API 回應格式異常', {
+        timestamp: new Date().toISOString(),
+        workflowType,
+        duration: `${duration}ms`,
+        validationErrors: responseResult.error.issues || [],
+        receivedData: result.data,
+      });
       return res.status(500).json({
         success: false,
         error: '服務錯誤',
@@ -221,12 +333,32 @@ router.post('/:type', async (req: Request, res: Response<ApiResponse>) => {
     }
 
     // 7. 成功
-    console.log(`✅ Workflow "${workflowType}" 執行成功`);
+    const duration = Date.now() - requestStartTime;
+    console.log('✅ Workflow 執行成功', {
+      timestamp: new Date().toISOString(),
+      workflowType,
+      duration: `${duration}ms`,
+      workflowRunId: responseResult.data.workflow_run_id,
+      taskId: responseResult.data.task_id,
+    });
     return res.json({
       success: true,
     });
   } catch (error) {
-    console.error('❌ Workflow 錯誤:', error);
+    const duration = Date.now() - requestStartTime;
+    console.error('❌ Workflow 未預期錯誤', {
+      timestamp: new Date().toISOString(),
+      workflowType: typeParam,
+      duration: `${duration}ms`,
+      error:
+        error instanceof Error
+          ? {
+              name: error.name,
+              message: error.message,
+              stack: error.stack,
+            }
+          : error?.toString() || 'Unknown error',
+    });
     return res.status(500).json({
       success: false,
       error: '服務錯誤',
@@ -234,4 +366,7 @@ router.post('/:type', async (req: Request, res: Response<ApiResponse>) => {
   }
 });
 
+// TODO: 未來將整個專案改為TypeScript可以改成export default
+// 使用 CommonJS 格式導出，因為 index.js 使用 require() 引入
+// 如果改用 ES6 export default，會導致 "argument handler must be a function" 錯誤
 module.exports = router;
