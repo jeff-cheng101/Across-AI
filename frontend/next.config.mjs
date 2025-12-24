@@ -16,6 +16,15 @@ const nextConfig = {
   images: {
     unoptimized: true,
   },
+  // Production 環境移除 console.log（保留 console.error）
+  compiler: {
+    removeConsole:
+      process.env.NODE_ENV === 'production'
+        ? {
+            exclude: ['error'], // 保留 console.error
+          }
+        : false,
+  },
   async rewrites() {
     return [
       {
@@ -30,8 +39,8 @@ const nextConfig = {
         source: '/api/:path*',
         destination: 'http://localhost:3001/api/:path*', // proxy to backend
       },
-    ]
+    ];
   },
-}
+};
 
-export default nextConfig
+export default nextConfig;
