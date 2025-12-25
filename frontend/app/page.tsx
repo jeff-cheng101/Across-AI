@@ -1,55 +1,62 @@
-"use client"
+'use client';
 
-import React from "react"
-import { Button } from "@/components/ui/button"
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import {
-  Shield,
-  Globe,
-  Check,
-  Monitor,
   BarChart3,
-  Settings,
-  HeadphonesIcon,
-  FileText,
-  Network,
-  Zap,
   Bell,
-  ShieldCheck,
+  Check,
+  FileText,
+  Globe,
+  HeadphonesIcon,
   Layers2,
-} from "lucide-react"
-import Link from "next/link"
-import { useEffect, useState, useRef } from "react"
-import { PageTitle } from "@/components/page-title"
-import { useRouter } from "next/navigation"
-import authenticator from "@/app/util/authenticator"
+  Monitor,
+  Network,
+  Settings,
+  Shield,
+  ShieldCheck,
+  Zap,
+} from 'lucide-react';
+import Link from 'next/link';
+import { useRouter } from 'next/navigation';
+import React, { useEffect, useRef, useState } from 'react';
+import authenticator from '@/app/util/authenticator';
+import { PageTitle } from '@/components/page-title';
+import { Button } from '@/components/ui/button';
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from '@/components/ui/card';
 
 export default function Home() {
-  const pricingRef = useRef(null)
-  const whyChooseRef = useRef(null)
-  const router = useRouter()
-  const [isLoggedIn, setIsLoggedIn] = useState(false)
-  const hasDifyLoginTriggered = useRef(false)
+  const pricingRef = useRef(null);
+  const whyChooseRef = useRef(null);
+  const router = useRouter();
+  const [isLoggedIn, setIsLoggedIn] = useState(false);
+  const hasDifyLoginTriggered = useRef(false);
 
   const handleDifyLogin = async () => {
-    console.log('🚀 開始呼叫 Dify 登入 API...')
+    console.log('🚀 開始呼叫 Dify 登入 API...');
     try {
-      const difyEmail = process.env.NEXT_PUBLIC_DIFY_EMAIL
-      const difyPassword = process.env.NEXT_PUBLIC_DIFY_PWD
+      const difyEmail = process.env.NEXT_PUBLIC_DIFY_EMAIL;
+      const difyPassword = process.env.NEXT_PUBLIC_DIFY_PWD;
 
-      console.log('🔑 環境變數檢查:', { 
-        hasEmail: !!difyEmail, 
-        hasPassword: !!difyPassword 
-      })
+      console.log('🔑 環境變數檢查:', {
+        hasEmail: !!difyEmail,
+        hasPassword: !!difyPassword,
+      });
 
       if (!difyEmail || !difyPassword) {
-        console.error('❌ 環境變數未配置')
-        return { success: false, error: 'Dify credentials not configured' }
+        console.error('❌ 環境變數未配置');
+        return { success: false, error: 'Dify credentials not configured' };
       }
 
-      console.log('🌐 直接呼叫 Dify API:', 'https://twister5poc.phison.com/dify/console/api/login')
-      
-      const response = await fetch('https://twister5poc.phison.com/dify/console/api/login', {
+      const difyBaseUrl = process.env.NEXT_PUBLIC_DIFY_URL;
+      const loginUrl = `${difyBaseUrl}/console/api/login`;
+      console.log('🌐 呼叫 Dify API:', loginUrl);
+
+      const response = await fetch(loginUrl, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -59,70 +66,74 @@ export default function Home() {
           email: difyEmail,
           language: 'zh-Hant',
           password: difyPassword,
-          remember_me: true
-        })
-      })
-      
-      console.log('📡 收到 Dify API 響應，狀態碼:', response.status)
-      const data = await response.json()
-      console.log('📄 Dify API 返回數據:', data)
-      
+          remember_me: true,
+        }),
+      });
+
+      console.log('📡 收到 Dify API 響應，狀態碼:', response.status);
+      const data = await response.json();
+      console.log('📄 Dify API 返回數據:', data);
+
       if (response.ok) {
-        console.log('✅ Dify 登入成功', data)
-        return { success: true, data }
+        console.log('✅ Dify 登入成功', data);
+        return { success: true, data };
       } else {
-        console.error('❌ Dify 登入失敗', data)
-        return { success: false, error: data.message || 'Dify login failed' }
+        console.error('❌ Dify 登入失敗', data);
+        return { success: false, error: data.message || 'Dify login failed' };
       }
     } catch (error) {
-      console.error('⚠️ Dify API 調用錯誤', error)
-      return { success: false, error: 'API 調用失敗' }
+      console.error('⚠️ Dify API 調用錯誤', error);
+      return { success: false, error: 'API 調用失敗' };
     }
-  }
+  };
 
   useEffect(() => {
-    console.log('🔄 頁面初始化，開始檢查登入狀態...')
-    
+    console.log('🔄 頁面初始化，開始檢查登入狀態...');
+
     // 檢查登入狀態
     const checkLoginStatus = async () => {
-      const auth = authenticator.authValue
+      const auth = authenticator.authValue;
       if (auth) {
-        if (auth.user?.role === 'management' || auth.user?.role === 'reseller' || auth.user?.role === 'user') {
-          setIsLoggedIn(true)
+        if (
+          auth.user?.role === 'management' ||
+          auth.user?.role === 'reseller' ||
+          auth.user?.role === 'user'
+        ) {
+          setIsLoggedIn(true);
         }
       }
 
       // 第一次檢查登入狀態後，觸發 Dify 登入
       if (!hasDifyLoginTriggered.current) {
-        console.log('🎯 第一次檢查完成，準備觸發 Dify 登入...')
-        hasDifyLoginTriggered.current = true
-        await handleDifyLogin()
+        console.log('🎯 第一次檢查完成，準備觸發 Dify 登入...');
+        hasDifyLoginTriggered.current = true;
+        await handleDifyLogin();
       }
-    }
-    
-    checkLoginStatus()
-    
+    };
+
+    checkLoginStatus();
+
     // 設置一個間隔來檢查登入狀態變化
-    const interval = setInterval(checkLoginStatus, 1000)
-    
-    return () => clearInterval(interval)
-  }, [])
+    const interval = setInterval(checkLoginStatus, 1000);
+
+    return () => clearInterval(interval);
+  }, []);
 
   const handleStartClick = () => {
     if (isLoggedIn) {
-      router.push('/dashboard')
+      router.push('/dashboard');
     } else {
-      router.push('/login')
+      router.push('/login');
     }
-  }
+  };
 
   const scrollToPricing = () => {
-    pricingRef.current?.scrollIntoView({ behavior: "smooth" })
-  }
+    pricingRef.current?.scrollIntoView({ behavior: 'smooth' });
+  };
 
   const scrollToWhyChoose = () => {
-    whyChooseRef.current?.scrollIntoView({ behavior: "smooth" })
-  }
+    whyChooseRef.current?.scrollIntoView({ behavior: 'smooth' });
+  };
 
   return (
     <div className="container mx-auto container-padding section-padding bg-brand-dark">
@@ -142,7 +153,9 @@ export default function Home() {
               <div className="space-y-4">
                 <PageTitle>
                   ACROSS <br />
-                  <span className="text-brand-primary">Security Operation Center</span>
+                  <span className="text-brand-primary">
+                    Security Operation Center
+                  </span>
                 </PageTitle>
                 <p className="text-muted-foreground body-sm max-w-md">
                   全方位的網路安全解決方案，保護您的應用程式免受各種網路威脅
@@ -154,9 +167,13 @@ export default function Home() {
                 </Link> */}
                 <Button
                   className="btn-primary text-base font-light"
-                  style={{ backgroundColor: "#0D99FF", borderColor: "#0D99FF" }}
-                  onMouseOver={(e) => (e.currentTarget.style.backgroundColor = "#0A85E9")}
-                  onMouseOut={(e) => (e.currentTarget.style.backgroundColor = "#0D99FF")}
+                  style={{ backgroundColor: '#0D99FF', borderColor: '#0D99FF' }}
+                  onMouseOver={(e) =>
+                    (e.currentTarget.style.backgroundColor = '#0A85E9')
+                  }
+                  onMouseOut={(e) =>
+                    (e.currentTarget.style.backgroundColor = '#0D99FF')
+                  }
                   onClick={handleStartClick}
                 >
                   開始使用
@@ -269,7 +286,11 @@ export default function Home() {
         </div>
       </section>
 
-      <section ref={whyChooseRef} className="section-padding" style={{ backgroundColor: "#0A1628" }}>
+      <section
+        ref={whyChooseRef}
+        className="section-padding"
+        style={{ backgroundColor: '#0A1628' }}
+      >
         <div className="container container-padding">
           <div className="text-center mb-16">
             <h2 className="heading-xl mb-4 text-white">
@@ -310,13 +331,18 @@ export default function Home() {
         </div>
       </section>
 
-      <section ref={pricingRef} className="section-padding rounded-lg shadow-lg border bg-brand-dark-secondary">
+      <section
+        ref={pricingRef}
+        className="section-padding rounded-lg shadow-lg border bg-brand-dark-secondary"
+      >
         <div className="container container-padding">
           <div className="text-center mb-12">
             <h2 className="heading-xl">
               優惠<span className="text-brand-primary">組合方案</span>
             </h2>
-            <p className="mt-4 text-muted-foreground max-w-2xl mx-auto body-lg">為您提供全方位的網路安全保護</p>
+            <p className="mt-4 text-muted-foreground max-w-2xl mx-auto body-lg">
+              為您提供全方位的網路安全保護
+            </p>
           </div>
 
           <div className="flex justify-center">
@@ -325,7 +351,9 @@ export default function Home() {
                 <CardHeader className="pb-6">
                   <div className="flex flex-col sm:flex-row sm:justify-between sm:items-start gap-3">
                     <div className="flex-1 min-w-0">
-                      <CardTitle className="heading-md text-card-foreground">優惠價</CardTitle>
+                      <CardTitle className="heading-md text-card-foreground">
+                        優惠價
+                      </CardTitle>
                       <CardDescription className="body-sm text-muted-foreground mt-2">
                         WAF防禦 + 應用層DDoS防禦 + 全球CDN加速
                       </CardDescription>
@@ -336,10 +364,18 @@ export default function Home() {
                   </div>
                   <div className="mt-6">
                     <div className="flex items-baseline gap-1">
-                      <span className="text-muted-foreground font-light">$</span>
-                      <span className="text-3xl font-light text-card-foreground">7萬</span>
-                      <span className="text-muted-foreground font-light">/月起</span>
-                      <span className="body-sm text-muted-foreground line-through font-light ml-2">原價$11萬</span>
+                      <span className="text-muted-foreground font-light">
+                        $
+                      </span>
+                      <span className="text-3xl font-light text-card-foreground">
+                        7萬
+                      </span>
+                      <span className="text-muted-foreground font-light">
+                        /月起
+                      </span>
+                      <span className="body-sm text-muted-foreground line-through font-light ml-2">
+                        原價$11萬
+                      </span>
                     </div>
                   </div>
                 </CardHeader>
@@ -347,34 +383,48 @@ export default function Home() {
                 <CardContent className="space-y-6">
                   <div className="px-0 py-4 bg-brand-dark-secondary rounded-lg">
                     <Link href="/contact">
-                      <Button className="w-full btn-primary">選擇優惠組合</Button>
+                      <Button className="w-full btn-primary">
+                        選擇優惠組合
+                      </Button>
                     </Link>
                   </div>
 
                   <ul className="space-y-3">
                     <li className="flex items-center">
                       <Check className="h-5 w-5 mr-2 flex-shrink-0 text-brand-primary" />
-                      <span className="text-muted-foreground body-sm">WAF 網站應用防火牆</span>
+                      <span className="text-muted-foreground body-sm">
+                        WAF 網站應用防火牆
+                      </span>
                     </li>
                     <li className="flex items-center">
                       <Check className="h-5 w-5 mr-2 flex-shrink-0 text-brand-primary" />
-                      <span className="text-muted-foreground body-sm">應用層 DDoS 防禦</span>
+                      <span className="text-muted-foreground body-sm">
+                        應用層 DDoS 防禦
+                      </span>
                     </li>
                     <li className="flex items-center">
                       <Check className="h-5 w-5 mr-2 flex-shrink-0 text-brand-primary" />
-                      <span className="text-muted-foreground body-sm">全球 CDN 加速服務</span>
+                      <span className="text-muted-foreground body-sm">
+                        全球 CDN 加速服務
+                      </span>
                     </li>
                     <li className="flex items-center">
                       <Check className="h-5 w-5 mr-2 flex-shrink-0 text-brand-primary" />
-                      <span className="text-muted-foreground body-sm">乾淨流量 10TB</span>
+                      <span className="text-muted-foreground body-sm">
+                        乾淨流量 10TB
+                      </span>
                     </li>
                     <li className="flex items-center">
                       <Check className="h-5 w-5 mr-2 flex-shrink-0 text-brand-primary" />
-                      <span className="text-muted-foreground body-sm">應用程式 1個</span>
+                      <span className="text-muted-foreground body-sm">
+                        應用程式 1個
+                      </span>
                     </li>
                     <li className="flex items-center">
                       <Check className="h-5 w-5 mr-2 flex-shrink-0 text-brand-primary" />
-                      <span className="text-muted-foreground body-sm">7x24 專業技術支援</span>
+                      <span className="text-muted-foreground body-sm">
+                        7x24 專業技術支援
+                      </span>
                     </li>
                   </ul>
                 </CardContent>
@@ -384,15 +434,24 @@ export default function Home() {
         </div>
       </section>
     </div>
-  )
+  );
 }
 
-function ServiceCard({ title, description, icon, price, priceUnit, priceNote }) {
+function ServiceCard({
+  title,
+  description,
+  icon,
+  price,
+  priceUnit,
+  priceNote,
+}) {
   return (
     <div className="relative h-[280px] rounded-2xl p-[1px] bg-gradient-to-b from-[#45A4C0] via-[#45A4C080] to-transparent">
       <Card className="feature-card relative h-full flex flex-col overflow-hidden border-0 rounded-2xl bg-card">
         <CardHeader className="flex flex-row items-center gap-4 pb-3">
-          <div className="transform transition-all duration-500 hover:scale-110">{icon}</div>
+          <div className="transform transition-all duration-500 hover:scale-110">
+            {icon}
+          </div>
           <div className="flex-1">
             <CardTitle className="heading-md">{title}</CardTitle>
           </div>
@@ -405,17 +464,25 @@ function ServiceCard({ title, description, icon, price, priceUnit, priceNote }) 
             {price && (
               <div className="mt-4">
                 <div className="flex items-baseline gap-1">
-                  <span className="text-2xl font-medium text-brand-primary">{price}</span>
-                  <span className="body-sm text-muted-foreground">{priceUnit}</span>
+                  <span className="text-2xl font-medium text-brand-primary">
+                    {price}
+                  </span>
+                  <span className="body-sm text-muted-foreground">
+                    {priceUnit}
+                  </span>
                 </div>
-                {priceNote && <p className="text-xs text-muted-foreground font-light mt-1">{priceNote}</p>}
+                {priceNote && (
+                  <p className="text-xs text-muted-foreground font-light mt-1">
+                    {priceNote}
+                  </p>
+                )}
               </div>
             )}
           </div>
         </CardContent>
       </Card>
     </div>
-  )
+  );
 }
 
 function FeatureCard({ icon, title, description }) {
@@ -426,23 +493,33 @@ function FeatureCard({ icon, title, description }) {
           <div className="transition-all duration-300 group-hover:opacity-0 group-hover:transform group-hover:-translate-y-4">
             <div className="flex flex-col items-center gap-4">
               <div className="p-3 rounded-lg bg-brand-primary/10 backdrop-blur-sm transition-all duration-300 group-hover:scale-110">
-                {React.cloneElement(icon, { className: "h-8 w-8 text-brand-primary" })}
+                {React.cloneElement(icon, {
+                  className: 'h-8 w-8 text-brand-primary',
+                })}
               </div>
-              <h3 className="text-lg font-light text-card-foreground">{title}</h3>
+              <h3 className="text-lg font-light text-card-foreground">
+                {title}
+              </h3>
             </div>
           </div>
 
           <div className="absolute inset-0 p-6 flex flex-col justify-center items-center text-center opacity-0 transform translate-y-4 transition-all duration-300 group-hover:opacity-100 group-hover:translate-y-0">
             <div className="flex flex-col items-center gap-3">
               <div className="p-2 rounded-lg bg-brand-primary/10 backdrop-blur-sm">
-                {React.cloneElement(icon, { className: "h-6 w-6 text-brand-primary" })}
+                {React.cloneElement(icon, {
+                  className: 'h-6 w-6 text-brand-primary',
+                })}
               </div>
-              <h3 className="text-base font-light text-card-foreground mb-2">{title}</h3>
-              <p className="body-sm text-muted-foreground leading-relaxed">{description}</p>
+              <h3 className="text-base font-light text-card-foreground mb-2">
+                {title}
+              </h3>
+              <p className="body-sm text-muted-foreground leading-relaxed">
+                {description}
+              </p>
             </div>
           </div>
         </CardContent>
       </Card>
     </div>
-  )
+  );
 }

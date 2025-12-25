@@ -22,7 +22,31 @@ const reportRoutes = require('./routes/report.routes');
 const workflowRoutes = require('./routes/workflow.routes.ts');
 
 const app = express();
-app.use(cors());
+
+// CORS 配置 - 支援前端靜態匯出（直接呼叫外部 API）
+// 注意：靜態匯出時不能使用 Next.js rewrites，必須直接呼叫後端
+const corsOrigins = process.env.CORS_ORIGINS
+  ? process.env.CORS_ORIGINS.split(',').map((origin) => origin.trim())
+  : ['http://localhost:3000'];
+
+const corsOptions = {
+  origin: (origin, callback) => {
+    // 允許沒有 origin 的請求（例如 Postman、curl）
+    if (!origin) return callback(null, true);
+
+    // 檢查是否在允許的列表中
+    if (corsOrigins.includes(origin)) {
+      callback(null, true);
+    } else {
+      callback(new Error('Not allowed by CORS'));
+    }
+  },
+  credentials: true, // 允許攜帶 credentials（cookies, authorization headers）
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
+};
+
+app.use(cors(corsOptions));
 app.use(express.json());
 
 // 註冊產品專屬路由

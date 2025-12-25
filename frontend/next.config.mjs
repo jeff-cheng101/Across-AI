@@ -25,22 +25,9 @@ const nextConfig = {
           }
         : false,
   },
-  async rewrites() {
-    return [
-      {
-        source: '/api/cloudflare/:path*',
-        destination: 'http://localhost:8081/api/cloudflare/:path*', // proxy to backend
-      },
-      {
-        source: '/api/f5/:path*',
-        destination: 'http://localhost:8081/api/f5/:path*', // proxy to backend
-      },
-      {
-        source: '/api/:path*',
-        destination: 'http://localhost:3001/api/:path*', // proxy to backend
-      },
-    ];
-  },
+  // 注意：rewrites 已移除，API 呼叫直接使用環境變數配置的服務 URL
+  // NEXT_PUBLIC_AUTH_SERVICE_URL - 認證服務
+  // NEXT_PUBLIC_BACKEND_SERVICE_URL - 後端 API 服務
 };
 
 export default nextConfig;
