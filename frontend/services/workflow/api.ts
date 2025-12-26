@@ -14,6 +14,11 @@ import {
  * 這是一個純函數，可以在任何地方使用（React Query、直接呼叫等）
  *
  * 注意：Workflow API 是透過後端 proxy（後端使用 DIFY_BASE_URL）
+ *
+ * TODO: 未來不同 workflow 可能會有不同的 input 格式
+ * 例如：ip-block-quick 需要 { IPlist: string }
+ * 其他 workflow 可能需要不同的 input 結構
+ * 未來需要根據 workflow type 動態處理不同的 input 格式
  */
 export async function executeWorkflow({
   type,
