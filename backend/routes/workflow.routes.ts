@@ -85,9 +85,9 @@ async function proxyDifyRequest(
   body: z.infer<typeof WorkflowRequestBodySchema>,
   workflowType: string,
 ): Promise<ProxyResult> {
-  const baseUrl = process.env.DIFY_BASE_URL;
+  const baseUrl = process.env.DIFY_SERVICE_URL;
   if (!baseUrl) {
-    console.error('❌ DIFY_BASE_URL 環境變數未設定', {
+    console.error('❌ DIFY_SERVICE_URL 環境變數未設定', {
       timestamp: new Date().toISOString(),
       workflowType,
     });
