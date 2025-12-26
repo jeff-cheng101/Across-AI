@@ -1,8 +1,14 @@
 /**
  * API Clients - 統一的 axios 實體管理
  *
- * authClient - 認證服務 (NEXT_PUBLIC_AUTH_SERVICE_URL)
- * backendClient - 後端 API 服務 (NEXT_PUBLIC_BACKEND_SERVICE_URL)
+ * 架構說明：
+ * - 使用 Next.js rewrites 進行 API 代理，解決 CORS 問題
+ * - authClient: 使用相對路徑 /api/auth，由 next.config.mjs 代理到 AUTH_SERVICE_URL
+ * - backendClient: 使用相對路徑 /api/backend，由 next.config.mjs 代理到 BACKEND_SERVICE_URL
+ *
+ * 環境變數配置（服務端，用於 next.config.mjs）：
+ * - AUTH_SERVICE_URL: 認證服務 URL
+ * - BACKEND_SERVICE_URL: 後端 API 服務 URL
  */
 
 import axios, { type AxiosError, type AxiosInstance } from 'axios';
@@ -20,34 +26,6 @@ let globalRouter: AppRouterInstance | null = null;
 
 export const setGlobalRouter = (router: AppRouterInstance) => {
   globalRouter = router;
-};
-
-/**
- * 取得 Auth Service 的 base URL
- * @throws 如果環境變數未設定
- */
-const getAuthServiceURL = (): string => {
-  const envUrl = process.env.NEXT_PUBLIC_AUTH_SERVICE_URL;
-
-  if (!envUrl) {
-    throw new Error('❌ 環境變數 NEXT_PUBLIC_AUTH_SERVICE_URL 未設定');
-  }
-
-  return `${envUrl}/api/internal`;
-};
-
-/**
- * 取得 Backend Service 的 base URL
- * @throws 如果環境變數未設定
- */
-const getBackendServiceURL = (): string => {
-  const envUrl = process.env.NEXT_PUBLIC_BACKEND_SERVICE_URL;
-
-  if (!envUrl) {
-    throw new Error('❌ 環境變數 NEXT_PUBLIC_BACKEND_SERVICE_URL 未設定');
-  }
-
-  return envUrl;
 };
 
 /**
@@ -91,9 +69,12 @@ const setupResponseInterceptor = (
 /**
  * Auth Client - 認證服務
  * 用於：登入、用戶管理、票據、系統設定、合約等
+ *
+ * Base URL: /api/auth
+ * 實際代理到: ${AUTH_SERVICE_URL}/api/internal (由 next.config.mjs 的 rewrites 處理)
  */
 export const authClient: AxiosInstance = axios.create({
-  baseURL: getAuthServiceURL(),
+  baseURL: '/api/auth',
   timeout: 300000,
   withCredentials: true,
 });
@@ -103,9 +84,12 @@ setupResponseInterceptor(authClient, true);
 /**
  * Backend Client - 後端 API 服務
  * 用於：AI 分析、報告生成、Workflow 等
+ *
+ * Base URL: /api/backend
+ * 實際代理到: ${BACKEND_SERVICE_URL}/api (由 next.config.mjs 的 rewrites 處理)
  */
 export const backendClient: AxiosInstance = axios.create({
-  baseURL: getBackendServiceURL(),
+  baseURL: '/api/backend',
   timeout: 300000,
   withCredentials: true,
 });

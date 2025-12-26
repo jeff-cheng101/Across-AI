@@ -73,17 +73,26 @@ frontend/
 - **所有 API 調用必須使用 `lib/api-clients.ts` 中定義的客戶端**
 - **禁止直接使用 `fetch` 或創建新的 Axios 實例**
 - **禁止硬編碼任何服務 URL**
+- **統一使用 Next.js rewrites 進行 API 代理，解決 CORS 問題**
+
+### 架構說明
+- 使用 Next.js `rewrites` 功能進行 API 代理
+- 客戶端使用相對路徑（如 `/api/auth`、`/api/backend`）
+- Next.js 在服務端將請求代理到實際的後端服務
+- 這樣可以避免 CORS 問題，同時不暴露實際的服務 URL
 
 ### 兩個 Axios 實例
 
 #### `authClient` - 認證服務
 - **用途**：登入、用戶管理、票據、系統設定、合約等
-- **Base URL**：`${NEXT_PUBLIC_AUTH_SERVICE_URL}/api/internal`
+- **Base URL**：`/api/auth`（相對路徑）
+- **實際代理到**：`${AUTH_SERVICE_URL}/api/internal`（由 `next.config.mjs` 的 `rewrites` 處理）
 - **錯誤處理**：自動處理 401/403，觸發登出
 
 #### `backendClient` - 後端 API 服務
 - **用途**：AI 分析、報告生成、Workflow 等
-- **Base URL**：`${NEXT_PUBLIC_BACKEND_SERVICE_URL}`
+- **Base URL**：`/api/backend`（相對路徑）
+- **實際代理到**：`${BACKEND_SERVICE_URL}/api`（由 `next.config.mjs` 的 `rewrites` 處理）
 - **錯誤處理**：不處理認證錯誤（由後端處理）
 
 ### 使用方式
@@ -112,10 +121,10 @@ frontend/
 ### 核心服務配置
 
 #### Auth Service
-- `NEXT_PUBLIC_AUTH_SERVICE_URL` - 認證服務 URL
+- `AUTH_SERVICE_URL` - 認證服務 URL（服務端，用於 `next.config.mjs` 的 rewrites）
 
 #### Backend Service
-- `NEXT_PUBLIC_BACKEND_SERVICE_URL` - 後端服務 URL
+- `BACKEND_SERVICE_URL` - 後端服務 URL（服務端，用於 `next.config.mjs` 的 rewrites）
 
 #### Kibana
 - `NEXT_PUBLIC_KIBANA_URL` - Kibana 服務 URL

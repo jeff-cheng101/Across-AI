@@ -62,18 +62,27 @@ frontend/
 - **所有 API 調用必須使用 `lib/api-clients.ts` 中定義的客戶端**
 - **統一使用 `authClient` 或 `backendClient`，不直接使用 `fetch` 或創建新的 Axios 實例**
 - **所有服務 URL 必須通過環境變數配置**
+- **統一使用 Next.js rewrites 進行 API 代理，解決 CORS 問題**
+
+### 架構說明
+- 使用 Next.js `rewrites` 功能進行 API 代理
+- 客戶端使用相對路徑（如 `/api/auth`、`/api/backend`）
+- Next.js 在服務端將請求代理到實際的後端服務
+- 這樣可以避免 CORS 問題，同時不暴露實際的服務 URL
 
 ### 兩個 Axios 實例
 
 #### 1. `authClient` - 認證服務
 - **用途**：登入、用戶管理、票據、系統設定、合約等
-- **Base URL**：`${NEXT_PUBLIC_AUTH_SERVICE_URL}/api/internal`
+- **Base URL**：`/api/auth`（相對路徑）
+- **實際代理到**：`${AUTH_SERVICE_URL}/api/internal`（由 `next.config.mjs` 的 `rewrites` 處理）
 - **配置**：`withCredentials: true`, `timeout: 300000`
 - **錯誤處理**：自動處理 401/403，觸發登出和路由跳轉
 
 #### 2. `backendClient` - 後端 API 服務
 - **用途**：AI 分析、報告生成、Workflow 等
-- **Base URL**：`${NEXT_PUBLIC_BACKEND_SERVICE_URL}`
+- **Base URL**：`/api/backend`（相對路徑）
+- **實際代理到**：`${BACKEND_SERVICE_URL}/api`（由 `next.config.mjs` 的 `rewrites` 處理）
 - **配置**：`withCredentials: true`, `timeout: 300000`
 - **錯誤處理**：不處理認證錯誤（由後端處理）
 
@@ -132,10 +141,10 @@ frontend/
 ### 核心服務配置（4 組主要服務）
 
 #### Auth Service (認證服務)
-- `NEXT_PUBLIC_AUTH_SERVICE_URL` - 認證服務 URL（必填，無預設值）
+- `AUTH_SERVICE_URL` - 認證服務 URL（服務端，用於 `next.config.mjs` 的 rewrites，必填，無預設值）
 
 #### Backend Service (後端 API 服務)
-- `NEXT_PUBLIC_BACKEND_SERVICE_URL` - 後端服務 URL（必填，無預設值）
+- `BACKEND_SERVICE_URL` - 後端服務 URL（服務端，用於 `next.config.mjs` 的 rewrites，必填，無預設值）
 
 #### Kibana (ELK 監控服務)
 - `NEXT_PUBLIC_KIBANA_URL` - Kibana 服務 URL
@@ -156,15 +165,18 @@ frontend/
 - `NEXT_PUBLIC_IFRAME_LOADING_TIMEOUT` - iframe 載入超時（毫秒，預設：10000）
 
 ### 重要規則
-- **所有環境變數必須有 `NEXT_PUBLIC_` 前綴才能在客戶端使用**
+- **客戶端環境變數必須有 `NEXT_PUBLIC_` 前綴才能在客戶端使用**
+- **服務端環境變數（如 `AUTH_SERVICE_URL`、`BACKEND_SERVICE_URL`）不需要 `NEXT_PUBLIC_` 前綴，僅在服務端使用**
 - **環境變數未設定時必須拋出明確錯誤，不使用預設值**
 - **AI API Key 由後端管理，前端僅使用後端提供的 API**
 
 ## Next.js 配置
 
 ### 重要設定
-- **輸出模式**：靜態匯出（`output: 'export'`）- 已移除 `rewrites`
-- **API 調用**：直接使用環境變數配置的服務 URL，不通過 Next.js proxy
+- **輸出模式**：靜態匯出（`output: 'export'`）
+- **API 代理**：使用 `rewrites` 功能進行 API 代理，解決 CORS 問題
+  - `/api/auth` → `${AUTH_SERVICE_URL}/api/internal`
+  - `/api/backend` → `${BACKEND_SERVICE_URL}/api`
 - **圖片優化**：`unoptimized: true`
 - **TypeScript/ESLint**：構建時忽略錯誤（開發時仍會檢查）
 
@@ -219,7 +231,8 @@ frontend/
 ### 4. CORS 配置
 - 前端使用 `withCredentials: true` 發送請求
 - 後端必須正確配置 CORS（允許特定 origin，不能使用 `*`）
-- 支援靜態匯出模式（無 Next.js rewrites）
+- 使用 Next.js `rewrites` 進行 API 代理，解決 CORS 問題
+- 注意：如果將來需要靜態匯出，可能需要移除 `rewrites` 並調整架構
 
 ### 5. 類型安全
 - 優先使用 TypeScript 類型推斷

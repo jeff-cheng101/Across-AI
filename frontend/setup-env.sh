@@ -78,10 +78,12 @@ NODE_ENV=production
 # ============================================
 
 # Auth Service - 認證服務
-NEXT_PUBLIC_AUTH_SERVICE_URL=$AUTH_SERVICE_URL
+# 服務端環境變數（用於 next.config.mjs 的 rewrites）
+AUTH_SERVICE_URL=$AUTH_SERVICE_URL
 
 # Backend Service - 後端 API 服務
-NEXT_PUBLIC_BACKEND_SERVICE_URL=$BACKEND_SERVICE_URL
+# 服務端環境變數（用於 next.config.mjs 的 rewrites）
+BACKEND_SERVICE_URL=$BACKEND_SERVICE_URL
 
 # Kibana - ELK 監控服務
 NEXT_PUBLIC_KIBANA_URL=$KIBANA_URL

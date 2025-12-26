@@ -1,8 +1,25 @@
-import path from 'path';
-import { fileURLToPath } from 'url';
+import path from 'node:path';
+import process from 'node:process';
+import { fileURLToPath } from 'node:url';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+
+/**
+ * 取得環境變數，未設定時拋出錯誤
+ * @param {string} name - 環境變數名稱
+ * @returns {string} 環境變數值
+ */
+const getEnvVar = (name) => {
+  const value = process.env[name];
+  if (!value) {
+    throw new Error(`❌ 環境變數 ${name} 未設定`);
+  }
+  return value;
+};
+
+const AUTH_SERVICE_URL = getEnvVar('AUTH_SERVICE_URL');
+const BACKEND_SERVICE_URL = getEnvVar('BACKEND_SERVICE_URL');
 
 /** @type {import('next').NextConfig} */
 const nextConfig = {
@@ -25,24 +42,18 @@ const nextConfig = {
           }
         : false,
   },
-  // 注意：rewrites 已移除，API 呼叫直接使用環境變數配置的服務 URL
-  // NEXT_PUBLIC_AUTH_SERVICE_URL - 認證服務
-  // NEXT_PUBLIC_BACKEND_SERVICE_URL - 後端 API 服務
+  // TODO: 為了解決CORS暫時使用rewrites，如果將來會靜態匯出需要移除
   async rewrites() {
     return [
       {
-        source: '/api/cloudflare/:path*',
-        destination: 'http://localhost:8081/api/cloudflare/:path*', // proxy to backend
+        source: '/api/auth/:path*',
+        destination: `${AUTH_SERVICE_URL}/api/internal/:path*`, // proxy to auth service
       },
       {
-        source: '/api/f5/:path*',
-        destination: 'http://localhost:8081/api/f5/:path*', // proxy to backend
+        source: '/api/backend/:path*',
+        destination: `${BACKEND_SERVICE_URL}/api/:path*`, // proxy to backend service
       },
-      {
-        source: '/api/:path*',
-        destination: 'http://localhost:3001/api/:path*', // proxy to backend
-      },
-    ]
+    ];
   },
 };
 
