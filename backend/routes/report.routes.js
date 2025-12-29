@@ -223,7 +223,7 @@ router.post('/download-text', async (req, res) => {
     const finalAiConfig = {
       provider: aiConfig.provider || 'ollama',
       apiKey: aiConfig.apiKey,
-      model: aiConfig.model || 'llama3.3:70b'
+      model: aiConfig.model || 'gpt-oss:20b'
     };
 
     // 準備 metadata
