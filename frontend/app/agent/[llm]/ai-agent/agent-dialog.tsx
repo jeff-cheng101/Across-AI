@@ -13,7 +13,6 @@ import {
 } from 'lucide-react';
 import type React from 'react';
 import { useEffect, useState } from 'react';
-import type { AgentConfig } from '@/app/agent/[llm]/ai-agent/page';
 import { login } from '@/app/routes/auth';
 import { getCurrentUser } from '@/app/util/authenticator';
 import { Button } from '@/components/ui/button';
@@ -23,7 +22,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
-import { executeWorkflow } from '@/services/workflow';
+import type { AgentConfig } from './agent-config';
 
 interface AgentDialogProps {
   agent: AgentConfig;
@@ -68,42 +67,17 @@ export function AgentDialog({
     },
   });
 
-  // 執行 workflow 的 mutation
+  // 執行 workflow 的 mutation - 使用 agent 配置中的執行函數
   const executeWorkflowMutation = useMutation({
     mutationFn: async () => {
-      const currentUser = getCurrentUser();
-      if (!currentUser?.email) {
-        throw new Error('無法獲取當前用戶資訊，請重新登入');
-      }
-
-      // 執行 workflow，使用第一頁的內容（textarea 中的內容）
-      // 後端期望 inputs: { IPlist: string }
-      const response = await executeWorkflow({
-        type: 'ip-block-quick',
-        body: {
-          inputs: {
-            IPlist: content || '',
-          },
-          response_mode: 'blocking',
-          user: currentUser.email,
-        },
-      });
-
-      if (!response.success) {
-        throw new Error(response.error || '執行 workflow 失敗');
-      }
-
-      return response;
+      return await agent.executeFn(content);
     },
   });
 
-  const workflowSteps = [
-    { title: '驗證封鎖目標' },
-    { title: '分析封鎖原因' },
-    { title: '檢查現有規則' },
-    { title: '生成封鎖指令' },
-  ];
-
+  // 使用 agent 配置中的工作流程步驟
+  const workflowSteps = agent.workflowSteps.map((step) => ({
+    title: step.title,
+  }));
   const totalSteps = workflowSteps.length;
 
   useEffect(() => {
@@ -223,32 +197,8 @@ export function AgentDialog({
     }
   };
 
-  const generateWorkflowSteps = () => {
-    return [
-      {
-        step: 1,
-        title: '驗證封鎖目標',
-        description: '確認所有 IP 地址格式正確且在有效範圍內',
-      },
-      {
-        step: 2,
-        title: '分析封鎖原因',
-        description: '評估威脅等級與安全風險，確認封鎖必要性',
-      },
-      {
-        step: 3,
-        title: '檢查現有規則',
-        description: '避免重複規則，優化防火牆策略',
-      },
-      {
-        step: 4,
-        title: '生成封鎖指令',
-        description: '根據不同平台生成對應的防火牆規則',
-      },
-    ];
-  };
-
-  const previewWorkflowSteps = generateWorkflowSteps();
+  // 使用 agent 配置中的工作流程步驟（用於預覽）
+  const previewWorkflowSteps = agent.workflowSteps;
 
   return (
     <Dialog open={isOpen} onOpenChange={handleClose}>

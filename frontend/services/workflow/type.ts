@@ -6,7 +6,10 @@ import { z } from 'zod';
 /**
  * Workflow 功能類型（與後端保持一致）
  */
-export const WorkflowTypeSchema = z.enum(['ip-block-quick']);
+export const WorkflowTypeSchema = z.enum([
+  'ip-block-quick',
+  'ip-unblock-quick',
+]);
 export type WorkflowType = z.infer<typeof WorkflowTypeSchema>;
 
 /**

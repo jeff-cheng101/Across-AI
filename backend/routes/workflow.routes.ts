@@ -27,6 +27,9 @@ const InputsSchemaMap: Record<WorkflowType, z.ZodType<InputsBase>> = {
   'ip-block-quick': z.object({
     IPlist: z.string().min(1),
   }),
+  'ip-unblock-quick': z.object({
+    IPlist: z.string().min(1),
+  }),
 };
 
 /**
@@ -209,7 +212,7 @@ router.post('/:type', async (req: Request, res: Response<ApiResponse>) => {
       console.warn('⚠️ 無效的 workflow 類型', {
         timestamp: new Date().toISOString(),
         providedType: typeParam,
-        allowedTypes: ['ip-block-quick'],
+        allowedTypes: ['ip-block-quick', 'ip-unblock-quick'],
         validationErrors: typeResult.error.issues || [],
       });
       return res.status(400).json({

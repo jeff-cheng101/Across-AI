@@ -1,49 +1,17 @@
 'use client';
 
-import { ArrowLeft, Shield } from 'lucide-react';
+import { ArrowLeft } from 'lucide-react';
 import { useRouter } from 'next/navigation';
-import type React from 'react';
 import { useState } from 'react';
-import { AgentCard } from '@/components/agent-card';
-import { AgentDialog } from '@/components/agent-dialog';
 import { Button } from '@/components/ui/button';
-
-export type AgentType = 'block-ip' | 'deploy-policy' | 'upgrade' | null;
-
-export interface AgentConfig {
-  id: AgentType;
-  title: string;
-  description: string;
-  icon: React.ReactNode;
-}
+import { AgentCard } from './agent-card';
+import { type AgentType, agents } from './agent-config';
+import { AgentDialog } from './agent-dialog';
 
 export default function AIAgentPage() {
   const router = useRouter();
   const [activeAgent, setActiveAgent] = useState<AgentType>(null);
   const [isExecuting, setIsExecuting] = useState(false);
-
-  const agents: AgentConfig[] = [
-    {
-      id: 'block-ip',
-      title: '一鍵封鎖 IP',
-      description: 'AI Agent 自動分析並封鎖異常 IP 地址',
-      icon: <Shield className="w-8 h-8" />,
-    },
-    // TODO: 尚未實作
-    // {
-    //   id: 'deploy-policy',
-    //   title: 'F5 一鍵部署 Policy',
-    //   description: 'AI Agent 智能部署安全策略至 F5 設備',
-    //   icon: <Server className="w-8 h-8" />,
-    // },
-    // TODO: 尚未實作
-    // {
-    //   id: 'upgrade',
-    //   title: 'F5 一鍵升版',
-    //   description: 'AI Agent 自動執行系統升級流程',
-    //   icon: <ArrowUpCircle className="w-8 h-8" />,
-    // },
-  ];
 
   const handleAgentClick = (agentId: AgentType) => {
     setActiveAgent(agentId);
