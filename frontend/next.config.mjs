@@ -51,7 +51,7 @@ const nextConfig = {
       },
       {
         source: '/api/backend/:path*',
-        destination: `${BACKEND_SERVICE_URL}/api/:path*`, // proxy to backend service
+        destination: `${BACKEND_SERVICE_URL}/:path*`, // proxy to backend service
       },
     ];
   },
