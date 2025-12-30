@@ -1,6 +1,13 @@
 'use client';
 
-import { LogOut, Menu, Shield, User } from 'lucide-react';
+import {
+  Calendar,
+  LogOut,
+  Menu,
+  MessageSquare,
+  Shield,
+  User,
+} from 'lucide-react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import React, { useEffect, useState } from 'react';
@@ -41,6 +48,19 @@ const services = [
     title: '全球CDN加速',
     href: '/services/cdn',
     description: '通過全球分佈的節點加速內容傳遞',
+  },
+];
+
+const eventManagement = [
+  {
+    title: '新增告警規則',
+    href: '/event-management/alert-rules',
+    description: '設定系統告警規則與通知條件',
+  },
+  {
+    title: '建立案件工單',
+    href: '/event-management/tickets',
+    description: '建立並追蹤事件處理工單',
   },
 ];
 
@@ -240,7 +260,7 @@ export function Navbar() {
           </div>
         </div>
 
-        <div className="md:hidden ml-auto flex items-center gap-2">
+        <div className="ml-4 flex items-center">
           <Sheet open={isOpen} onOpenChange={setIsOpen}>
             <SheetTrigger asChild>
               <Button variant="outline" size="icon">
@@ -248,36 +268,37 @@ export function Navbar() {
                 <span className="sr-only">打開選單</span>
               </Button>
             </SheetTrigger>
-            <SheetContent side="right">
-              <nav className="flex flex-col gap-4 mt-8">
-                <Link
-                  href="/"
-                  className="text-lg font-light hover:text-primary transition-colors"
-                  onClick={() => setIsOpen(false)}
-                >
-                  首頁
-                </Link>
-                <div className="border-t pt-4">
-                  <p className="text-lg font-light mb-2">服務總覽</p>
-                  {services.map((service) => (
-                    <Link
-                      key={service.title}
-                      href={service.href}
-                      className="block py-2 text-muted-foreground hover:text-primary font-light transition-colors"
-                      onClick={() => setIsOpen(false)}
-                    >
-                      {service.title}
-                    </Link>
-                  ))}
+            <SheetContent side="right" className="w-[300px]">
+              <nav className="flex flex-col gap-6 mt-8">
+                <div>
+                  <div className="flex items-center gap-2 mb-3">
+                    <Calendar className="h-5 w-5 text-primary" />
+                    <h3 className="text-lg font-semibold">事件管理</h3>
+                  </div>
+                  <div className="flex flex-col gap-2 pl-7">
+                    {eventManagement.map((item) => (
+                      <Link
+                        key={item.title}
+                        href={item.href}
+                        className="block py-2 text-sm text-muted-foreground hover:text-primary transition-colors"
+                        onClick={() => setIsOpen(false)}
+                      >
+                        {item.title}
+                      </Link>
+                    ))}
+                  </div>
                 </div>
-                <Button
-                  asChild
-                  variant="ghost"
-                  className="text-[#45A4C0] hover:text-white hover:bg-transparent font-normal w-full mt-4 justify-start"
-                  onClick={() => setIsOpen(false)}
-                >
-                  <a href="/contact">聯絡我們</a>
-                </Button>
+
+                <div className="border-t pt-6">
+                  <Link
+                    href="/ai-chat"
+                    className="flex items-center gap-2 py-2 text-lg font-semibold hover:text-primary transition-colors"
+                    onClick={() => setIsOpen(false)}
+                  >
+                    <MessageSquare className="h-5 w-5 text-primary" />
+                    AI Chat
+                  </Link>
+                </div>
               </nav>
             </SheetContent>
           </Sheet>
