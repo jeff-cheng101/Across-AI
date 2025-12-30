@@ -168,14 +168,35 @@ export default function CloudflareAIAnalysisPage() {
       }
 
       // 呼叫後端 API（apiKey 由後端環境變數管理，不再從前端傳遞）
-      const response = await backendClient.post(
-        '/api/cloudflare/analyze-waf-risks',
-        {
-          aiProvider: aiProvider,
-          model: aiModel,
-          timeRange: timeRangeParam,
-        },
-      );
+      let response;
+      const directBackendUrl = process.env.NEXT_PUBLIC_BACKEND_DIRECT_URL;
+
+      if (directBackendUrl) {
+        console.log(`Using direct backend connection: ${directBackendUrl}`);
+        const axios = (await import('axios')).default;
+        const directClient = axios.create({
+          baseURL: directBackendUrl,
+          timeout: 600000, // 10分鐘 timeout
+        });
+
+        response = await directClient.post(
+          '/api/cloudflare/analyze-waf-risks',
+          {
+            aiProvider: aiProvider,
+            model: aiModel,
+            timeRange: timeRangeParam,
+          }
+        );
+      } else {
+        response = await backendClient.post(
+          '/api/cloudflare/analyze-waf-risks',
+          {
+            aiProvider: aiProvider,
+            model: aiModel,
+            timeRange: timeRangeParam,
+          },
+        );
+      }
 
       const data = response.data;
       console.log('✅ 成功載入 Cloudflare WAF 風險資料:', data);
@@ -695,7 +716,7 @@ export default function CloudflareAIAnalysisPage() {
   useEffect(() => {
     if (
       risksByCategory[selectedCategory as keyof typeof risksByCategory].length >
-        0 &&
+      0 &&
       !selectedIssue
     ) {
       setSelectedIssue(
@@ -893,11 +914,10 @@ export default function CloudflareAIAnalysisPage() {
                 hasAttemptedLoad ? handleReAnalysis : handleStartAnalysis
               }
               disabled={isLoading}
-              className={`${
-                hasAttemptedLoad
-                  ? 'bg-cyan-600 hover:bg-cyan-700'
-                  : 'bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-700 hover:to-blue-700 shadow-lg'
-              } text-white font-semibold px-6 py-2 transition-all`}
+              className={`${hasAttemptedLoad
+                ? 'bg-cyan-600 hover:bg-cyan-700'
+                : 'bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-700 hover:to-blue-700 shadow-lg'
+                } text-white font-semibold px-6 py-2 transition-all`}
             >
               {isLoading ? (
                 <>
@@ -1005,11 +1025,10 @@ export default function CloudflareAIAnalysisPage() {
 
           {/* 事件總數卡片 */}
           <Card
-            className={`bg-slate-900/40 backdrop-blur-sm ${
-              analysisMetadata.totalEvents > 0
-                ? 'border-green-500/30'
-                : 'border-yellow-500/30'
-            }`}
+            className={`bg-slate-900/40 backdrop-blur-sm ${analysisMetadata.totalEvents > 0
+              ? 'border-green-500/30'
+              : 'border-yellow-500/30'
+              }`}
           >
             <CardContent className="p-4">
               <div className="flex items-center gap-2 mb-2">
@@ -1019,20 +1038,18 @@ export default function CloudflareAIAnalysisPage() {
                 </span>
               </div>
               <div
-                className={`text-2xl font-bold mb-1 ${
-                  analysisMetadata.totalEvents > 0
-                    ? 'text-green-400'
-                    : 'text-yellow-400'
-                }`}
+                className={`text-2xl font-bold mb-1 ${analysisMetadata.totalEvents > 0
+                  ? 'text-green-400'
+                  : 'text-yellow-400'
+                  }`}
               >
                 {formatNumber(analysisMetadata.totalEvents)} 筆
               </div>
               <div
-                className={`text-xs flex items-center gap-1 ${
-                  analysisMetadata.totalEvents > 0
-                    ? 'text-green-400'
-                    : 'text-yellow-400'
-                }`}
+                className={`text-xs flex items-center gap-1 ${analysisMetadata.totalEvents > 0
+                  ? 'text-green-400'
+                  : 'text-yellow-400'
+                  }`}
               >
                 {analysisMetadata.totalEvents > 0 ? (
                   <>
@@ -1089,10 +1106,9 @@ export default function CloudflareAIAnalysisPage() {
                   size="sm"
                   variant="outline"
                   className={`
-                    ${
-                      selectedTimeRange === range && !useCustomDate
-                        ? 'bg-cyan-600 border-cyan-500 text-white hover:bg-cyan-700 hover:text-white'
-                        : 'bg-slate-800/50 border-slate-600/50 text-slate-300 hover:bg-slate-700/50 hover:border-slate-500'
+                    ${selectedTimeRange === range && !useCustomDate
+                      ? 'bg-cyan-600 border-cyan-500 text-white hover:bg-cyan-700 hover:text-white'
+                      : 'bg-slate-800/50 border-slate-600/50 text-slate-300 hover:bg-slate-700/50 hover:border-slate-500'
                     }
                     ${isLoading ? 'opacity-50 cursor-not-allowed' : ''}
                   `}
@@ -1398,11 +1414,10 @@ export default function CloudflareAIAnalysisPage() {
                       setSelectedIssue(risksByCategory.high[0].id);
                     }
                   }}
-                  className={`p-5 rounded-lg border cursor-pointer transition-all duration-300 ${
-                    selectedCategory === 'high'
-                      ? 'border-red-400/60 bg-red-900/20 shadow-lg shadow-red-500/20'
-                      : 'border-red-500/30 bg-red-900/10 hover:border-red-400/40'
-                  }`}
+                  className={`p-5 rounded-lg border cursor-pointer transition-all duration-300 ${selectedCategory === 'high'
+                    ? 'border-red-400/60 bg-red-900/20 shadow-lg shadow-red-500/20'
+                    : 'border-red-500/30 bg-red-900/10 hover:border-red-400/40'
+                    }`}
                 >
                   <div className="space-y-3">
                     <div className="flex items-center justify-between">
@@ -1447,11 +1462,10 @@ export default function CloudflareAIAnalysisPage() {
                       setSelectedIssue(risksByCategory.medium[0].id);
                     }
                   }}
-                  className={`p-5 rounded-lg border cursor-pointer transition-all duration-300 ${
-                    selectedCategory === 'medium'
-                      ? 'border-yellow-400/60 bg-yellow-900/20 shadow-lg shadow-yellow-500/20'
-                      : 'border-yellow-500/30 bg-yellow-900/10 hover:border-yellow-400/40'
-                  }`}
+                  className={`p-5 rounded-lg border cursor-pointer transition-all duration-300 ${selectedCategory === 'medium'
+                    ? 'border-yellow-400/60 bg-yellow-900/20 shadow-lg shadow-yellow-500/20'
+                    : 'border-yellow-500/30 bg-yellow-900/10 hover:border-yellow-400/40'
+                    }`}
                 >
                   <div className="space-y-3">
                     <div className="flex items-center justify-between">
@@ -1496,11 +1510,10 @@ export default function CloudflareAIAnalysisPage() {
                       setSelectedIssue(risksByCategory.low[0].id);
                     }
                   }}
-                  className={`p-5 rounded-lg border cursor-pointer transition-all duration-300 ${
-                    selectedCategory === 'low'
-                      ? 'border-blue-400/60 bg-blue-900/20 shadow-lg shadow-blue-500/20'
-                      : 'border-blue-500/30 bg-blue-900/10 hover:border-blue-400/40'
-                  }`}
+                  className={`p-5 rounded-lg border cursor-pointer transition-all duration-300 ${selectedCategory === 'low'
+                    ? 'border-blue-400/60 bg-blue-900/20 shadow-lg shadow-blue-500/20'
+                    : 'border-blue-500/30 bg-blue-900/10 hover:border-blue-400/40'
+                    }`}
                 >
                   <div className="space-y-3">
                     <div className="flex items-center justify-between">
@@ -1538,41 +1551,40 @@ export default function CloudflareAIAnalysisPage() {
                 {risksByCategory[
                   selectedCategory as keyof typeof risksByCategory
                 ].length > 0 && (
-                  <div className="pt-4 border-t border-white/10">
-                    <div className="text-xs text-slate-400 mb-3">
-                      {selectedCategory === 'high' && '高風險項目'}
-                      {selectedCategory === 'medium' && '中風險項目'}
-                      {selectedCategory === 'low' && '低風險項目'}
-                    </div>
-                    <div className="space-y-2">
-                      {risksByCategory[
-                        selectedCategory as keyof typeof risksByCategory
-                      ].map((risk) => (
-                        <div
-                          key={risk.id}
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            setSelectedIssue(risk.id);
-                          }}
-                          className={`p-3 rounded-lg border cursor-pointer transition-all text-sm ${
-                            selectedIssue === risk.id
+                    <div className="pt-4 border-t border-white/10">
+                      <div className="text-xs text-slate-400 mb-3">
+                        {selectedCategory === 'high' && '高風險項目'}
+                        {selectedCategory === 'medium' && '中風險項目'}
+                        {selectedCategory === 'low' && '低風險項目'}
+                      </div>
+                      <div className="space-y-2">
+                        {risksByCategory[
+                          selectedCategory as keyof typeof risksByCategory
+                        ].map((risk) => (
+                          <div
+                            key={risk.id}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setSelectedIssue(risk.id);
+                            }}
+                            className={`p-3 rounded-lg border cursor-pointer transition-all text-sm ${selectedIssue === risk.id
                               ? 'border-cyan-400/60 bg-cyan-900/20'
                               : 'border-white/10 bg-slate-800/30 hover:border-white/20'
-                          }`}
-                        >
-                          <div className="text-white font-medium mb-1 line-clamp-2">
-                            {risk.title}
+                              }`}
+                          >
+                            <div className="text-white font-medium mb-1 line-clamp-2">
+                              {risk.title}
+                            </div>
+                            <div className="flex items-center gap-2 text-xs text-slate-400">
+                              <span>{risk.openIssues} 問題</span>
+                              <span>•</span>
+                              <span>{risk.affectedAssets} 資產</span>
+                            </div>
                           </div>
-                          <div className="flex items-center gap-2 text-xs text-slate-400">
-                            <span>{risk.openIssues} 問題</span>
-                            <span>•</span>
-                            <span>{risk.affectedAssets} 資產</span>
-                          </div>
-                        </div>
-                      ))}
+                        ))}
+                      </div>
                     </div>
-                  </div>
-                )}
+                  )}
               </CardContent>
             </Card>
           </motion.div>
@@ -1788,11 +1800,10 @@ export default function CloudflareAIAnalysisPage() {
                                       )
                                     }
                                     disabled={isLoading}
-                                    className={`w-full ${
-                                      isExpanded
-                                        ? 'bg-slate-600 hover:bg-slate-700'
-                                        : 'bg-cyan-600 hover:bg-cyan-700'
-                                    } text-white`}
+                                    className={`w-full ${isExpanded
+                                      ? 'bg-slate-600 hover:bg-slate-700'
+                                      : 'bg-cyan-600 hover:bg-cyan-700'
+                                      } text-white`}
                                   >
                                     {isLoading ? (
                                       <>
@@ -1843,7 +1854,7 @@ export default function CloudflareAIAnalysisPage() {
                                                     guide.severity === 'high'
                                                       ? 'bg-red-500/20 text-red-400 border-red-500/50'
                                                       : guide.severity ===
-                                                          'critical'
+                                                        'critical'
                                                         ? 'bg-red-600/20 text-red-300 border-red-600/50'
                                                         : 'bg-yellow-500/20 text-yellow-400 border-yellow-500/50'
                                                   }
@@ -1986,7 +1997,7 @@ export default function CloudflareAIAnalysisPage() {
                                           {/* 疑難排解 */}
                                           {guide.troubleshooting &&
                                             guide.troubleshooting.length >
-                                              0 && (
+                                            0 && (
                                               <div className="p-4 bg-slate-900/50 border border-slate-600/50 rounded-lg">
                                                 <div className="flex items-center gap-2 mb-3 text-white font-semibold">
                                                   <span>🔧</span>

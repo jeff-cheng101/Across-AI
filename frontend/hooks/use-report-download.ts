@@ -60,23 +60,56 @@ export function useReportDownload() {
           ? '/api/reports/generate'
           : '/api/reports/generate-text';
 
-      const response = await backendClient.post(
-        endpoint,
-        {
-          analysisData: options.analysisData,
-          metadata: options.metadata,
-          userProvidedData: options.userProvidedData,
-          aiConfig: {
-            provider: aiProvider,
-            model: aiModel,
-            // 注意：apiKey 不再從前端傳遞，後端使用 LLM_API_KEY 環境變數
+      const directBackendUrl = process.env.NEXT_PUBLIC_BACKEND_DIRECT_URL;
+      let response;
+
+      if (directBackendUrl && options.useAI !== false) {
+        // 使用直接連線 (Bypass Proxy) 以避免 Timeout
+        // endpoint 需要包含 /api 前綴
+        const directEndpoint = `${directBackendUrl}${endpoint}`;
+        console.log(`Using direct backend connection: ${directEndpoint}`);
+
+        // 創建臨時 axios 實例
+        const directClient = (await import('axios')).default.create({
+          baseURL: directBackendUrl,
+          timeout: 600000, // 10分鐘
+        });
+
+        response = await directClient.post(
+          endpoint, // 這裡 endpoint 已經是 /api/reports/...
+          {
+            analysisData: options.analysisData,
+            metadata: options.metadata,
+            userProvidedData: options.userProvidedData,
+            aiConfig: {
+              provider: aiProvider,
+              model: aiModel,
+            },
+            outputFormat: options.outputFormat,
           },
-          outputFormat: options.outputFormat,
-        },
-        {
-          responseType: 'blob', // 先以 blob 接收，再根據類型處理
-        },
-      );
+          {
+            responseType: 'blob',
+          },
+        );
+      } else {
+        response = await backendClient.post(
+          endpoint,
+          {
+            analysisData: options.analysisData,
+            metadata: options.metadata,
+            userProvidedData: options.userProvidedData,
+            aiConfig: {
+              provider: aiProvider,
+              model: aiModel,
+              // 注意：apiKey 不再從前端傳遞，後端使用 LLM_API_KEY 環境變數
+            },
+            outputFormat: options.outputFormat,
+          },
+          {
+            responseType: 'blob', // 先以 blob 接收，再根據類型處理
+          },
+        );
+      }
 
       setProgress(70);
 

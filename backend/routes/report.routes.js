@@ -25,10 +25,10 @@ const wordReportService = new WordReportService();
  */
 router.post('/generate', async (req, res) => {
   try {
-    const { 
-      analysisData, 
-      metadata, 
-      userProvidedData = {}, 
+    const {
+      analysisData,
+      metadata,
+      userProvidedData = {},
       aiConfig = {},
       outputFormat = 'text'
     } = req.body;
@@ -117,9 +117,62 @@ router.post('/generate', async (req, res) => {
 
       if (wordResult.format === 'docx' && wordResult.buffer) {
         // 返回 Word 檔案
-        res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document');
-        res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(wordResult.filename)}"`);
-        return res.send(wordResult.buffer);
+        // res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document');
+        // res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(wordResult.filename)}"`);
+        // return res.send(wordResult.buffer);
+
+        console.log('✅ 準備返回 Word 檔案，大小:', wordResult.buffer.length, 'bytes');
+
+        // 檢查連線狀態
+        console.log('📡 檢查 socket 狀態:', {
+          headersSent: res.headersSent,
+          socketDestroyed: req.socket ? req.socket.destroyed : 'no-socket',
+          connected: req.socket ? !req.socket.destroyed : false
+        });
+
+        if (res.headersSent) {
+          console.error('❌ 標頭已發送，無法傳送 Word 檔案');
+          return;
+        }
+
+        if (req.socket && req.socket.destroyed) {
+          console.error('❌ 請求 socket 已關閉，無法傳送 Word 檔案');
+          return;
+        }
+
+        console.log('📡 連線狀態正常，開始寫入回應...');
+
+        try {
+          // 設定標頭
+          res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document');
+          res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(wordResult.filename)}"`);
+          res.setHeader('Content-Length', wordResult.buffer.length);
+          // 避免 chunked encoding，這有時會導致 proxy 問題
+          res.setHeader('Connection', 'keep-alive');
+
+          console.log('📝 標頭設定完成，開始寫入 buffer...');
+
+          // 使用 res.write + res.end 而不是 res.end(buffer) 以獲得更多控制
+          const fileBuffer = Buffer.isBuffer(wordResult.buffer) ? wordResult.buffer : Buffer.from(wordResult.buffer);
+
+          res.write(fileBuffer, 'binary', (err) => {
+            if (err) {
+              console.error('❌ 寫入 buffer 時發生錯誤:', err);
+            } else {
+              console.log('✅ Buffer 寫入完成');
+            }
+          });
+
+          res.end(() => {
+            console.log('✅ Response stream 結束 (callback)');
+          });
+
+          console.log('out res.end() 已呼叫');
+          return;
+        } catch (sendError) {
+          console.error('❌ 發送 Word 檔案時發生錯誤:', sendError.message);
+          throw sendError;
+        }
       } else {
         // Word 生成失敗，返回純文字
         console.log('⚠️ Word 生成失敗，回退到純文字格式');
@@ -135,7 +188,7 @@ router.post('/generate', async (req, res) => {
 
     // 預設：生成純文字報告
     const textReport = wordReportService.generateTextReport(reportData);
-    
+
     return res.json({
       success: true,
       format: 'text',
@@ -254,7 +307,7 @@ router.post('/download-text', async (req, res) => {
     const filename = `資安事件通報單_${new Date().toISOString().split('T')[0]}.txt`;
     res.setHeader('Content-Type', 'text/plain; charset=utf-8');
     res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(filename)}"`);
-    
+
     res.send(textReport);
 
   } catch (error) {
@@ -313,7 +366,7 @@ router.get('/health', (req, res) => {
       templateAvailable: templateCheck.exists,
       docxTemplatesInstalled: docxTemplatesInstalled
     },
-    recommendations: !docxTemplatesInstalled ? 
+    recommendations: !docxTemplatesInstalled ?
       ['請安裝 docx-templates 套件以啟用 Word 報告生成：npm install docx-templates'] : []
   });
 });
