@@ -158,7 +158,24 @@ router.post('/analyze-risks', async (req, res) => {
 
       if (!responseText || responseText.trim().length === 0) {
         console.warn(`⚠️ ${provider} 返回空回應，使用 Fallback`);
-        throw new Error(`${provider} 返回空回應`);
+        const aiAnalysisFallback = checkpointService.generateFallbackRisks(analysisData);
+        return res.json({
+          success: true,
+          product: 'CheckPoint',
+          productDisplayName: 'Check Point Firewall',
+          risks: aiAnalysisFallback.risks || [],
+          metadata: {
+            totalEvents: analysisData.totalEvents,
+            realThreats: analysisData.realThreats,
+            realAttacks: analysisData.realAttacks,
+            timeRange: analysisData.timeRange,
+            layerStats: analysisData.layerStats,
+            aiProvider: 'fallback',
+            model: 'N/A',
+            analysisTimestamp: new Date().toISOString(),
+            note: `${provider} 返回空回應，使用預設風險資料`,
+          },
+        });
       }
 
       console.log(`✅ ${provider} 回應長度: ${responseText.length} 字元`);

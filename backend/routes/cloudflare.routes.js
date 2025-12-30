@@ -142,7 +142,20 @@ router.post('/analyze-waf-risks', async (req, res) => {
 
       if (!responseText || responseText.trim().length === 0) {
         console.warn(`⚠️ ${provider} 返回空回應，使用 Fallback`);
-        throw new Error(`${provider} 返回空回應`);
+        const aiAnalysisFallback = wafService.generateFallbackRisks(analysisData);
+        return res.json({
+          success: true,
+          product: 'Cloudflare',
+          risks: aiAnalysisFallback.risks || [],
+          metadata: {
+            totalEvents: analysisData.totalEvents,
+            timeRange: analysisData.timeRange,
+            aiProvider: 'fallback',
+            model: 'N/A',
+            analysisTimestamp: new Date().toISOString(),
+            note: `${provider} 返回空回應，使用預設風險資料`,
+          },
+        });
       }
 
       console.log(`✅ ${provider} 回應長度: ${responseText.length} 字元`);
