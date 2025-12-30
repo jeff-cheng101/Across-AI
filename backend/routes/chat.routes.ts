@@ -1,6 +1,7 @@
 // backend/routes/chat.routes.ts
-// Dify Chatbot API 路由
+// assistant-ui 聊天機器人 API 路由
 
+import type { UIMessage } from 'ai';
 import express, { type Request, type Response, type Router } from 'express';
 import * as chatService from '../services/chatService';
 
@@ -11,8 +12,8 @@ const router: Router = express.Router();
 // ============================================================
 
 interface ChatRequestBody {
-  message: string;
-  userId: string;
+  messages: UIMessage[];
+  userId?: string;
   conversationId?: string;
 }
 
@@ -36,48 +37,38 @@ type ApiResponse<T = unknown> = ApiSuccessResponse<T> | ApiErrorResponse;
 
 /**
  * POST /api/chat
- * 發送對話訊息 (Blocking Mode)
+ * assistant-ui 聊天端點 (Streaming Mode)
+ * 使用 Vercel AI SDK 的 toUIMessageStreamResponse() 回傳標準串流格式
  */
-router.post('/', async (req: Request, res: Response<ApiResponse>) => {
+router.post('/', async (req: Request, res: Response) => {
   try {
-    const { message, userId, conversationId } = req.body as ChatRequestBody;
+    const { messages, userId, conversationId } = req.body as ChatRequestBody;
 
-    if (!message) {
+    if (!messages || !Array.isArray(messages) || messages.length === 0) {
       return res.status(400).json({
         success: false,
-        error: '缺少必要參數: message',
+        error: '缺少必要參數: messages',
       });
     }
 
-    if (!userId) {
-      return res.status(400).json({
-        success: false,
-        error: '缺少必要參數: userId',
-      });
-    }
-
-    console.log(`\n💬 ===== Dify Chat (Blocking) =====`);
-    console.log(`📝 Message: ${message.substring(0, 50)}...`);
-    console.log(`👤 User: ${userId}`);
+    console.log(`\n💬 ===== Dify Chat (assistant-ui) =====`);
+    console.log(`📝 Messages count: ${messages.length}`);
+    console.log(`👤 User: ${userId || '(anonymous)'}`);
     console.log(`🔗 Conversation: ${conversationId || '(新對話)'}`);
 
-    const result = await chatService.chat(
-      message,
+    const result = await chatService.streamChatForUI(
+      messages,
       userId,
-      conversationId || null,
+      conversationId,
     );
 
-    console.log(`✅ 回應長度: ${result.text.length} 字元`);
-    console.log(`🆔 Conversation ID: ${result.conversationId}`);
-    console.log(`\n✅ ===== Dify Chat 完成 =====\n`);
+    console.log(`✅ ===== Dify Stream 開始 =====\n`);
 
-    res.json({
-      success: true,
-      data: result,
-    });
+    // 使用 AI SDK 的標準串流回應格式
+    return result.toUIMessageStreamResponse();
   } catch (error) {
     console.error('❌ Dify chat 錯誤:', error);
-    res.status(500).json({
+    return res.status(500).json({
       success: false,
       error: 'Dify 對話失敗',
       details: error instanceof Error ? error.message : String(error),
@@ -85,93 +76,9 @@ router.post('/', async (req: Request, res: Response<ApiResponse>) => {
   }
 });
 
-/**
- * POST /api/chat/stream
- * 發送對話訊息 (Streaming Mode - SSE)
- */
-router.post('/stream', async (req: Request, res: Response) => {
-  try {
-    const { message, userId, conversationId } = req.body as ChatRequestBody;
-
-    if (!message) {
-      return res.status(400).json({
-        success: false,
-        error: '缺少必要參數: message',
-      });
-    }
-
-    if (!userId) {
-      return res.status(400).json({
-        success: false,
-        error: '缺少必要參數: userId',
-      });
-    }
-
-    console.log(`\n💬 ===== Dify Chat (Streaming) =====`);
-    console.log(`📝 Message: ${message.substring(0, 50)}...`);
-    console.log(`👤 User: ${userId}`);
-    console.log(`🔗 Conversation: ${conversationId || '(新對話)'}`);
-
-    // 設定 SSE headers
-    res.setHeader('Content-Type', 'text/event-stream');
-    res.setHeader('Cache-Control', 'no-cache');
-    res.setHeader('Connection', 'keep-alive');
-    res.setHeader('X-Accel-Buffering', 'no');
-
-    const stream = await chatService.streamChat(
-      message,
-      userId,
-      conversationId || null,
-    );
-
-    // 處理串流
-    let fullText = '';
-    let resultConversationId = conversationId;
-    for await (const chunk of stream.textStream) {
-      fullText += chunk;
-      res.write(
-        `data: ${JSON.stringify({ type: 'text', content: chunk })}\n\n`,
-      );
-    }
-
-    // 取得最終結果（需要 await 以取得 Promise 的值）
-    const providerMetadata = await stream.providerMetadata;
-    const difyData =
-      (providerMetadata?.difyWorkflowData as Record<string, string>) || {};
-    resultConversationId = difyData.conversationId || conversationId;
-    const resultMessageId = difyData.messageId;
-
-    res.write(
-      `data: ${JSON.stringify({
-        type: 'done',
-        conversationId: resultConversationId,
-        messageId: resultMessageId,
-        fullText,
-      })}\n\n`,
-    );
-
-    console.log(`✅ 串流完成，總長度: ${fullText.length} 字元`);
-    console.log(`🆔 Conversation ID: ${resultConversationId}`);
-    console.log(`\n✅ ===== Dify Stream 完成 =====\n`);
-
-    res.end();
-  } catch (error) {
-    console.error('❌ Dify stream 錯誤:', error);
-
-    if (!res.headersSent) {
-      res.status(500).json({
-        success: false,
-        error: 'Dify 串流對話失敗',
-        details: error instanceof Error ? error.message : String(error),
-      });
-    } else {
-      res.write(
-        `data: ${JSON.stringify({ type: 'error', error: error instanceof Error ? error.message : String(error) })}\n\n`,
-      );
-      res.end();
-    }
-  }
-});
+// ============================================================
+// History API Endpoints
+// ============================================================
 
 /**
  * GET /api/chat/messages

@@ -1,7 +1,10 @@
-// backend/services/chatService.ts
-// Dify Chatbot 服務層 - 使用 Vercel AI SDK 與 dify-ai-provider
-
-import { generateText, type LanguageModel, streamText } from 'ai';
+import {
+  convertToModelMessages,
+  generateText,
+  type LanguageModel,
+  streamText,
+  type UIMessage,
+} from 'ai';
 import { createDifyProvider } from 'dify-ai-provider';
 
 // 從環境變數取得配置
@@ -116,7 +119,42 @@ async function chat(
 }
 
 /**
- * 發送對話訊息 (Streaming Mode)
+ * 發送對話訊息 (Streaming Mode - 給 assistant-ui 使用)
+ * 接收 UIMessage[] 格式，回傳 streamText 結果供 toUIMessageStreamResponse() 使用
+ */
+async function streamChatForUI(
+  messages: UIMessage[],
+  userId?: string,
+  conversationId?: string,
+  options: DifyModelOptions = {},
+) {
+  const model = createDifyModel({
+    responseMode: 'streaming',
+    ...options,
+  });
+
+  const headers: Record<string, string> = {};
+
+  if (userId) {
+    headers['user-id'] = userId;
+  }
+
+  if (conversationId) {
+    headers['chat-id'] = conversationId;
+  }
+
+  const modelMessages = await convertToModelMessages(messages);
+
+  return streamText({
+    model: model as LanguageModel,
+    messages: modelMessages,
+    headers,
+  });
+}
+
+/**
+ * 發送對話訊息 (Streaming Mode - Legacy)
+ * @deprecated 請使用 streamChatForUI
  */
 async function streamChat(
   message: string,
@@ -271,6 +309,7 @@ export {
   getConversations,
   getMessages,
   streamChat,
+  streamChatForUI,
   type ChatResult,
   type Conversation,
   type ConversationsResponse,
