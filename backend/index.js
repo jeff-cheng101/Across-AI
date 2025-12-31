@@ -20,8 +20,6 @@ const checkpointRoutes = require('./routes/checkpoint.routes');
 const commonRoutes = require('./routes/common.routes');
 const reportRoutes = require('./routes/report.routes');
 const workflowRoutes = require('./routes/workflow.routes.ts');
-const chatRoutes = require('./routes/chat.routes.ts');
-
 
 const app = express();
 
@@ -58,8 +56,6 @@ app.use('/api/checkpoint', checkpointRoutes);
 app.use('/api', commonRoutes);
 app.use('/api/reports', reportRoutes);
 app.use('/api/workflow', workflowRoutes);
-app.use('/api/chat', chatRoutes);
-
 
 // --- 工具函數 ---
 
@@ -241,9 +237,9 @@ async function getAIAssessment(requestBody) {
    - 參考: ${data.url}
    - 檢測到 ${data.instances.length} 個實例
    - 主要攻擊路徑: ${data.instances
-              .slice(0, 3)
-              .map((i) => i.uri)
-              .join(', ')}`;
+     .slice(0, 3)
+     .map((i) => i.uri)
+     .join(', ')}`;
         })
         .join('\n\n');
     };
@@ -251,26 +247,28 @@ async function getAIAssessment(requestBody) {
     prompt = `
 作為一個網路安全專家，請深入分析以下攻擊事件，並基於完整的安全資料提供專業見解。
 
-${fieldReference
-        ? `
+${
+  fieldReference
+    ? `
 === 日誌欄位參考 ===
 以下是 Cloudflare 日誌欄位的對應說明，請在分析時參考這些欄位的業務意義：
 
 ${fieldReference}
 
 `
-        : ''
-      }
+    : ''
+}
 
-${owaspReferences
-        ? `
+${
+  owaspReferences
+    ? `
 === OWASP Top 10 參考資源 ===
 請參考以下 OWASP Top 10 資源來分類和分析攻擊類型：
 ${owaspReferences.map((ref) => `- ${ref}`).join('\n')}
 
 `
-        : ''
-      }
+    : ''
+}
 
 === 攻擊事件基本資訊 ===
 分析ID: ${analysisId}
@@ -278,69 +276,72 @@ ${owaspReferences.map((ref) => `- ${ref}`).join('\n')}
 時間範圍: ${attackData.timeRange ? `${attackData.timeRange.start} 到 ${attackData.timeRange.end}` : 'N/A'}
 
 === 主要攻擊事件分析 ===
-- 實際目標網域：${attackData.attackDomain}${attackData.claimedDomain
+- 實際目標網域：${attackData.attackDomain}${
+      attackData.claimedDomain
         ? `
 - 攻擊者聲稱目標：${attackData.claimedDomain} (⚠️ 偽造的 Host header)`
         : ''
-      }
+    }
 - 目標IP：${attackData.targetIP}
 - 攻擊URL：${attackData.targetURL}
 - 攻擊流量：${attackData.attackTrafficGbps.toFixed(4)} Gbps
 - 主要攻擊來源：${attackData.sourceList.map((src) => `${src.ip} (${src.country}, ${src.asn}, ${src.count} 次請求)`).join(', ')}
 
 === 所有檢測到的攻擊事件 ===
-${attackData.allAttacks
-        ? attackData.allAttacks
-          .map(
-            (attack, index) =>
-              `${index + 1}. ${attack.domain}${attack.claimedDomain ? ` (偽造: ${attack.claimedDomain})` : ''}
+${
+  attackData.allAttacks
+    ? attackData.allAttacks
+        .map(
+          (attack, index) =>
+            `${index + 1}. ${attack.domain}${attack.claimedDomain ? ` (偽造: ${attack.claimedDomain})` : ''}
    - 攻擊來源: ${attack.sourceCount} 個IP
    - 目標路徑: ${attack.targetURL}`,
-          )
-          .join('\n')
-        : '僅檢測到上述單一攻擊事件'
-      }
+        )
+        .join('\n')
+    : '僅檢測到上述單一攻擊事件'
+}
 
 === 攻擊關聯圖分析 ===
-${attackData.attackGraph
-        ? `
+${
+  attackData.attackGraph
+    ? `
 🔗 關聯強度: ${(attackData.attackGraph.correlationMetrics.strength * 100).toFixed(1)}% ${attackData.attackGraph.correlationMetrics.coordinatedAttack ? '(協調攻擊)' : ''}
 📊 多目標攻擊者: ${attackData.attackGraph.correlationMetrics.multiTargetAttackers} 個
 🏗️ 基礎設施規模: ${attackData.attackGraph.correlationMetrics.infrastructureScope} 個子域名
 
 🎯 攻擊者IP集群分析:
 ${attackData.attackGraph.ipClusters
-          .map(
-            (cluster, index) =>
-              `${index + 1}. ${cluster.ip} [${cluster.riskLevel}風險]
+  .map(
+    (cluster, index) =>
+      `${index + 1}. ${cluster.ip} [${cluster.riskLevel}風險]
    - 攻擊目標數: ${cluster.targets.length}
    - 總嚴重程度: ${cluster.totalSeverity}
    - 使用技術: ${cluster.techniques.join(', ')}
    - 目標域名: ${cluster.targets.map((t) => t.domain).join(', ')}`,
-          )
-          .join('\n')}
+  )
+  .join('\n')}
 
 🏢 目標基礎設施分析:
 ${attackData.attackGraph.infrastructureMap
-          .map(
-            (infra, index) =>
-              `${index + 1}. ${infra.baseDomain} ${infra.isTargetedInfrastructure ? '(重點目標)' : ''}
+  .map(
+    (infra, index) =>
+      `${index + 1}. ${infra.baseDomain} ${infra.isTargetedInfrastructure ? '(重點目標)' : ''}
    - 受攻擊子域名: ${infra.subdomains.join(', ')}
    - 攻擊者數量: ${infra.attackers.length}
    - 攻擊者IP: ${infra.attackers.join(', ')}`,
-          )
-          .join('\n')}
+  )
+  .join('\n')}
 
 🔍 攻擊模式分佈:
 ${attackData.attackGraph.attackPatternAnalysis
-          .map(
-            (pattern) =>
-              `- ${pattern.type}: ${pattern.count} 次 (範例: ${pattern.examples.slice(0, 2).join(', ')})`,
-          )
-          .join('\n')}
+  .map(
+    (pattern) =>
+      `- ${pattern.type}: ${pattern.count} 次 (範例: ${pattern.examples.slice(0, 2).join(', ')})`,
+  )
+  .join('\n')}
 `
-        : '未建立攻擊關聯圖（單一攻擊事件）'
-      }
+    : '未建立攻擊關聯圖（單一攻擊事件）'
+}
 
 === 攻擊環境統計 ===
 - 總請求數: ${attackData.totalRequests ? attackData.totalRequests.toLocaleString() : 'N/A'}

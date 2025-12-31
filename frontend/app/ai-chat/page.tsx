@@ -21,6 +21,7 @@ import {
   PromptInputSubmit,
   PromptInputTextarea,
 } from '@/components/ai-elements/prompt-input';
+import { type DifyMessage, getMessages } from '@/services/chat';
 import { Sidebar } from './_components/sidebar';
 
 /**
@@ -42,16 +43,6 @@ function getMessageText(message: UIMessage): string {
     )
     .map((part) => part.text)
     .join('');
-}
-
-/**
- * Dify 訊息格式
- */
-interface DifyMessage {
-  id: string;
-  query: string;
-  answer: string;
-  created_at: number;
 }
 
 /**
@@ -129,29 +120,10 @@ export default function AIChatPage() {
     async (conversationId: string) => {
       setIsLoadingHistory(true);
       try {
-        const response = await fetch(
-          `/api/chat/messages?conversationId=${encodeURIComponent(conversationId)}&userId=${encodeURIComponent(getUserId())}&limit=50`,
-        );
-
-        if (!response.ok) {
-          throw new Error('Failed to load chat history');
-        }
-
-        const result = (await response.json()) as {
-          success: boolean;
-          data?: { messages: DifyMessage[]; hasMore: boolean };
-          error?: string;
-        };
-
-        if (result.success && result.data?.messages) {
-          const uiMessages = convertDifyMessagesToUIMessages(
-            result.data.messages,
-          );
-          setMessages(uiMessages);
-        } else {
-          console.error('Failed to load chat history:', result.error);
-          setMessages([]);
-        }
+        const userId = getUserId();
+        const result = await getMessages(conversationId, userId, 50);
+        const uiMessages = convertDifyMessagesToUIMessages(result.messages);
+        setMessages(uiMessages);
       } catch (error) {
         console.error('Error loading chat history:', error);
         setMessages([]);

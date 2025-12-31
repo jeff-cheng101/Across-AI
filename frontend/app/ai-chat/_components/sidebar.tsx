@@ -1,5 +1,6 @@
 'use client';
 
+import { useQuery } from '@tanstack/react-query';
 import { formatDistanceToNow } from 'date-fns';
 import { zhTW } from 'date-fns/locale';
 import {
@@ -8,11 +9,12 @@ import {
   PlusIcon,
   RefreshCwIcon,
 } from 'lucide-react';
-import { useCallback, useEffect, useState } from 'react';
+import { useEffect } from 'react';
 import { getCurrentUser } from '@/app/util/authenticator';
 import { Button } from '@/components/ui/button';
 import { Separator } from '@/components/ui/separator';
 import { cn } from '@/lib/utils';
+import { type ConversationItem, getConversations } from '@/services/chat';
 
 /**
  * 取得使用者 ID
@@ -22,16 +24,6 @@ function getUserId(): string {
   const user = getCurrentUser();
   return user?.id || 'test-user';
 }
-
-/**
- * 對話項目類型（對應 Dify API 回傳格式）
- */
-type ConversationItem = {
-  id: string;
-  name: string;
-  created_at: number;
-  updated_at: number;
-};
 
 /**
  * Sidebar Props
@@ -63,57 +55,22 @@ export function Sidebar({
   selectedChatId,
   refreshTrigger,
 }: SidebarProps) {
-  const [conversations, setConversations] = useState<ConversationItem[]>([]);
-  const [isLoading, setIsLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const userId = getUserId();
 
-  /**
-   * 從 API 取得對話列表
-   */
-  const fetchConversations = useCallback(async () => {
-    setIsLoading(true);
-    setError(null);
+  // 使用 React Query 取得對話列表
+  const { data, isLoading, error, refetch } = useQuery({
+    queryKey: ['conversations', userId],
+    queryFn: () => getConversations(userId),
+  });
 
-    try {
-      const response = await fetch(
-        `/api/chat/conversations?userId=${encodeURIComponent(getUserId())}&limit=50`,
-      );
-
-      if (!response.ok) {
-        throw new Error('Failed to fetch conversations');
-      }
-
-      const result = (await response.json()) as {
-        success: boolean;
-        data?: { conversations: ConversationItem[]; hasMore: boolean };
-        error?: string;
-      };
-
-      if (result.success && result.data?.conversations) {
-        setConversations(result.data.conversations);
-      } else {
-        throw new Error(result.error || '取得對話列表失敗');
-      }
-    } catch (err) {
-      console.error('Error fetching conversations:', err);
-      setError(err instanceof Error ? err.message : '取得對話列表失敗');
-      setConversations([]);
-    } finally {
-      setIsLoading(false);
-    }
-  }, []);
-
-  // 組件掛載時取得對話列表
-  useEffect(() => {
-    void fetchConversations();
-  }, [fetchConversations]);
+  const conversations: ConversationItem[] = data?.conversations ?? [];
 
   // 監聽 refreshTrigger 變化，觸發刷新（跳過初始值 0）
   useEffect(() => {
     if (refreshTrigger && refreshTrigger > 0) {
-      void fetchConversations();
+      void refetch();
     }
-  }, [refreshTrigger, fetchConversations]);
+  }, [refreshTrigger, refetch]);
 
   return (
     <div
@@ -149,11 +106,13 @@ export function Sidebar({
         {/* 錯誤狀態 */}
         {!isLoading && error && (
           <div className="flex flex-col items-center justify-center gap-2 py-8 text-muted-foreground">
-            <p className="text-center text-sm">{error}</p>
+            <p className="text-center text-sm">
+              {error instanceof Error ? error.message : '取得對話列表失敗'}
+            </p>
             <Button
               variant="ghost"
               size="sm"
-              onClick={() => void fetchConversations()}
+              onClick={() => void refetch()}
               className="gap-1"
             >
               <RefreshCwIcon className="size-3" />
@@ -204,7 +163,7 @@ export function Sidebar({
             variant="ghost"
             size="sm"
             className="w-full justify-center gap-1 text-muted-foreground"
-            onClick={() => void fetchConversations()}
+            onClick={() => void refetch()}
           >
             <RefreshCwIcon className="size-3" />
             重新整理
