@@ -1,18 +1,36 @@
 'use client';
 
-import { MessageSquareIcon, PlusIcon } from 'lucide-react';
+import { formatDistanceToNow } from 'date-fns';
+import { zhTW } from 'date-fns/locale';
+import {
+  Loader2Icon,
+  MessageSquareIcon,
+  PlusIcon,
+  RefreshCwIcon,
+} from 'lucide-react';
+import { useCallback, useEffect, useState } from 'react';
+import { getCurrentUser } from '@/app/util/authenticator';
 import { Button } from '@/components/ui/button';
 import { Separator } from '@/components/ui/separator';
 import { cn } from '@/lib/utils';
 
 /**
- * 歷史對話項目類型
+ * 取得使用者 ID
+ * TODO: 未來應移除 fallback，強制要求登入才能使用 AI Chat 功能
  */
-type ChatHistoryItem = {
+function getUserId(): string {
+  const user = getCurrentUser();
+  return user?.id || 'test-user';
+}
+
+/**
+ * 對話項目類型（對應 Dify API 回傳格式）
+ */
+type ConversationItem = {
   id: string;
-  title: string;
-  lastMessage?: string;
-  timestamp?: Date;
+  name: string;
+  created_at: number;
+  updated_at: number;
 };
 
 /**
@@ -23,154 +41,16 @@ type SidebarProps = {
   onNewChat?: () => void;
   onSelectChat?: (chatId: string) => void;
   selectedChatId?: string;
+  /** 刷新觸發器，當此值變化時會重新載入對話列表 */
+  refreshTrigger?: number;
 };
-
-/**
- * Mock 歷史對話數據（20 筆）
- */
-const mockChatHistory: ChatHistoryItem[] = [
-  {
-    id: '1',
-    title: '如何開始使用 React？',
-    lastMessage: 'React 是一個用於構建用戶界面的 JavaScript 庫...',
-    timestamp: new Date(Date.now() - 1000 * 60 * 30), // 30 分鐘前
-  },
-  {
-    id: '2',
-    title: 'TypeScript 最佳實踐',
-    lastMessage: 'TypeScript 提供了類型安全，可以幫助我們...',
-    timestamp: new Date(Date.now() - 1000 * 60 * 60 * 2), // 2 小時前
-  },
-  {
-    id: '3',
-    title: 'Next.js 路由系統',
-    lastMessage: 'Next.js 使用文件系統路由，每個頁面都是...',
-    timestamp: new Date(Date.now() - 1000 * 60 * 60 * 24), // 1 天前
-  },
-  {
-    id: '4',
-    title: 'Tailwind CSS 配置',
-    lastMessage: 'Tailwind CSS 可以通過 tailwind.config.js 進行...',
-    timestamp: new Date(Date.now() - 1000 * 60 * 60 * 24 * 2), // 2 天前
-  },
-  {
-    id: '5',
-    title: 'AI 模型比較',
-    lastMessage: '不同的 AI 模型有不同的特點和適用場景...',
-    timestamp: new Date(Date.now() - 1000 * 60 * 60 * 24 * 7), // 1 週前
-  },
-  {
-    id: '6',
-    title: 'Docker 容器化部署',
-    lastMessage: 'Docker 可以幫助你將應用打包成容器...',
-    timestamp: new Date(Date.now() - 1000 * 60 * 60 * 24 * 8),
-  },
-  {
-    id: '7',
-    title: 'GraphQL vs REST API',
-    lastMessage: 'GraphQL 提供了更靈活的數據查詢方式...',
-    timestamp: new Date(Date.now() - 1000 * 60 * 60 * 24 * 9),
-  },
-  {
-    id: '8',
-    title: 'Redis 緩存策略',
-    lastMessage: 'Redis 是一個高性能的鍵值存儲數據庫...',
-    timestamp: new Date(Date.now() - 1000 * 60 * 60 * 24 * 10),
-  },
-  {
-    id: '9',
-    title: 'Kubernetes 入門指南',
-    lastMessage: 'K8s 是一個容器編排平台，可以自動化部署...',
-    timestamp: new Date(Date.now() - 1000 * 60 * 60 * 24 * 11),
-  },
-  {
-    id: '10',
-    title: 'PostgreSQL 性能優化',
-    lastMessage: '索引優化是提升數據庫性能的關鍵...',
-    timestamp: new Date(Date.now() - 1000 * 60 * 60 * 24 * 12),
-  },
-  {
-    id: '11',
-    title: 'WebSocket 即時通訊',
-    lastMessage: 'WebSocket 提供了全雙工的通訊方式...',
-    timestamp: new Date(Date.now() - 1000 * 60 * 60 * 24 * 13),
-  },
-  {
-    id: '12',
-    title: 'CI/CD 流水線設計',
-    lastMessage: '持續集成和持續部署可以提高開發效率...',
-    timestamp: new Date(Date.now() - 1000 * 60 * 60 * 24 * 14),
-  },
-  {
-    id: '13',
-    title: '微服務架構設計',
-    lastMessage: '微服務將應用拆分為獨立的小服務...',
-    timestamp: new Date(Date.now() - 1000 * 60 * 60 * 24 * 15),
-  },
-  {
-    id: '14',
-    title: 'OAuth 2.0 認證流程',
-    lastMessage: 'OAuth 2.0 是一個授權框架，用於安全認證...',
-    timestamp: new Date(Date.now() - 1000 * 60 * 60 * 24 * 16),
-  },
-  {
-    id: '15',
-    title: 'Elasticsearch 全文搜索',
-    lastMessage: 'ES 是一個分佈式搜索和分析引擎...',
-    timestamp: new Date(Date.now() - 1000 * 60 * 60 * 24 * 17),
-  },
-  {
-    id: '16',
-    title: '前端性能優化技巧',
-    lastMessage: '代碼分割和懶加載可以顯著提升性能...',
-    timestamp: new Date(Date.now() - 1000 * 60 * 60 * 24 * 18),
-  },
-  {
-    id: '17',
-    title: '單元測試最佳實踐',
-    lastMessage: 'Jest 和 React Testing Library 是常用工具...',
-    timestamp: new Date(Date.now() - 1000 * 60 * 60 * 24 * 19),
-  },
-  {
-    id: '18',
-    title: 'Git 分支管理策略',
-    lastMessage: 'Git Flow 和 GitHub Flow 是常見的分支策略...',
-    timestamp: new Date(Date.now() - 1000 * 60 * 60 * 24 * 20),
-  },
-  {
-    id: '19',
-    title: 'Nginx 反向代理配置',
-    lastMessage: 'Nginx 可以作為負載均衡和反向代理...',
-    timestamp: new Date(Date.now() - 1000 * 60 * 60 * 24 * 21),
-  },
-  {
-    id: '20',
-    title: 'MongoDB 數據建模',
-    lastMessage: '文檔型數據庫的設計思路與關係型不同...',
-    timestamp: new Date(Date.now() - 1000 * 60 * 60 * 24 * 22),
-  },
-];
 
 /**
  * 格式化時間顯示
  */
-function formatTimestamp(date: Date): string {
-  const now = new Date();
-  const diffMs = now.getTime() - date.getTime();
-  const diffMins = Math.floor(diffMs / (1000 * 60));
-  const diffHours = Math.floor(diffMs / (1000 * 60 * 60));
-  const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
-
-  if (diffMins < 60) {
-    return `${diffMins} 分鐘前`;
-  }
-  if (diffHours < 24) {
-    return `${diffHours} 小時前`;
-  }
-  if (diffDays < 7) {
-    return `${diffDays} 天前`;
-  }
-  return date.toLocaleDateString('zh-TW');
+function formatTimestamp(timestamp: number): string {
+  const date = new Date(timestamp * 1000); // Dify 使用秒為單位的 timestamp
+  return formatDistanceToNow(date, { addSuffix: true, locale: zhTW });
 }
 
 /**
@@ -181,7 +61,60 @@ export function Sidebar({
   onNewChat,
   onSelectChat,
   selectedChatId,
+  refreshTrigger,
 }: SidebarProps) {
+  const [conversations, setConversations] = useState<ConversationItem[]>([]);
+  const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  /**
+   * 從 API 取得對話列表
+   */
+  const fetchConversations = useCallback(async () => {
+    setIsLoading(true);
+    setError(null);
+
+    try {
+      const response = await fetch(
+        `/api/chat/conversations?userId=${encodeURIComponent(getUserId())}&limit=50`,
+      );
+
+      if (!response.ok) {
+        throw new Error('Failed to fetch conversations');
+      }
+
+      const result = (await response.json()) as {
+        success: boolean;
+        data?: { conversations: ConversationItem[]; hasMore: boolean };
+        error?: string;
+      };
+
+      if (result.success && result.data?.conversations) {
+        setConversations(result.data.conversations);
+      } else {
+        throw new Error(result.error || '取得對話列表失敗');
+      }
+    } catch (err) {
+      console.error('Error fetching conversations:', err);
+      setError(err instanceof Error ? err.message : '取得對話列表失敗');
+      setConversations([]);
+    } finally {
+      setIsLoading(false);
+    }
+  }, []);
+
+  // 組件掛載時取得對話列表
+  useEffect(() => {
+    void fetchConversations();
+  }, [fetchConversations]);
+
+  // 監聽 refreshTrigger 變化，觸發刷新（跳過初始值 0）
+  useEffect(() => {
+    if (refreshTrigger && refreshTrigger > 0) {
+      void fetchConversations();
+    }
+  }, [refreshTrigger, fetchConversations]);
+
   return (
     <div
       className={cn(
@@ -205,35 +138,79 @@ export function Sidebar({
 
       {/* 歷史對話列表 */}
       <div className="flex-1 overflow-y-auto overflow-x-hidden p-2">
-        {mockChatHistory.map((chat) => (
-          <button
-            key={chat.id}
-            className={cn(
-              'group flex w-full min-w-0 items-start gap-2 rounded-lg p-2 text-left transition-colors hover:bg-accent',
-              selectedChatId === chat.id && 'bg-accent',
-            )}
-            onClick={() => onSelectChat?.(chat.id)}
-            type="button"
-          >
-            <MessageSquareIcon className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
-            <div className="min-w-0 flex-1 space-y-0.5 overflow-hidden">
-              <p className="truncate font-medium text-sm leading-tight">
-                {chat.title}
-              </p>
-              {chat.lastMessage && (
-                <p className="truncate text-muted-foreground text-xs leading-tight">
-                  {chat.lastMessage}
-                </p>
+        {/* 載入中狀態 */}
+        {isLoading && (
+          <div className="flex items-center justify-center py-8 text-muted-foreground">
+            <Loader2Icon className="mr-2 size-4 animate-spin" />
+            <span className="text-sm">載入中...</span>
+          </div>
+        )}
+
+        {/* 錯誤狀態 */}
+        {!isLoading && error && (
+          <div className="flex flex-col items-center justify-center gap-2 py-8 text-muted-foreground">
+            <p className="text-center text-sm">{error}</p>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => void fetchConversations()}
+              className="gap-1"
+            >
+              <RefreshCwIcon className="size-3" />
+              重試
+            </Button>
+          </div>
+        )}
+
+        {/* 空狀態 */}
+        {!isLoading && !error && conversations.length === 0 && (
+          <div className="flex flex-col items-center justify-center py-8 text-muted-foreground">
+            <MessageSquareIcon className="mb-2 size-8" />
+            <p className="text-center text-sm">尚無對話紀錄</p>
+            <p className="text-center text-xs">開始新對話來建立紀錄</p>
+          </div>
+        )}
+
+        {/* 對話列表 */}
+        {!isLoading &&
+          !error &&
+          conversations.map((chat) => (
+            <button
+              key={chat.id}
+              className={cn(
+                'group flex w-full min-w-0 items-start gap-2 rounded-lg p-2 text-left transition-colors hover:bg-accent',
+                selectedChatId === chat.id && 'bg-accent',
               )}
-              {chat.timestamp && (
-                <p className="truncate text-muted-foreground text-xs leading-tight">
-                  {formatTimestamp(chat.timestamp)}
+              onClick={() => onSelectChat?.(chat.id)}
+              type="button"
+            >
+              <MessageSquareIcon className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
+              <div className="min-w-0 flex-1 space-y-0.5 overflow-hidden">
+                <p className="truncate font-medium text-sm leading-tight">
+                  {chat.name || '新對話'}
                 </p>
-              )}
-            </div>
-          </button>
-        ))}
+                <p className="truncate text-muted-foreground text-xs leading-tight">
+                  {formatTimestamp(chat.updated_at)}
+                </p>
+              </div>
+            </button>
+          ))}
       </div>
+
+      {/* 底部：重新整理按鈕 */}
+      {!isLoading && conversations.length > 0 && (
+        <div className="p-2">
+          <Button
+            variant="ghost"
+            size="sm"
+            className="w-full justify-center gap-1 text-muted-foreground"
+            onClick={() => void fetchConversations()}
+          >
+            <RefreshCwIcon className="size-3" />
+            重新整理
+          </Button>
+        </div>
+      )}
     </div>
   );
 }

@@ -2,8 +2,9 @@
 
 import { useChat } from '@ai-sdk/react';
 import { DefaultChatTransport, type UIMessage } from 'ai';
-import { MessageSquareIcon } from 'lucide-react';
-import { useMemo, useState } from 'react';
+import { Loader2Icon, MessageSquareIcon } from 'lucide-react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { getCurrentUser } from '@/app/util/authenticator';
 import {
   Conversation,
   ConversationContent,
@@ -23,6 +24,15 @@ import {
 import { Sidebar } from './_components/sidebar';
 
 /**
+ * 取得使用者 ID
+ * TODO: 未來應移除 fallback，強制要求登入才能使用 AI Chat 功能
+ */
+function getUserId(): string {
+  const user = getCurrentUser();
+  return user?.id || 'test-user';
+}
+
+/**
  * 從 UIMessage 的 parts 中提取文字內容
  */
 function getMessageText(message: UIMessage): string {
@@ -34,19 +44,77 @@ function getMessageText(message: UIMessage): string {
     .join('');
 }
 
+/**
+ * Dify 訊息格式
+ */
+interface DifyMessage {
+  id: string;
+  query: string;
+  answer: string;
+  created_at: number;
+}
+
+/**
+ * 將 Dify 訊息格式轉換為 UIMessage 格式
+ */
+function convertDifyMessagesToUIMessages(
+  difyMessages: DifyMessage[],
+): UIMessage[] {
+  const uiMessages: UIMessage[] = [];
+
+  // Dify 訊息是倒序的（最新的在前），需要反轉
+  const sortedMessages = [...difyMessages].reverse();
+
+  for (const msg of sortedMessages) {
+    // 用戶訊息
+    uiMessages.push({
+      id: `${msg.id}-user`,
+      role: 'user',
+      parts: [{ type: 'text', text: msg.query }],
+    });
+
+    // AI 回覆
+    uiMessages.push({
+      id: `${msg.id}-assistant`,
+      role: 'assistant',
+      parts: [{ type: 'text', text: msg.answer }],
+    });
+  }
+
+  return uiMessages;
+}
+
 export default function AIChatPage() {
   const [selectedChatId, setSelectedChatId] = useState<string | undefined>(
     undefined,
   );
+  const [isLoadingHistory, setIsLoadingHistory] = useState(false);
 
-  // 建立自定義 transport 以連接後端 API
+  // 用於刷新側邊欄的觸發器
+  const [sidebarRefreshTrigger, setSidebarRefreshTrigger] = useState(0);
+
+  // 用於自動滾動到對話底部
+  const messagesEndRef = useRef<HTMLDivElement>(null);
+
+  // 追蹤訊息數量變化，用於判斷是否需要滾動
+  const prevMessagesLengthRef = useRef(0);
+
+  // 追蹤是否為新對話（沒有選擇任何對話時發送的第一條訊息）
+  const isNewConversationRef = useRef(false);
+
+  // 建立自定義 transport 以連接 API Route Handler
   const transport = useMemo(
     () =>
       new DefaultChatTransport({
-        api: '/api/backend/chat',
+        api: '/api/chat',
         credentials: 'include',
+        // 傳遞額外的 body 參數
+        body: {
+          userId: getUserId(),
+          conversationId: selectedChatId,
+        },
       }),
-    [],
+    [selectedChatId],
   );
 
   // 使用 useChat hook（v3 API）
@@ -54,27 +122,116 @@ export default function AIChatPage() {
     transport,
   });
 
+  /**
+   * 載入對話歷史訊息
+   */
+  const loadChatHistory = useCallback(
+    async (conversationId: string) => {
+      setIsLoadingHistory(true);
+      try {
+        const response = await fetch(
+          `/api/chat/messages?conversationId=${encodeURIComponent(conversationId)}&userId=${encodeURIComponent(getUserId())}&limit=50`,
+        );
+
+        if (!response.ok) {
+          throw new Error('Failed to load chat history');
+        }
+
+        const result = (await response.json()) as {
+          success: boolean;
+          data?: { messages: DifyMessage[]; hasMore: boolean };
+          error?: string;
+        };
+
+        if (result.success && result.data?.messages) {
+          const uiMessages = convertDifyMessagesToUIMessages(
+            result.data.messages,
+          );
+          setMessages(uiMessages);
+        } else {
+          console.error('Failed to load chat history:', result.error);
+          setMessages([]);
+        }
+      } catch (error) {
+        console.error('Error loading chat history:', error);
+        setMessages([]);
+      } finally {
+        setIsLoadingHistory(false);
+      }
+    },
+    [setMessages],
+  );
+
   const handleNewChat = () => {
     setSelectedChatId(undefined);
     setMessages([]);
+    isNewConversationRef.current = true; // 標記為新對話
   };
 
-  const handleSelectChat = (chatId: string) => {
-    setSelectedChatId(chatId);
-    // TODO: 從後端載入對話歷史
-    setMessages([]);
-  };
+  const handleSelectChat = useCallback(
+    (chatId: string) => {
+      setSelectedChatId(chatId);
+      isNewConversationRef.current = false; // 選擇已有對話，不是新對話
+      void loadChatHistory(chatId);
+    },
+    [loadChatHistory],
+  );
 
   // 處理 PromptInput 的 onSubmit
   const handlePromptSubmit = async (
     message: { text: string; files: unknown[] },
     _event: React.FormEvent<HTMLFormElement>,
   ) => {
+    // 如果正在發送或 AI 正在回覆中，禁止送出新訊息
+    if (status === 'submitted' || status === 'streaming') {
+      return;
+    }
+
     if (message.text.trim()) {
+      // 如果沒有選擇對話，標記為新對話
+      if (!selectedChatId) {
+        isNewConversationRef.current = true;
+      }
       // 使用 sendMessage 發送用戶訊息（v3 API）
       await sendMessage({ text: message.text });
     }
   };
+
+  /**
+   * 滾動到對話底部（只滾動對話內容區域）
+   */
+  const scrollToBottom = useCallback(() => {
+    // 滾動到錨點元素，使用 block: 'end' 確保只在容器內滾動
+    messagesEndRef.current?.scrollIntoView({
+      behavior: 'smooth',
+      block: 'end',
+    });
+  }, []);
+
+  /**
+   * 監聽訊息變化：
+   * 1. 當有新訊息時自動滾動到底部
+   * 2. 當新對話完成第一次回覆後刷新側邊欄
+   */
+  useEffect(() => {
+    // 只有訊息增加時才滾動（避免載入歷史時滾動）
+    if (messages.length > prevMessagesLengthRef.current) {
+      scrollToBottom();
+
+      // 如果是新對話且 AI 已經回覆（至少有 2 條訊息：用戶 + AI）
+      // 刷新側邊欄讓新對話出現在列表中
+      if (isNewConversationRef.current && messages.length >= 2) {
+        // 延遲刷新，確保後端已建立對話
+        const timer = setTimeout(() => {
+          setSidebarRefreshTrigger((prev) => prev + 1);
+          isNewConversationRef.current = false; // 重置標記
+        }, 1000);
+        return () => clearTimeout(timer);
+      }
+    }
+
+    prevMessagesLengthRef.current = messages.length;
+  }, [messages, scrollToBottom]);
 
   return (
     <div className="flex h-[calc(100vh-64px)]">
@@ -83,6 +240,7 @@ export default function AIChatPage() {
         onNewChat={handleNewChat}
         onSelectChat={handleSelectChat}
         selectedChatId={selectedChatId}
+        refreshTrigger={sidebarRefreshTrigger}
       />
 
       {/* 右側主對話區 */}
@@ -90,7 +248,16 @@ export default function AIChatPage() {
         {/* 對話容器 */}
         <Conversation className="flex-1">
           <ConversationContent>
-            {messages.length === 0 ? (
+            {/* 載入歷史訊息中 */}
+            {isLoadingHistory && (
+              <div className="flex items-center justify-center py-8 text-muted-foreground">
+                <Loader2Icon className="mr-2 size-5 animate-spin" />
+                <span>載入對話歷史...</span>
+              </div>
+            )}
+
+            {/* 空狀態 */}
+            {!isLoadingHistory && messages.length === 0 && (
               <ConversationEmptyState
                 title="開始新對話"
                 description="輸入訊息開始與 AI 助手對話"
@@ -98,15 +265,36 @@ export default function AIChatPage() {
                   <MessageSquareIcon className="size-8 text-muted-foreground" />
                 }
               />
-            ) : (
+            )}
+
+            {/* 訊息列表 */}
+            {!isLoadingHistory &&
               messages.map((message) => (
                 <Message key={message.id} from={message.role}>
                   <MessageContent>
                     <MessageResponse>{getMessageText(message)}</MessageResponse>
                   </MessageContent>
                 </Message>
-              ))
+              ))}
+
+            {/* AI 回覆中的 Loading 狀態 */}
+            {(status === 'submitted' || status === 'streaming') && (
+              <Message from="assistant">
+                <MessageContent>
+                  <div className="flex items-center gap-2 text-muted-foreground">
+                    <Loader2Icon className="size-4 animate-spin" />
+                    <span className="text-sm">
+                      {status === 'submitted'
+                        ? '發送中...'
+                        : 'AI 正在回覆中...'}
+                    </span>
+                  </div>
+                </MessageContent>
+              </Message>
             )}
+
+            {/* 滾動錨點 */}
+            <div ref={messagesEndRef} />
           </ConversationContent>
           <ConversationScrollButton />
         </Conversation>
