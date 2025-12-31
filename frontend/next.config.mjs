@@ -5,22 +5,6 @@ import { fileURLToPath } from 'node:url';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-/**
- * 取得環境變數，未設定時拋出錯誤
- * @param {string} name - 環境變數名稱
- * @returns {string} 環境變數值
- */
-const getEnvVar = (name) => {
-  const value = process.env[name];
-  if (!value) {
-    throw new Error(`❌ 環境變數 ${name} 未設定`);
-  }
-  return value;
-};
-
-const AUTH_SERVICE_URL = getEnvVar('AUTH_SERVICE_URL');
-const BACKEND_SERVICE_URL = getEnvVar('BACKEND_SERVICE_URL');
-
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   outputFileTracingRoot: path.join(__dirname, '..'),
@@ -42,19 +26,10 @@ const nextConfig = {
           }
         : false,
   },
-  // TODO: 為了解決CORS暫時使用rewrites，如果將來會靜態匯出需要移除
-  async rewrites() {
-    return [
-      {
-        source: '/api/auth/:path*',
-        destination: `${AUTH_SERVICE_URL}/api/internal/:path*`, // proxy to auth service
-      },
-      {
-        source: '/api/backend/:path*',
-        destination: `${BACKEND_SERVICE_URL}/:path*`, // proxy to backend service
-      },
-    ];
-  },
+  // 注意：Proxy 功能已改用 Route Handlers 實作
+  // - /api/backend/* -> app/api/backend/[...path]/route.ts
+  // - /api/auth/*    -> app/api/auth/[...path]/route.ts
+  // 這樣可以避免 proxy 連線逾時問題，並支援串流回應
 };
 
 export default nextConfig;

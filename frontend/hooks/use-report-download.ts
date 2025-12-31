@@ -50,7 +50,7 @@ export function useReportDownload() {
       const aiProvider = localStorage.getItem('aiProvider') || 'ollama';
       const aiModel =
         aiProvider === 'ollama'
-          ? localStorage.getItem('ollamaModel') || 'llama3.3:70b'
+          ? localStorage.getItem('ollamaModel') || 'gpt-oss:20b'
           : 'gemini-2.0-flash-exp';
 
       setProgress(20);

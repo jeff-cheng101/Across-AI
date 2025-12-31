@@ -1,14 +1,23 @@
 // backend/services/reports/reportGeneratorService.js
 // 報告生成核心服務 - 負責協調 AI 分析結果轉譯與報告生成
 
-const fs = require('fs');
-const path = require('path');
+const fs = require('node:fs');
+const path = require('node:path');
+const OpenAI = require('openai');
 const { GoogleGenerativeAI } = require('@google/generative-ai');
-const { logOllamaRequest, logOllamaResponse } = require('../../utils/ollamaLogger');
+const {
+  logOpenAICompatibleRequest,
+  logOpenAICompatibleResponse,
+} = require('../../utils/ollamaLogger');
+
+const { LLM_API_KEY, LLM_PROVIDER, LLM_SERVICE_URL, LLM_MODEL } = process.env;
 
 class ReportGeneratorService {
   constructor() {
-    this.promptTemplatePath = path.join(__dirname, '../../prompts/security-report-generation-prompt.md');
+    this.promptTemplatePath = path.join(
+      __dirname,
+      '../../prompts/security-report-generation-prompt.md',
+    );
   }
 
   /**
@@ -34,15 +43,19 @@ class ReportGeneratorService {
 
     // 計算風險統計
     const risks = analysisData.risks || [];
-    const criticalCount = risks.filter(r => r.severity === 'critical').length;
-    const highCount = risks.filter(r => r.severity === 'high').length;
-    const mediumCount = risks.filter(r => r.severity === 'medium').length;
-    const lowCount = risks.filter(r => r.severity === 'low').length;
-    const totalAffectedAssets = risks.reduce((sum, r) => sum + (r.affectedAssets || 0), 0);
+    const criticalCount = risks.filter((r) => r.severity === 'critical').length;
+    const highCount = risks.filter((r) => r.severity === 'high').length;
+    const mediumCount = risks.filter((r) => r.severity === 'medium').length;
+    const lowCount = risks.filter((r) => r.severity === 'low').length;
+    const totalAffectedAssets = risks.reduce(
+      (sum, r) => sum + (r.affectedAssets || 0),
+      0,
+    );
 
     // 時間範圍處理
     const timeRange = metadata.timeRange || {};
-    const timeRangeStart = timeRange.start || timeRange.display?.start || '未知';
+    const timeRangeStart =
+      timeRange.start || timeRange.display?.start || '未知';
     const timeRangeEnd = timeRange.end || timeRange.display?.end || '未知';
 
     // 替換模板變數
@@ -56,11 +69,14 @@ class ReportGeneratorService {
       '{{highCount}}': String(highCount),
       '{{mediumCount}}': String(mediumCount),
       '{{lowCount}}': String(lowCount),
-      '{{totalAffectedAssets}}': String(totalAffectedAssets)
+      '{{totalAffectedAssets}}': String(totalAffectedAssets),
     };
 
     for (const [placeholder, value] of Object.entries(replacements)) {
-      template = template.replace(new RegExp(placeholder.replace(/[{}]/g, '\\$&'), 'g'), value);
+      template = template.replace(
+        new RegExp(placeholder.replace(/[{}]/g, '\\$&'), 'g'),
+        value,
+      );
     }
 
     return template;
@@ -68,100 +84,93 @@ class ReportGeneratorService {
 
   /**
    * 呼叫 AI 生成報告結構化資料（第二階段 AI）
+   * 使用統一的 LLM 設定（與 cloudflare.routes.js 一致）
    * @param {string} prompt - 完整的 Prompt
    * @param {Object} aiConfig - AI 配置 { provider, apiKey, model }
    */
   async generateReportData(prompt, aiConfig) {
-    const { provider = 'gemini', apiKey, model = 'gemini-2.0-flash-exp' } = aiConfig;
+    // 優先使用環境變數的統一 LLM 設定
+    const provider = LLM_PROVIDER || aiConfig.provider || 'gemini';
+    const apiKey = LLM_API_KEY || aiConfig.apiKey;
+    const model = LLM_MODEL || aiConfig.model || 'gemini-2.0-flash-exp';
+    const serviceUrl = LLM_SERVICE_URL;
 
     console.log(`\n📝 ===== 開始報告資料生成（第二階段 AI）=====`);
     console.log(`🤖 AI 提供者: ${provider}`);
     console.log(`🤖 AI 模型: ${model}`);
+    console.log(`🔗 服務 URL: ${serviceUrl || 'N/A'}`);
     console.log(`📏 Prompt 長度: ${prompt.length} 字元`);
 
     let responseText;
 
-    if (provider === 'ollama') {
-      // 使用 Ollama
-      const ollamaUrl = process.env.OLLAMA_URL || 'http://localhost:11434';
-      const ollamaModel = model || 'llama3.3:70b';
+    // 使用統一的 OpenAI 相容 API（與 cloudflare.routes.js 一致）
+    if (serviceUrl) {
+      console.log(`\n⭐ 使用 OpenAI 相容 API (${provider})...`);
 
-      console.log(`🦙 Ollama URL: ${ollamaUrl}`);
-      console.log(`🦙 Ollama 模型: ${ollamaModel}`);
+      const openai = new OpenAI({
+        baseURL: serviceUrl,
+        apiKey: apiKey,
+      });
 
+      // 設定 5 分鐘超時
       const controller = new AbortController();
       const timeoutId = setTimeout(() => {
         controller.abort();
-        console.error('❌ Ollama 請求超時（5 分鐘）');
+        console.error(`❌ ${provider} 請求超時（5 分鐘）`);
       }, 300000);
 
       try {
         const startTime = Date.now();
-        console.log('⏱️ 開始呼叫 Ollama API...');
+        console.log(`⏱️ 開始呼叫 ${provider} API...`);
 
-        // 構建請求 body
-        const requestBody = {
-          model: ollamaModel,
-          prompt: prompt,
-          stream: false,
-          options: {
-            temperature: 0.3,  // 報告生成使用較低溫度以確保一致性
-            num_predict: 16384,
-            num_ctx: 16384,
-            top_k: 40,
-            top_p: 0.9
-          }
+        const requestParams = {
+          model: model,
+          messages: [
+            {
+              role: 'system',
+              content:
+                '你是資安報告生成專家。請根據提供的 WAF 分析資料，生成符合格式要求的資安事件通報單結構化 JSON 資料。',
+            },
+            {
+              role: 'user',
+              content: prompt,
+            },
+          ],
+          response_format: { type: 'json_object' },
         };
 
         // 📤 記錄完整請求訊息
-        logOllamaRequest(`${ollamaUrl}/api/generate`, requestBody);
+        logOpenAICompatibleRequest(serviceUrl, requestParams);
 
-        const ollamaResponse = await fetch(`${ollamaUrl}/api/generate`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(requestBody),
-          signal: controller.signal
+        const completion = await openai.chat.completions.create(requestParams, {
+          signal: controller.signal,
         });
 
         clearTimeout(timeoutId);
         const elapsedTime = ((Date.now() - startTime) / 1000).toFixed(2);
-        console.log(`⏱️ Ollama API 回應時間: ${elapsedTime} 秒`);
-
-        // 先讀取回應文本（只能讀取一次）
-        const responseText_raw = await ollamaResponse.text();
-        
-        if (!ollamaResponse.ok) {
-          let errorDetails = responseText_raw;
-          try {
-            const errorData = JSON.parse(responseText_raw);
-            errorDetails = errorData.error || JSON.stringify(errorData);
-          } catch (e) {
-            // 已經是文本了，直接使用
-          }
-          throw new Error(`Ollama API 錯誤 (${ollamaResponse.status}): ${errorDetails}`);
-        }
-
-        const ollamaData = JSON.parse(responseText_raw);
+        console.log(`⏱️ ${provider} API 回應時間: ${elapsedTime} 秒`);
 
         // 📥 記錄完整回應訊息
-        logOllamaResponse(ollamaData, elapsedTime);
+        logOpenAICompatibleResponse(completion, elapsedTime);
 
-        responseText = ollamaData.response;
-        console.log(`✅ Ollama 回應長度: ${responseText.length} 字元`);
+        responseText = completion.choices[0]?.message?.content || '';
 
-      } catch (fetchError) {
-        clearTimeout(timeoutId);
-        if (fetchError.name === 'AbortError') {
-          throw new Error('Ollama 請求超時（5 分鐘）');
+        if (!responseText || responseText.trim().length === 0) {
+          throw new Error(`${provider} 返回空回應`);
         }
-        throw fetchError;
-      }
 
-    } else {
-      // 使用 Gemini
-      if (!apiKey) {
-        throw new Error('請提供 Gemini API Key');
+        console.log(`✅ ${provider} 回應長度: ${responseText.length} 字元`);
+      } catch (apiError) {
+        clearTimeout(timeoutId);
+        if (apiError.name === 'AbortError') {
+          throw new Error(`${provider} 請求超時（5 分鐘）`);
+        }
+        console.error(`❌ ${provider} API 呼叫失敗:`, apiError.message);
+        throw apiError;
       }
+    } else if (provider === 'gemini' && apiKey) {
+      // 回退到 Gemini SDK
+      console.log(`\n⭐ 使用 Gemini SDK...`);
 
       const genAI = new GoogleGenerativeAI(apiKey);
       const geminiModel = genAI.getGenerativeModel({ model });
@@ -175,6 +184,8 @@ class ReportGeneratorService {
       const elapsedTime = ((Date.now() - startTime) / 1000).toFixed(2);
       console.log(`⏱️ Gemini API 回應時間: ${elapsedTime} 秒`);
       console.log(`✅ Gemini 回應長度: ${responseText.length} 字元`);
+    } else {
+      throw new Error('請設定 LLM_SERVICE_URL 或 GEMINI_API_KEY');
     }
 
     // 解析 JSON 回應
@@ -189,9 +200,10 @@ class ReportGeneratorService {
       console.log('⚠️ 直接解析失敗，嘗試提取 JSON...');
 
       // 嘗試從 markdown code block 中提取
-      const jsonMatch = responseText.match(/```json\s*([\s\S]*?)\s*```/) ||
-                        responseText.match(/```\s*([\s\S]*?)\s*```/) ||
-                        responseText.match(/\{[\s\S]*\}/);
+      const jsonMatch =
+        responseText.match(/```json\s*([\s\S]*?)\s*```/) ||
+        responseText.match(/```\s*([\s\S]*?)\s*```/) ||
+        responseText.match(/\{[\s\S]*\}/);
 
       if (jsonMatch) {
         const jsonStr = jsonMatch[1] || jsonMatch[0];
@@ -222,13 +234,18 @@ class ReportGeneratorService {
 
     // 合併 Step1 基本資料（用戶提供）
     merged.step1_basicInfo = {
-      reportTime: new Date().toLocaleString('zh-TW', {
-        year: 'numeric',
-        month: '2-digit',
-        day: '2-digit',
-        hour: '2-digit',
-        minute: '2-digit'
-      }).replace(/\//g, '年').replace(',', '日').replace(':', '時') + '分',
+      reportTime:
+        new Date()
+          .toLocaleString('zh-TW', {
+            year: 'numeric',
+            month: '2-digit',
+            day: '2-digit',
+            hour: '2-digit',
+            minute: '2-digit',
+          })
+          .replace(/\//g, '年')
+          .replace(',', '日')
+          .replace(':', '時') + '分',
       organizationName: userProvidedData.organizationName || '',
       reviewOrganization: userProvidedData.reviewOrganization || '',
       reporterName: userProvidedData.reporterName || '',
@@ -237,25 +254,34 @@ class ReportGeneratorService {
       email: userProvidedData.email || '',
       isProxy: userProvidedData.isProxy || false,
       proxyOrganization: userProvidedData.proxyOrganization || '',
-      investigationVendor: userProvidedData.investigationVendor || ''
+      investigationVendor: userProvidedData.investigationVendor || '',
     };
 
     // 合併 Step6 結案資料中的用戶資料
     if (merged.step6_closureReport) {
       merged.step6_closureReport.systemInfo = {
         ...merged.step6_closureReport.systemInfo,
-        mainSystemVendor: userProvidedData.mainSystemVendor || merged.step6_closureReport.systemInfo?.mainSystemVendor || '',
-        systemBuilder: userProvidedData.systemBuilder || merged.step6_closureReport.systemInfo?.systemBuilder || ''
+        mainSystemVendor:
+          userProvidedData.mainSystemVendor ||
+          merged.step6_closureReport.systemInfo?.mainSystemVendor ||
+          '',
+        systemBuilder:
+          userProvidedData.systemBuilder ||
+          merged.step6_closureReport.systemInfo?.systemBuilder ||
+          '',
       };
 
       merged.step6_closureReport.socInfo = {
         ...merged.step6_closureReport.socInfo,
-        socVendor: userProvidedData.socVendor || merged.step6_closureReport.socInfo?.socVendor || ''
+        socVendor:
+          userProvidedData.socVendor ||
+          merged.step6_closureReport.socInfo?.socVendor ||
+          '',
       };
 
       merged.step6_closureReport.securityPersonnel = {
         name: userProvidedData.securityPersonName || '',
-        title: userProvidedData.securityPersonTitle || ''
+        title: userProvidedData.securityPersonTitle || '',
       };
     }
 
@@ -283,20 +309,22 @@ class ReportGeneratorService {
 
       // Step 3: 合併用戶資料
       console.log('\n🔗 Step 3: 合併用戶提供的資料...');
-      const completeReportData = this.mergeReportData(aiReportData, userProvidedData);
+      const completeReportData = this.mergeReportData(
+        aiReportData,
+        userProvidedData,
+      );
 
       console.log('\n✅ ===== 報告生成流程完成 =====\n');
 
       return {
         success: true,
-        reportData: completeReportData
+        reportData: completeReportData,
       };
-
     } catch (error) {
       console.error('\n❌ 報告生成流程失敗:', error.message);
       return {
         success: false,
-        error: error.message
+        error: error.message,
       };
     }
   }
@@ -311,7 +339,7 @@ class ReportGeneratorService {
       'step2_eventProcess',
       'step3_impactAssessment',
       'step5_emergencyResponse',
-      'step6_closureReport'
+      'step6_closureReport',
     ];
 
     const missingFields = [];
@@ -325,7 +353,7 @@ class ReportGeneratorService {
     if (missingFields.length > 0) {
       return {
         valid: false,
-        missingFields
+        missingFields,
       };
     }
 
@@ -334,4 +362,3 @@ class ReportGeneratorService {
 }
 
 module.exports = ReportGeneratorService;
-
