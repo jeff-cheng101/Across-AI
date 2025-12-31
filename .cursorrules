@@ -1,0 +1,332 @@
+# Across-AI 專案規則
+
+> **注意**：本文檔主要涵蓋前端開發規範。後端規範請參考 `backend/README.md`。
+
+## 前端技術棧
+
+### 核心框架
+- **Next.js 15.5+** (App Router)
+- **React 19.2+**
+- **TypeScript 5+** (嚴格模式)
+- **Tailwind CSS 3.4+**
+
+### UI 組件庫
+- **Radix UI** - 無障礙 UI 組件
+- **shadcn/ui** - 基於 Radix UI 的組件系統
+- **Lucide React** - 圖標庫
+- **Framer Motion** - 動畫庫
+
+### 狀態管理與數據獲取
+- **TanStack Query (React Query) 5.90+** - 服務器狀態管理
+- **RxJS 7.8+** - 響應式編程（用於認證狀態）
+- **React Hook Form** - 表單管理
+- **Zod 3.24+** - 數據驗證
+
+### 圖表與可視化
+- **ECharts 5.5+** / **echarts-for-react** - 圖表庫
+- **Recharts** - React 圖表庫
+
+### HTTP 客戶端
+- **Axios 1.13+** - HTTP 請求庫
+
+### 其他工具
+- **date-fns 4.1+** - 日期處理
+- **next-themes** - 主題切換
+- **sonner** - Toast 通知
+- **react-toastify** - Toast 通知（備用）
+
+## 前端專案結構
+
+```
+frontend/
+├── app/                    # Next.js App Router
+│   ├── routes/            # API 路由封裝（舊代碼，逐步遷移）
+│   ├── util/              # 工具函數（如 authenticator.ts）
+│   └── [pages]/           # 頁面組件
+├── components/            # React 組件
+├── lib/                   # 共享工具和配置
+│   └── api-clients.ts     # ⭐ 統一的 API 客戶端（authClient, backendClient）
+├── hooks/                 # 自定義 React Hooks
+├── services/              # 業務邏輯服務（新 API 實作）
+│   └── [feature]/        # 功能模組
+│       ├── type.ts       # Zod Schema 和類型定義
+│       ├── api.ts        # Fetcher 純函數
+│       └── index.ts      # 統一導出
+├── types/                 # TypeScript 類型定義
+└── public/                # 靜態資源
+```
+
+## API 客戶端架構（重要）
+
+### 核心原則
+- **所有 API 調用必須使用 `lib/api-clients.ts` 中定義的客戶端**
+- **統一使用 `authClient` 或 `backendClient`，不直接使用 `fetch` 或創建新的 Axios 實例**
+- **所有服務 URL 必須通過環境變數配置**
+- **統一使用 Next.js rewrites 進行 API 代理，解決 CORS 問題**
+
+### 架構說明
+- 使用 Next.js `rewrites` 功能進行 API 代理
+- 客戶端使用相對路徑（如 `/api/auth`、`/api/backend`）
+- Next.js 在服務端將請求代理到實際的後端服務
+- 這樣可以避免 CORS 問題，同時不暴露實際的服務 URL
+
+### 兩個 Axios 實例
+
+#### 1. `authClient` - 認證服務
+- **用途**：登入、用戶管理、票據、系統設定、合約等
+- **Base URL**：`/api/auth`（相對路徑）
+- **實際代理到**：`${AUTH_SERVICE_URL}/api/internal`（由 `next.config.mjs` 的 `rewrites` 處理）
+- **配置**：`withCredentials: true`, `timeout: 300000`
+- **錯誤處理**：自動處理 401/403，觸發登出和路由跳轉
+
+#### 2. `backendClient` - 後端 API 服務
+- **用途**：AI 分析、報告生成、Workflow 等
+- **Base URL**：`/api/backend`（相對路徑）
+- **實際代理到**：`${BACKEND_SERVICE_URL}/api`（由 `next.config.mjs` 的 `rewrites` 處理）
+- **配置**：`withCredentials: true`, `timeout: 300000`
+- **錯誤處理**：不處理認證錯誤（由後端處理）
+
+### 使用方式
+- 認證相關 API：使用 `authClient`
+- 後端業務 API：使用 `backendClient`
+- 統一使用上述兩個客戶端，不直接使用 `fetch` 或創建新的 Axios 實例
+
+## API 實作標準模式（重要）
+
+### 三層架構模式
+**所有新的 API 實作必須遵循以下模式**（參考 `services/workflow/`）：
+
+#### 1. Zod Schema 層 (`type.ts`)
+- **用途**：定義輸入/輸出的驗證 schema 和 TypeScript 類型
+- **位置**：`services/[feature]/type.ts`
+- **要求**：
+  - 使用 Zod 定義所有請求/回應的 schema
+  - 使用 `z.infer` 導出 TypeScript 類型
+  - 確保類型安全
+
+#### 2. Fetcher 層 (`api.ts`)
+- **用途**：純函數，執行 API 請求並使用 Zod 驗證回應
+- **位置**：`services/[feature]/api.ts`
+- **要求**：
+  - 使用 `authClient` 或 `backendClient` 執行 API 請求
+  - 使用 Zod schema 驗證回應：`Schema.parse(response.data)`
+  - 保持為純函數，不包含 React Query 邏輯
+
+#### 3. 組件中使用 React Query
+- **用途**：在組件中直接使用 React Query 搭配 fetcher 函數
+- **位置**：直接在組件中使用 `useQuery` 或 `useMutation`
+- **要求**：
+  - 使用 `useQuery` 處理 GET 請求
+  - 使用 `useMutation` 處理 POST/PUT/DELETE 請求
+  - 直接將 fetcher 函數傳入 `mutationFn` 或 `queryFn`
+  - **直接在組件中使用，不創建額外的 hooks 層**
+
+### 重要規則
+- **所有新 API 必須放在 `services/` 下**：不在 `app/routes/` 新增功能
+- **統一使用模式**：所有 API 調用必須遵循「Zod Schema → Fetcher → 組件中直接使用 React Query」模式
+- **類型安全優先**：所有 API 回應必須使用 Zod 驗證
+- **直接在組件中使用 React Query**：使用 `useQuery` 或 `useMutation`，並傳入 fetcher 函數，不創建額外的 hooks 層
+- **`app/routes/` 為舊代碼**：現有的 `app/routes/` 代碼保持不變，新功能統一使用 `services/` 架構
+
+### 遷移計劃
+- **新功能**：必須使用新的三層架構模式
+- **舊代碼**：`app/routes/` 保持不變，逐步遷移到新架構
+- **過渡期**：兩種模式可以並存，但新功能必須使用新架構
+
+### 參考範例
+詳細實作範例請參考 `services/workflow/` 目錄。
+
+## 環境變數管理
+
+### 核心服務配置（4 組主要服務）
+
+#### Auth Service (認證服務)
+- `AUTH_SERVICE_URL` - 認證服務 URL（服務端，用於 `next.config.mjs` 的 rewrites，必填，無預設值）
+
+#### Backend Service (後端 API 服務)
+- `BACKEND_SERVICE_URL` - 後端服務 URL（服務端，用於 `next.config.mjs` 的 rewrites，必填，無預設值）
+
+#### Kibana (ELK 監控服務)
+- `NEXT_PUBLIC_KIBANA_URL` - Kibana 服務 URL
+- `NEXT_PUBLIC_KIBANA_SPACE` - Kibana Space（預設：`default`）
+
+#### Dify (AI Workflow 服務)
+- `NEXT_PUBLIC_DIFY_URL` - Dify 基礎 URL（用於 iframe 和自動登入）
+- `NEXT_PUBLIC_DIFY_WORKFLOW_URL` - Dify Workflow iframe URL
+- `NEXT_PUBLIC_KB_RAG_URL` - Dify KB/RAG iframe URL
+- `NEXT_PUBLIC_DIFY_EMAIL` - Dify 登入郵箱
+- `NEXT_PUBLIC_DIFY_PWD` - Dify 登入密碼
+
+### UI 載入配置
+- `NEXT_PUBLIC_LOADING_TIMEOUT` - 載入超時時間（毫秒，預設：20000）
+- `NEXT_PUBLIC_LOADING_DELAY` - 載入延遲（毫秒，預設：1500）
+- `NEXT_PUBLIC_INITIAL_LOADING_DELAY` - 初始載入延遲（毫秒，預設：2000）
+- `NEXT_PUBLIC_IFRAME_LOADING_DELAY` - iframe 載入延遲（毫秒，預設：1000）
+- `NEXT_PUBLIC_IFRAME_LOADING_TIMEOUT` - iframe 載入超時（毫秒，預設：10000）
+
+### 重要規則
+- **客戶端環境變數必須有 `NEXT_PUBLIC_` 前綴才能在客戶端使用**
+- **服務端環境變數（如 `AUTH_SERVICE_URL`、`BACKEND_SERVICE_URL`）不需要 `NEXT_PUBLIC_` 前綴，僅在服務端使用**
+- **環境變數未設定時必須拋出明確錯誤，不使用預設值**
+- **AI API Key 由後端管理，前端僅使用後端提供的 API**
+
+## Next.js 配置
+
+### 重要設定
+- **輸出模式**：靜態匯出（`output: 'export'`）
+- **API 代理**：使用 `rewrites` 功能進行 API 代理，解決 CORS 問題
+  - `/api/auth` → `${AUTH_SERVICE_URL}/api/internal`
+  - `/api/backend` → `${BACKEND_SERVICE_URL}/api`
+- **圖片優化**：`unoptimized: true`
+- **TypeScript/ESLint**：構建時忽略錯誤（開發時仍會檢查）
+
+## 編碼規範
+
+### TypeScript
+- 使用嚴格模式（`strict: true`）
+- 優先使用 `type` 而非 `interface`（除非需要擴展）
+- 優先使用 `unknown` 或具體類型，而非 `any`
+- **優先使用類型守衛（type guards）、Zod 驗證、或正確的類型推斷，而非 `as` 類型斷言**
+- 使用描述性的變數名稱（如 `HTTP_STATUS.UNAUTHORIZED` 而非 `401`）
+
+### 代碼組織
+- **API 客戶端**：放在 `lib/api-clients.ts`（authClient, backendClient）
+- **新 API 實作**：放在 `services/[feature]/`（遵循兩層架構：type.ts → api.ts）
+- **舊 API 封裝**：`app/routes/`（不再新增功能，逐步遷移）
+- **React Query 使用**：直接在組件中使用，不創建額外的 hooks 層
+- **業務邏輯**：放在 `services/` 目錄
+- **可重用組件**：放在 `components/` 目錄
+- **頁面組件**：放在 `app/[page]/` 目錄
+- **檔案長度**：單一檔案建議保持在 400 行以內，除非有明確理由（如配置檔案、數據檔案、自動生成的檔案等）。超過時應考慮拆分為多個模組或子組件。
+
+### 命名規範
+- 組件：PascalCase（如 `UserProfile.tsx`）
+- 函數/變數：camelCase（如 `getUserData`）
+- 常數：UPPER_SNAKE_CASE（如 `HTTP_STATUS`）
+- 文件：kebab-case 或 camelCase（與導出名稱一致）
+
+### 註解與文檔
+- **所有註解使用繁體中文**
+- **函數必須有 JSDoc 註解**
+- **複雜邏輯必須有說明註解**
+
+## 重要原則
+
+### 1. 環境變數優先
+- 所有服務 URL 必須通過環境變數配置
+- 所有配置必須通過環境變數設定，不硬編碼
+- 環境變數未設定時必須拋出明確錯誤
+
+### 2. API 客戶端統一
+- 所有 API 調用必須使用 `authClient` 或 `backendClient`
+- 統一使用 `lib/api-clients.ts` 中定義的客戶端，不創建新的 Axios 實例
+- 統一使用上述客戶端，不直接使用 `fetch`
+- 所有新 API 必須遵循「Zod Schema → Fetcher → 組件中直接使用 React Query」模式
+
+### 3. 錯誤處理
+- `authClient` 自動處理 401/403 錯誤（觸發登出）
+- `backendClient` 不處理認證錯誤
+- 所有錯誤必須有適當的用戶提示
+
+### 4. CORS 配置
+- 前端使用 `withCredentials: true` 發送請求
+- 後端必須正確配置 CORS（允許特定 origin，不能使用 `*`）
+- 使用 Next.js `rewrites` 進行 API 代理，解決 CORS 問題
+- 注意：如果將來需要靜態匯出，可能需要移除 `rewrites` 並調整架構
+
+### 5. 類型安全
+- 優先使用 TypeScript 類型推斷
+- API 響應必須使用 Zod Schema 驗證並定義類型
+- 優先使用 `unknown` 或具體類型，而非 `any`
+- 所有 API 回應必須通過 Zod 驗證：`Schema.parse(response.data)`
+
+## 常見錯誤與正確做法
+
+### ❌ 錯誤做法
+```typescript
+// 硬編碼 URL
+const response = await fetch('http://localhost:3001/api/auth/status');
+
+// 創建新的 Axios 實例
+const client = axios.create({ baseURL: 'http://localhost:3001' });
+
+// 使用 any 類型
+function processData(data: any) { ... }
+
+// 使用 as 類型斷言
+const user = response.data as User;
+const value = someValue as string;
+
+// 環境變數使用預設值
+const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
+```
+
+### ✅ 正確做法
+```typescript
+// 使用統一的 API 客戶端（在 Fetcher 層）
+import { authClient } from '@/lib/api-clients';
+import { UserResponseSchema, type UserResponse } from '@/services/user/type';
+
+export async function getUser(id: string): Promise<UserResponse> {
+  const response = await authClient.get(`/users/${id}`);
+  return UserResponseSchema.parse(response.data);
+}
+
+// 在組件中直接使用 React Query
+import { useQuery } from '@tanstack/react-query';
+import { getUser } from '@/services/user';
+
+const { data, isLoading, error } = useQuery({
+  queryKey: ['user', userId],
+  queryFn: () => getUser(userId),
+});
+
+// 使用 Zod 驗證而非 as 斷言
+import { UserSchema, type User } from '@/services/user/type';
+const user = UserSchema.parse(response.data); // ✅ 類型安全驗證
+
+// 使用類型守衛而非 as 斷言
+function isString(value: unknown): value is string {
+  return typeof value === 'string';
+}
+if (isString(someValue)) {
+  // someValue 在這裡被正確推斷為 string
+}
+
+// 環境變數未設定時拋出錯誤
+const getApiUrl = (): string => {
+  const url = process.env.NEXT_PUBLIC_API_URL;
+  if (!url) {
+    throw new Error('❌ 環境變數 NEXT_PUBLIC_API_URL 未設定');
+  }
+  return url;
+};
+```
+
+## AI 助手要求
+
+### 回應語言
+- **所有回應使用繁體中文**
+- **代碼註解使用繁體中文**
+- **錯誤訊息使用繁體中文**
+
+### 代碼生成原則
+- **首要原則：KISS (Keep It Simple, Stupid)**
+  - 保持代碼簡單、直接、易於理解
+  - 優先選擇最簡單的解決方案，不過度設計和過早優化
+- **次要原則：三次原則 (Rule of Three)**
+  - 第一次：直接實作，不需要抽象
+  - 第二次：重複時，可以容忍重複
+  - 第三次：出現第三次重複時，才進行抽象和重構
+- **其他原則**
+  - 代碼格式和風格遵循專案的 Biome 配置，確保生成的代碼通過 Biome 檢查
+  - 遵循現有的代碼風格和架構模式
+  - 優先考慮可維護性和可擴展性
+  - 確保類型安全
+  - 遵循上述所有編碼規範和原則
+
+### 重構建議
+- 重構時必須保持向後兼容
+- 重構前必須理解現有架構
+- 重構後必須更新相關文檔
+

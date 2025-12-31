@@ -1,19 +1,19 @@
-"use client"
+'use client';
 
-import { useEffect, useState } from "react"
-import { motion } from "framer-motion"
-import Link from "next/link"
-import { ArrowLeft, ExternalLink } from "lucide-react"
-import { EmbeddedIframe } from "@/components/embedded-iframe"
+import { motion } from 'framer-motion';
+import { ArrowLeft, ExternalLink } from 'lucide-react';
+import Link from 'next/link';
+import { useEffect, useState } from 'react';
+import { EmbeddedIframe } from '@/components/embedded-iframe';
 
 export default function DifyPage() {
-  const [mounted, setMounted] = useState(false)
-  const iframeUrl = process.env.NEXT_PUBLIC_DIFY_WORKFLOW_URL ||
-    "https://twister5poc.phison.com/app/4a730717-1563-4359-8036-49ed3d452482/workflow"
+  const [mounted, setMounted] = useState(false);
+  // 從環境變數讀取 Workflow URL（不再使用 hardcode fallback）
+  const iframeUrl = process.env.NEXT_PUBLIC_DIFY_WORKFLOW_URL || '';
 
   useEffect(() => {
-    setMounted(true)
-  }, [])
+    setMounted(true);
+  }, []);
 
   return (
     <div className="min-h-screen bg-[#08131D] text-white p-8">
@@ -38,7 +38,7 @@ export default function DifyPage() {
 
           <div className="flex items-center gap-3">
             <button
-              onClick={() => window.open(iframeUrl, "_blank")}
+              onClick={() => window.open(iframeUrl, '_blank')}
               className="px-4 py-2 rounded-lg border border-white/20 hover:border-cyan-400/60 hover:bg-white/5 transition-all duration-300 flex items-center gap-2"
             >
               <ExternalLink className="w-4 h-4" />
@@ -62,5 +62,5 @@ export default function DifyPage() {
         />
       </motion.div>
     </div>
-  )
+  );
 }
