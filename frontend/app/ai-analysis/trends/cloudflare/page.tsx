@@ -1,17 +1,18 @@
 'use client';
 
 import { useMutation } from '@tanstack/react-query';
+import { toPng } from 'html-to-image';
 import {
   AlertTriangle,
   ChevronDown,
   Database,
-  // Download, // TODO: 未來將實作匯出功能
-  // FileText, // TODO: 未來將實作匯出功能
+  Download,
+  // FileText, // TODO: 未來將實作 PPT 匯出功能
   Shield,
   ShieldCheck,
   XCircle,
 } from 'lucide-react';
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { AnalysisState } from '@/components/trends/AnalysisState';
 import { HttpAttackView } from '@/components/trends/HttpAttackView';
 // import { ZtnaView } from '@/components/trends/ZtnaView'; // TODO: 未來將實作 ZTNA 功能
@@ -47,7 +48,9 @@ export default function CloudflareTrendsPage() {
   const [dashboardData, setDashboardData] = useState<DashboardData | null>(
     null,
   );
-  // const [showExportMenu, setShowExportMenu] = useState(false); // TODO: 未來將實作匯出功能
+  const [showExportMenu, setShowExportMenu] = useState(false);
+  const [isExporting, setIsExporting] = useState(false);
+  const reportRef = useRef<HTMLDivElement>(null);
 
   // 使用 useMutation 處理手動觸發的分析請求
   const trendMutation = useMutation({
@@ -82,13 +85,33 @@ export default function CloudflareTrendsPage() {
     handleAnalyze();
   };
 
-  // const handleDownloadReport = () => {
-  //   alert('正在生成並下載報告...');
-  // }; // TODO: 未來將實作匯出功能
+  const handleDownloadReport = async () => {
+    if (!reportRef.current) return;
 
+    setIsExporting(true);
+    try {
+      const dataUrl = await toPng(reportRef.current, {
+        quality: 1.0,
+        pixelRatio: 2,
+        backgroundColor: '#0f172a', // slate-900 背景色
+      });
+
+      const link = document.createElement('a');
+      link.download = `cloudflare-trend-report-${new Date().toISOString().split('T')[0]}.png`;
+      link.href = dataUrl;
+      link.click();
+    } catch (error) {
+      console.error('匯出報告失敗:', error);
+      alert('匯出報告失敗，請稍後再試');
+    } finally {
+      setIsExporting(false);
+    }
+  };
+
+  // TODO: 未來將實作 PPT 匯出功能
   // const handleGeneratePPT = () => {
-  //   alert('正在生成 PowerPoint 簡報...');
-  // }; // TODO: 未來將實作匯出功能
+  //   alert('PPT 生成功能即將推出...');
+  // };
 
   const handleModeChange = (mode: AnalysisMode) => {
     setAnalysisMode(mode);
@@ -96,7 +119,7 @@ export default function CloudflareTrendsPage() {
   };
 
   return (
-    <div className="min-h-screen">
+    <div className="min-h-screen" ref={reportRef}>
       <main className="max-w-7xl mx-auto px-6 py-6 space-y-5">
         {/* Title with Icon */}
         <div className="flex items-center gap-3 mb-6">
@@ -159,16 +182,18 @@ export default function CloudflareTrendsPage() {
               </div>
             </div>
 
-            {/* TODO: 未來將實作匯出功能 */}
-            {/* {hasAnalyzed && !error && (
+            {hasAnalyzed && !error && (
               <div className="relative">
                 <button
                   type="button"
                   onClick={() => setShowExportMenu(!showExportMenu)}
-                  className="flex items-center gap-2 bg-slate-800/50 border border-slate-700/50 text-slate-200 text-sm rounded-lg px-4 py-2 hover:bg-slate-700/50 transition-all"
+                  disabled={isExporting}
+                  className="flex items-center gap-2 bg-slate-800/50 border border-slate-700/50 text-slate-200 text-sm rounded-lg px-4 py-2 hover:bg-slate-700/50 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
                 >
-                  <Download className="w-4 h-4" />
-                  <span>匯出</span>
+                  <Download
+                    className={`w-4 h-4 ${isExporting ? 'animate-pulse' : ''}`}
+                  />
+                  <span>{isExporting ? '匯出中...' : '匯出'}</span>
                   <ChevronDown
                     className={`w-4 h-4 transition-transform ${showExportMenu ? 'rotate-180' : ''}`}
                   />
@@ -185,9 +210,10 @@ export default function CloudflareTrendsPage() {
                       className="w-full flex items-center gap-3 px-4 py-3 text-slate-200 hover:bg-slate-700/50 transition-colors text-sm"
                     >
                       <Download className="w-4 h-4 text-blue-400" />
-                      <span>下載報告</span>
+                      <span>下載報告 (PNG)</span>
                     </button>
-                    <div className="h-px bg-slate-700/50" />
+                    {/* TODO: 未來將實作 PPT 匯出功能 */}
+                    {/* <div className="h-px bg-slate-700/50" />
                     <button
                       type="button"
                       onClick={() => {
@@ -198,11 +224,11 @@ export default function CloudflareTrendsPage() {
                     >
                       <FileText className="w-4 h-4 text-purple-400" />
                       <span>生成PPT簡報</span>
-                    </button>
+                    </button> */}
                   </div>
                 )}
               </div>
-            )} */}
+            )}
 
             <button
               type="button"
