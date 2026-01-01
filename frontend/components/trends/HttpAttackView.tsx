@@ -55,7 +55,7 @@ export function HttpAttackView({ data }: HttpAttackViewProps) {
       {/* HTTP Traffic Analysis Metrics */}
       <div className="card-dark rounded-xl p-5 border border-slate-700/50">
         <h2 className="text-white text-lg mb-4">HTTP 流量分析記錄</h2>
-        <div className="grid grid-cols-1 md:grid-cols-5 divide-x divide-slate-700/50">
+        <div className="grid grid-cols-1 md:grid-cols-4 divide-x divide-slate-700/50">
           {[
             {
               label: '要求',
@@ -72,10 +72,6 @@ export function HttpAttackView({ data }: HttpAttackViewProps) {
             {
               label: '造訪次數',
               metric: data.trafficMetrics.visits,
-            },
-            {
-              label: 'API 要求',
-              metric: data.trafficMetrics.apiRequests,
             },
           ].map((item, _index) => (
             <div key={item.label} className="px-4 py-2">
