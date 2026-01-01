@@ -1,6 +1,6 @@
 'use client';
 
-import { ListChecks, Sparkles } from 'lucide-react';
+// import { ListChecks, Sparkles } from 'lucide-react'; // TODO: 未來將實作 AI 總結與建議功能
 import { AttackTrendChart } from '@/components/trends/AttackTrendChart';
 import { KPICard } from '@/components/trends/KPICard';
 import { TopAnalysisTable } from '@/components/trends/TopAnalysisTable';
@@ -12,21 +12,6 @@ interface HttpAttackViewProps {
 }
 
 export function HttpAttackView({ data }: HttpAttackViewProps) {
-  const requestsChange =
-    ((data.totalRequests - data.previousRequests) / data.previousRequests) *
-    100;
-
-  const trafficChange =
-    ((data.trafficPercentage - data.previousTrafficPercentage) /
-      data.previousTrafficPercentage) *
-    100;
-
-  const blockRate = (data.blockedRequests / data.totalRequests) * 100;
-  const previousBlockRate =
-    (data.previousBlockedRequests / data.previousRequests) * 100;
-  const blockRateChange =
-    ((blockRate - previousBlockRate) / previousBlockRate) * 100;
-
   return (
     <>
       {/* KPI Cards */}
@@ -34,18 +19,18 @@ export function HttpAttackView({ data }: HttpAttackViewProps) {
         <KPICard
           title="攻擊活動量"
           subtitle="Attack Requests"
-          value={data.totalRequests}
-          change={requestsChange}
+          value={data.totalAttack.quantity}
+          change={data.totalAttack.change}
         />
         <TrafficPercentageCard
-          percentage={data.trafficPercentage}
-          change={trafficChange}
+          percentage={data.httpPct.quantity}
+          change={data.httpPct.change}
         />
         <KPICard
           title="封鎖率"
           subtitle="Block Rate"
-          value={`${blockRate.toFixed(1)}%`}
-          change={blockRateChange}
+          value={`${data.lockdownRate.quantity.toFixed(1)}%`}
+          change={data.lockdownRate.change}
         />
       </div>
 
@@ -77,7 +62,7 @@ export function HttpAttackView({ data }: HttpAttackViewProps) {
             <div key={item.label} className="px-4 py-2">
               <div className="text-xs text-slate-400 mb-2">{item.label}</div>
               <div className="flex items-baseline gap-2">
-                <div className="text-xl text-white">{item.metric.value}</div>
+                <div className="text-xl text-white">{item.metric.quantity}</div>
                 <div
                   className={`flex items-center gap-0.5 ${
                     item.metric.change > 0
@@ -118,15 +103,12 @@ export function HttpAttackView({ data }: HttpAttackViewProps) {
           <TopAnalysisTable title="路徑 (Top 5)" data={data.topPaths} />
         </div>
 
-        <TopAnalysisTable
-          title="國家 (Top 5)"
-          data={data.topCountries}
-          showFlag
-        />
+        <TopAnalysisTable title="國家 (Top 5)" data={data.topCountries} />
       </div>
 
       {/* AI Summary */}
-      <div className="card-dark rounded-xl p-6 border border-blue-500/20">
+      {/* TODO: 未來將實作 AI 總結與建議功能 */}
+      {/* <div className="card-dark rounded-xl p-6 border border-blue-500/20">
         <div className="flex items-center gap-3 mb-4">
           <div className="gradient-blue-bright p-2 rounded-lg glow-blue-subtle">
             <Sparkles className="w-5 h-5 text-white" />
@@ -138,10 +120,11 @@ export function HttpAttackView({ data }: HttpAttackViewProps) {
             {data.aiSummary}
           </p>
         </div>
-      </div>
+      </div> */}
 
       {/* Next Step Recommendations */}
-      <div className="card-dark rounded-xl p-6 border border-emerald-500/20">
+      {/* TODO: 未來將實作 AI 總結與建議功能 */}
+      {/* <div className="card-dark rounded-xl p-6 border border-emerald-500/20">
         <div className="flex items-center gap-3 mb-4">
           <div className="bg-gradient-to-br from-emerald-500 to-teal-600 p-2 rounded-lg shadow-lg shadow-emerald-500/20">
             <ListChecks className="w-5 h-5 text-white" />
@@ -167,7 +150,7 @@ export function HttpAttackView({ data }: HttpAttackViewProps) {
             ))}
           </ul>
         </div>
-      </div>
+      </div> */}
     </>
   );
 }

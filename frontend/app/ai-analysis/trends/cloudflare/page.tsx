@@ -1,21 +1,32 @@
 'use client';
 
+import { useMutation } from '@tanstack/react-query';
 import {
   AlertTriangle,
   ChevronDown,
   Database,
-  Download,
-  FileText,
+  // Download, // TODO: 未來將實作匯出功能
+  // FileText, // TODO: 未來將實作匯出功能
   Shield,
   ShieldCheck,
   XCircle,
 } from 'lucide-react';
-import { useMemo, useState } from 'react';
+import { useState } from 'react';
 import { AnalysisState } from '@/components/trends/AnalysisState';
 import { HttpAttackView } from '@/components/trends/HttpAttackView';
-import { ZtnaView } from '@/components/trends/ZtnaView';
-import { generateMockData, type TimeRange } from '@/utils/trend-mockData';
-import { generateZTNAData } from '@/utils/ztnaData';
+// import { ZtnaView } from '@/components/trends/ZtnaView'; // TODO: 未來將實作 ZTNA 功能
+import {
+  fetchCloudflareTrendComparison,
+  mapTimeRangeToApi,
+  transformToDashboardData,
+} from '@/services/cloudflare-trend';
+import {
+  type DashboardData,
+  generateMockData,
+  type TimeRange,
+} from '@/utils/trend-mockData';
+
+// import { generateZTNAData } from '@/utils/ztnaData'; // TODO: 未來將實作 ZTNA 功能
 
 const TIME_RANGES: Array<{ value: TimeRange; label: string }> = [
   { value: '1h', label: '1小時 vs 前1小時' },
@@ -30,42 +41,40 @@ type AnalysisMode = 'http-attack' | 'ztna';
 
 export default function CloudflareTrendsPage() {
   const [analysisMode, setAnalysisMode] = useState<AnalysisMode>('http-attack');
-  const [selectedRange, setSelectedRange] = useState<TimeRange>('1d');
   const [tempRange, setTempRange] = useState<TimeRange>('1d');
   const [hasAnalyzed, setHasAnalyzed] = useState(false);
-  const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [error, setError] = useState<ErrorType>(null);
-  const [showExportMenu, setShowExportMenu] = useState(false);
+  const [dashboardData, setDashboardData] = useState<DashboardData | null>(
+    null,
+  );
+  // const [showExportMenu, setShowExportMenu] = useState(false); // TODO: 未來將實作匯出功能
 
-  const dashboardData = useMemo(
-    () => generateMockData(selectedRange),
-    [selectedRange],
-  );
-  const ztnaData = useMemo(
-    () => generateZTNAData(selectedRange),
-    [selectedRange],
-  );
+  // 使用 useMutation 處理手動觸發的分析請求
+  const trendMutation = useMutation({
+    mutationFn: (timeRange: TimeRange) =>
+      fetchCloudflareTrendComparison({
+        timeRange: mapTimeRangeToApi(timeRange),
+      }),
+    onSuccess: (response) => {
+      const data = transformToDashboardData(response);
+      setDashboardData(data);
+      setHasAnalyzed(true);
+      setError(null);
+    },
+    onError: (err) => {
+      console.error('趨勢分析 API 錯誤:', err);
+      // TODO: 後端 API 串接成功後，移除此 mock data fallback 並改為顯示錯誤訊息
+      console.warn('使用 mock data 作為 fallback');
+      const mockData = generateMockData(tempRange);
+      setDashboardData(mockData);
+      setHasAnalyzed(true);
+      setError(null);
+    },
+  });
 
   const handleAnalyze = () => {
-    setIsAnalyzing(true);
     setError(null);
-
-    setTimeout(() => {
-      const random = Math.random();
-
-      if (random < 0.15 && tempRange === '1h') {
-        setError('insufficient-data');
-        setIsAnalyzing(false);
-      } else if (random >= 0.15 && random < 0.3) {
-        setError('service-timeout');
-        setIsAnalyzing(false);
-      } else {
-        setSelectedRange(tempRange);
-        setHasAnalyzed(true);
-        setIsAnalyzing(false);
-        setError(null);
-      }
-    }, 2000);
+    trendMutation.mutate(tempRange);
   };
 
   const handleRetry = () => {
@@ -73,13 +82,13 @@ export default function CloudflareTrendsPage() {
     handleAnalyze();
   };
 
-  const handleDownloadReport = () => {
-    alert('正在生成並下載報告...');
-  };
+  // const handleDownloadReport = () => {
+  //   alert('正在生成並下載報告...');
+  // }; // TODO: 未來將實作匯出功能
 
-  const handleGeneratePPT = () => {
-    alert('正在生成 PowerPoint 簡報...');
-  };
+  // const handleGeneratePPT = () => {
+  //   alert('正在生成 PowerPoint 簡報...');
+  // }; // TODO: 未來將實作匯出功能
 
   const handleModeChange = (mode: AnalysisMode) => {
     setAnalysisMode(mode);
@@ -115,7 +124,8 @@ export default function CloudflareTrendsPage() {
               <Shield className="w-3.5 h-3.5" />
               <span>HTTP 攻擊</span>
             </button>
-            <button
+            {/* TODO: 未來將實作 ZTNA 功能 */}
+            {/* <button
               type="button"
               onClick={() => handleModeChange('ztna')}
               className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg transition-all duration-300 text-xs ${
@@ -126,7 +136,7 @@ export default function CloudflareTrendsPage() {
             >
               <ShieldCheck className="w-3.5 h-3.5" />
               <span>ZTNA</span>
-            </button>
+            </button> */}
           </div>
 
           {/* Time Range Selector and Export Menu */}
@@ -149,7 +159,8 @@ export default function CloudflareTrendsPage() {
               </div>
             </div>
 
-            {hasAnalyzed && !error && (
+            {/* TODO: 未來將實作匯出功能 */}
+            {/* {hasAnalyzed && !error && (
               <div className="relative">
                 <button
                   type="button"
@@ -163,7 +174,6 @@ export default function CloudflareTrendsPage() {
                   />
                 </button>
 
-                {/* 下拉選單 */}
                 {showExportMenu && (
                   <div className="absolute right-0 mt-2 w-48 bg-slate-800 border border-slate-700/50 rounded-lg shadow-lg shadow-black/20 z-50 overflow-hidden">
                     <button
@@ -192,14 +202,14 @@ export default function CloudflareTrendsPage() {
                   </div>
                 )}
               </div>
-            )}
+            )} */}
 
             <button
               type="button"
               onClick={handleAnalyze}
               className="gradient-blue-bright text-white text-sm px-6 py-2 rounded-lg hover:shadow-lg hover:shadow-blue-500/30 transition-all duration-300 hover:scale-105 glow-blue-subtle"
             >
-              {isAnalyzing ? '分析中...' : '開始趨勢分析'}
+              {trendMutation.isPending ? '分析中...' : '開始趨勢分析'}
             </button>
           </div>
         </div>
@@ -277,7 +287,7 @@ export default function CloudflareTrendsPage() {
         )}
 
         {/* Initial Empty State */}
-        {!hasAnalyzed && !error && !isAnalyzing ? (
+        {!hasAnalyzed && !error && !trendMutation.isPending ? (
           <div className="flex flex-col items-center justify-center py-32 space-y-6">
             <div className="relative">
               <div className="absolute inset-0 bg-blue-500/20 blur-3xl rounded-full" />
@@ -306,19 +316,21 @@ export default function CloudflareTrendsPage() {
               <span>資安即時監控系統</span>
             </div>
           </div>
-        ) : isAnalyzing ? (
+        ) : trendMutation.isPending ? (
           <AnalysisState mode={analysisMode} />
         ) : null}
 
         {/* HTTP Attack Analysis Results */}
-        {hasAnalyzed && !error && analysisMode === 'http-attack' && (
-          <HttpAttackView data={dashboardData} />
-        )}
+        {hasAnalyzed &&
+          !error &&
+          analysisMode === 'http-attack' &&
+          dashboardData && <HttpAttackView data={dashboardData} />}
 
         {/* ZTNA Analysis Results */}
-        {hasAnalyzed && !error && analysisMode === 'ztna' && (
+        {/* TODO: 未來將實作 ZTNA 功能 */}
+        {/* {hasAnalyzed && !error && analysisMode === 'ztna' && (
           <ZtnaView data={ztnaData} />
-        )}
+        )} */}
       </main>
     </div>
   );

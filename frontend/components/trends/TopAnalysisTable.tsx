@@ -3,7 +3,7 @@ import { TrendingDown, TrendingUp } from 'lucide-react';
 interface TopAnalysisItem {
   rank: number;
   name: string;
-  count: number;
+  cnt: number;
   percentage?: number;
   change: number;
 }
@@ -11,14 +11,9 @@ interface TopAnalysisItem {
 interface TopAnalysisTableProps {
   title: string;
   data: TopAnalysisItem[];
-  showFlag?: boolean;
 }
 
-export function TopAnalysisTable({
-  title,
-  data,
-  showFlag: _showFlag,
-}: TopAnalysisTableProps) {
+export function TopAnalysisTable({ title, data }: TopAnalysisTableProps) {
   const items = data || [];
 
   return (
@@ -58,7 +53,7 @@ export function TopAnalysisTable({
 
               {/* Requests */}
               <div className="text-slate-200 text-sm font-medium text-right">
-                {item.count?.toLocaleString() ?? 0}
+                {item.cnt?.toLocaleString() ?? 0}
               </div>
 
               {/* 變化率 */}
