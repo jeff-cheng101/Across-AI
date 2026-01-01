@@ -7,7 +7,8 @@ import {
   ChevronDown,
   Database,
   Download,
-  // FileText, // TODO: 未來將實作 PPT 匯出功能
+  FileText,
+  Loader2,
   Shield,
   ShieldCheck,
   XCircle,
@@ -15,12 +16,14 @@ import {
 import { useRef, useState } from 'react';
 import { AnalysisState } from '@/components/trends/AnalysisState';
 import { HttpAttackView } from '@/components/trends/HttpAttackView';
+import { useToast } from '@/hooks/use-toast';
 // import { ZtnaView } from '@/components/trends/ZtnaView'; // TODO: 未來將實作 ZTNA 功能
 import {
   fetchCloudflareTrendComparison,
   mapTimeRangeToApi,
   transformToDashboardData,
 } from '@/services/cloudflare-trend';
+import type { GeneratePPTResponse } from '@/services/gamma/type';
 import {
   type DashboardData,
   generateMockData,
@@ -50,7 +53,9 @@ export default function CloudflareTrendsPage() {
   );
   const [showExportMenu, setShowExportMenu] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
+  const [isGeneratingPPT, setIsGeneratingPPT] = useState(false);
   const reportRef = useRef<HTMLDivElement>(null);
+  const { toast } = useToast();
 
   // 使用 useMutation 處理手動觸發的分析請求
   const trendMutation = useMutation({
@@ -96,22 +101,114 @@ export default function CloudflareTrendsPage() {
         backgroundColor: '#0f172a', // slate-900 背景色
       });
 
+      const now = new Date();
+      const timestamp = now.toISOString().replace(/[:.]/g, '-').split('Z')[0];
+      const filename = `cloudflare-trend-report-${tempRange}-${timestamp}.png`;
+
       const link = document.createElement('a');
-      link.download = `cloudflare-trend-report-${new Date().toISOString().split('T')[0]}.png`;
+      link.download = filename;
       link.href = dataUrl;
       link.click();
     } catch (error) {
       console.error('匯出報告失敗:', error);
-      alert('匯出報告失敗，請稍後再試');
+      toast({
+        title: '❌ 匯出失敗',
+        description: '報告匯出失敗，請稍後再試',
+        variant: 'destructive',
+      });
     } finally {
       setIsExporting(false);
     }
   };
 
-  // TODO: 未來將實作 PPT 匯出功能
-  // const handleGeneratePPT = () => {
-  //   alert('PPT 生成功能即將推出...');
-  // };
+  // PPT 簡報生成功能
+  const handleGeneratePPT = async () => {
+    if (!dashboardData) return;
+
+    setIsGeneratingPPT(true);
+    // 立即顯示通知，讓用戶知道請求已送出
+    toast({
+      title: '⏳ PPT 生成請求已送出',
+      description: '系統正在處理您的簡報，請稍候...',
+    });
+
+    try {
+      const timeRangeLabel =
+        TIME_RANGES.find((r) => r.value === tempRange)?.label || tempRange;
+
+      const response = await fetch('/api/gamma/generate', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          data: dashboardData,
+          timeRangeLabel,
+          timeRangeValue: tempRange,
+        }),
+      });
+
+      const contentType = response.headers.get('content-type');
+
+      if (contentType?.includes('application/json')) {
+        // 處理 JSON 錯誤回應
+        const result: GeneratePPTResponse = await response.json();
+        if (!result.success) {
+          throw new Error(result.error || '生成失敗');
+        }
+      } else if (response.ok) {
+        // 處理檔案下載
+        const blob = await response.blob();
+
+        // 嘗試從 Header 取得檔名，否則使用前端生成的檔名
+        const disposition = response.headers.get('content-disposition');
+        let filename = `cloudflare-trend-report-${tempRange}.pptx`;
+        if (disposition && disposition.indexOf('attachment') !== -1) {
+          const filenameRegex = /filename[^;=\n]*=((['"]).*?\2|[^;\n]*)/;
+          const matches = filenameRegex.exec(disposition);
+          if (matches?.[1]) {
+            filename = decodeURIComponent(matches[1].replace(/['"]/g, ''));
+          }
+        }
+
+        // 如果Header沒拿到（或解碼失敗），使用前端生成的時間戳
+        if (!filename || filename.includes('cloudflare-trend-report-.pptx')) {
+          const now = new Date();
+          const timestamp = now
+            .toISOString()
+            .replace(/[:.]/g, '-')
+            .split('Z')[0];
+          filename = `cloudflare-trend-report-${tempRange}-${timestamp}.pptx`;
+        }
+
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        window.URL.revokeObjectURL(url);
+        document.body.removeChild(a);
+
+        toast({
+          title: '✅ PPT 生成完成',
+          description: '簡報已開始下載',
+        });
+      } else {
+        throw new Error('PPT 生成請求失敗');
+      }
+    } catch (error) {
+      console.error('PPT 生成失敗:', error);
+      toast({
+        title: '❌ PPT 生成失敗',
+        description:
+          error instanceof Error ? error.message : '網路連線錯誤，請稍後再試',
+        variant: 'destructive',
+      });
+    } finally {
+      setIsGeneratingPPT(false);
+    }
+  };
 
   const handleModeChange = (mode: AnalysisMode) => {
     setAnalysisMode(mode);
@@ -187,13 +284,23 @@ export default function CloudflareTrendsPage() {
                 <button
                   type="button"
                   onClick={() => setShowExportMenu(!showExportMenu)}
-                  disabled={isExporting}
+                  disabled={isExporting || isGeneratingPPT}
                   className="flex items-center gap-2 bg-slate-800/50 border border-slate-700/50 text-slate-200 text-sm rounded-lg px-4 py-2 hover:bg-slate-700/50 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
                 >
-                  <Download
-                    className={`w-4 h-4 ${isExporting ? 'animate-pulse' : ''}`}
-                  />
-                  <span>{isExporting ? '匯出中...' : '匯出'}</span>
+                  <div className="relative">
+                    {isExporting || isGeneratingPPT ? (
+                      <Loader2 className="w-4 h-4 animate-spin text-blue-400" />
+                    ) : (
+                      <Download className="w-4 h-4" />
+                    )}
+                  </div>
+                  <span>
+                    {isExporting
+                      ? '匯出中...'
+                      : isGeneratingPPT
+                        ? '生成中...'
+                        : '匯出'}
+                  </span>
                   <ChevronDown
                     className={`w-4 h-4 transition-transform ${showExportMenu ? 'rotate-180' : ''}`}
                   />
@@ -212,19 +319,25 @@ export default function CloudflareTrendsPage() {
                       <Download className="w-4 h-4 text-blue-400" />
                       <span>下載報告 (PNG)</span>
                     </button>
-                    {/* TODO: 未來將實作 PPT 匯出功能 */}
-                    {/* <div className="h-px bg-slate-700/50" />
+                    <div className="h-px bg-slate-700/50" />
                     <button
                       type="button"
+                      disabled={isGeneratingPPT}
                       onClick={() => {
                         handleGeneratePPT();
                         setShowExportMenu(false);
                       }}
-                      className="w-full flex items-center gap-3 px-4 py-3 text-slate-200 hover:bg-slate-700/50 transition-colors text-sm"
+                      className="w-full flex items-center gap-3 px-4 py-3 text-slate-200 hover:bg-slate-700/50 transition-colors text-sm disabled:opacity-50 disabled:cursor-not-allowed"
                     >
-                      <FileText className="w-4 h-4 text-purple-400" />
-                      <span>生成PPT簡報</span>
-                    </button> */}
+                      {isGeneratingPPT ? (
+                        <Loader2 className="w-4 h-4 text-purple-400 animate-spin" />
+                      ) : (
+                        <FileText className="w-4 h-4 text-purple-400" />
+                      )}
+                      <span>
+                        {isGeneratingPPT ? '生成中...' : '生成 PPT 簡報'}
+                      </span>
+                    </button>
                   </div>
                 )}
               </div>
