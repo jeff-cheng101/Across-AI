@@ -1,3 +1,4 @@
+import { translateCountryToZhTW } from '@/utils/country-translation';
 import type {
   DashboardData,
   TopItem,
@@ -125,7 +126,7 @@ function transformCountries(items: CountryItem[], total: number): TopItem[] {
     .slice(0, 5)
     .map((item, index) => ({
       rank: index + 1,
-      name: item['geoip.geo.country_name'],
+      name: translateCountryToZhTW(item['geoip_client.country_name']),
       cnt: item.cnt,
       percentage: calculatePercentage(item.cnt, total),
       change: item.change,
