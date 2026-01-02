@@ -133,18 +133,53 @@ function transformCountries(items: CountryItem[], total: number): TopItem[] {
 }
 
 /**
+ * 根據 timeRange 格式化時間標籤
+ * - 1h (10分鐘): HH:MM 格式
+ * - 6h (30分鐘): HH:MM 格式
+ * - 1d (1小時): HH:00 格式
+ * - 7d/30d (1天): MM/DD 格式
+ */
+function formatTimeLabel(
+  date: Date,
+  timeRange: CloudflareTrendRequest['timeRange'],
+): string {
+  const hours = date.getHours().toString().padStart(2, '0');
+  const minutes = date.getMinutes().toString().padStart(2, '0');
+  const month = (date.getMonth() + 1).toString().padStart(2, '0');
+  const day = date.getDate().toString().padStart(2, '0');
+
+  switch (timeRange) {
+    case '1h':
+    case '6h':
+      // 10分鐘或30分鐘粒度：顯示 HH:MM
+      return `${hours}:${minutes}`;
+    case '1d':
+      // 1小時粒度：顯示 HH:00
+      return `${hours}:00`;
+    case '7d':
+    case '14d':
+    case '30d':
+      // 1天粒度：顯示 MM/DD
+      return `${month}/${day}`;
+    default:
+      return `${hours}:${minutes}`;
+  }
+}
+
+/**
  * 將趨勢數據轉換為圖表格式
  * 合併 currentAttackTrend 和 previousAttackTrend
  */
 function transformTrendData(
   currentTrend: TrendItem[],
   previousTrend: TrendItem[],
+  timeRange: CloudflareTrendRequest['timeRange'],
 ): DashboardData['trendData'] {
   // 以 current trend 為基準，對應 previous trend
   return currentTrend.map((item, index) => {
     // 從 ISO 8601 時間戳提取可讀時間
     const date = new Date(item.hour);
-    const timeLabel = `${date.getHours()}:00`;
+    const timeLabel = formatTimeLabel(date, timeRange);
 
     return {
       time: timeLabel,
@@ -157,10 +192,12 @@ function transformTrendData(
 /**
  * 將 CloudflareTrendResponse 轉換為 DashboardData
  * @param response API 回應
+ * @param timeRange 時間範圍（用於決定趨勢圖橫軸格式）
  * @returns 頁面組件使用的數據格式
  */
 export function transformToDashboardData(
   response: CloudflareTrendResponse,
+  timeRange: CloudflareTrendRequest['timeRange'],
 ): DashboardData {
   // 計算 Top 列表的總數（用於百分比計算）
   const totalIPs = response.sourceIP.reduce((sum, item) => sum + item.cnt, 0);
@@ -184,6 +221,7 @@ export function transformToDashboardData(
     trendData: transformTrendData(
       response.currentAttackTrend,
       response.previousAttackTrend,
+      timeRange,
     ),
     // 流量指標
     trafficMetrics: {

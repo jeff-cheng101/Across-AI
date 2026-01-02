@@ -63,8 +63,9 @@ export default function CloudflareTrendsPage() {
       fetchCloudflareTrendComparison({
         timeRange: mapTimeRangeToApi(timeRange),
       }),
-    onSuccess: (response) => {
-      const data = transformToDashboardData(response);
+    onSuccess: (response, variables) => {
+      const apiTimeRange = mapTimeRangeToApi(variables);
+      const data = transformToDashboardData(response, apiTimeRange);
       setDashboardData(data);
       setHasAnalyzed(true);
       setError(null);
