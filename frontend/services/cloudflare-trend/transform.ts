@@ -126,7 +126,7 @@ function transformCountries(items: CountryItem[], total: number): TopItem[] {
     .slice(0, 5)
     .map((item, index) => ({
       rank: index + 1,
-      name: translateCountryToZhTW(item['geoip_client.country_name']),
+      name: translateCountryToZhTW(item['geoip_client.country_name'] ?? ''),
       cnt: item.cnt,
       percentage: calculatePercentage(item.cnt, total),
       change: item.change,
