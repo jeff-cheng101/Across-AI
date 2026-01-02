@@ -192,3 +192,30 @@ body {
     @apply border hover:border-primary/20 transition-all duration-300 shadow-md bg-card hover:shadow-lg cursor-pointer overflow-hidden;
   }
 }
+
+/* Added custom animations for trend analysis loading states */
+@keyframes spin-slow {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes loading-bar {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(100%);
+  }
+}
+
+.animate-spin-slow {
+  animation: spin-slow 3s linear infinite;
+}
+
+.animate-loading-bar {
+  animation: loading-bar 2s ease-in-out infinite;
+}

@@ -40,11 +40,18 @@ async function proxyRequest(request: NextRequest, path: string[]) {
       body = await request.arrayBuffer();
     }
 
+    // 設定 10 分鐘超時，以支援長時間的後端查詢
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 600000); // 10 分鐘
+
     const response = await fetch(targetUrl, {
       method: request.method,
       headers,
       body: body,
+      signal: controller.signal,
     });
+
+    clearTimeout(timeoutId);
 
     console.log(`✅ Proxy response: ${response.status} ${response.statusText}`);
 

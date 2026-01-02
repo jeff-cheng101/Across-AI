@@ -126,7 +126,7 @@ class ElkMCPClient {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Accept': 'application/json'
+          'Accept': 'application/json, text/event-stream'
         },
         body: JSON.stringify({
           jsonrpc: '2.0',
@@ -137,7 +137,7 @@ class ElkMCPClient {
             arguments: args
           }
         }),
-        // 增加超時時間到5分鐘，適應大數據量查詢
+        // 增加超時時間到10分鐘，適應大數據量查詢
         signal: AbortSignal.timeout(this.getTimeoutMs())
       });
       
@@ -145,7 +145,17 @@ class ElkMCPClient {
         throw new Error(`HTTP ${response.status}: ${response.statusText}`);
       }
       
-      const result = await response.json();
+      // MCP Server 可能返回 SSE 格式，需要解析 'data: ' 前綴
+      const responseText = await response.text();
+      
+      // 處理 SSE 格式: "data: {JSON}"
+      let jsonText = responseText;
+      if (responseText.startsWith('data: ')) {
+        jsonText = responseText.substring(6); // 移除 "data: " 前綴
+      }
+      
+      // 解析 JSON 響應
+      const result = JSON.parse(jsonText);
       
       if (result.error) {
         throw new Error(`MCP Error: ${result.error.message}`);
@@ -941,6 +951,326 @@ class ElkMCPClient {
       await newClient.disconnect();
     }
   }
+
+  // ========== ES|QL 查詢方法（ Cloudflare 趨勢對比分析用 ）==========
+
+  /**
+   * 建構 ES|QL 查詢語句
+   * @param {Date} start - 開始時間
+   * @param {Date} end - 結束時間
+   * @param {number} limit - 限制筆數
+   * @param {string} indexPattern - 索引模式
+   * @returns {string} ES|QL 查詢語句
+   */
+  buildESQLQuery(start, end, limit = 10000, indexPattern = null) {
+    const index = indexPattern || ELK_CONFIG.elasticsearch.index;
+    const startISO = start.toISOString();
+    const endISO = end.toISOString();
+
+    // 需要保留的欄位清單（Cloudflare 日誌欄位）
+    const keepFields = [
+      '@timestamp',
+      'ClientIP',
+      'ClientASN',
+      'ClientCountry',
+      'ClientDeviceType',
+      'ClientRequestBytes',
+      'ClientRequestHost',
+      'ClientRequestMethod',
+      'ClientRequestPath',
+      'ClientRequestProtocol',
+      'ClientRequestReferer',
+      'ClientRequestScheme',
+      'ClientRequestURI',
+      'ClientRequestUserAgent',
+      'EdgeStartTimestamp',
+      'EdgeEndTimestamp',
+      'EdgeResponseStatus',
+      'EdgeResponseBytes',
+      'OriginResponseStatus',
+      'SecurityAction',
+      'SecurityActions',
+      'SecurityRuleID',
+      'SecurityRuleIDs',
+      'SecurityRuleDescription',
+      'WAFAttackScore',
+      'WAFSQLiAttackScore',
+      'WAFXSSAttackScore',
+      'WAFRCEAttackScore',
+      'ZoneName',
+      'RayID',
+      'EdgeColoCode'
+    ];
+
+    // ES|QL 查詢語法
+    const query = `FROM ${index} | WHERE @timestamp >= "${startISO}" AND @timestamp <= "${endISO}" | KEEP ${keepFields.join(',')} | LIMIT ${limit}`;
+
+    return query;
+  }
+
+  /**
+   * 建構簡易 ES|QL 查詢語句（ Cloudflare 趨勢對比分析用: 使用 NOW() 相對時間）
+   * @param {string} timeExpression - 時間表達式，如 "24 hours", "7 days"
+   * @param {number} limit - 限制筆數
+   * @param {string} indexPattern - 索引模式
+   * @returns {string} ES|QL 查詢語句
+   */
+  buildESQLQueryRelative(timeExpression, limit = 10000, indexPattern = null) {
+    const index = indexPattern || ELK_CONFIG.elasticsearch.index;
+
+    // 需要保留的欄位清單
+    const keepFields = [
+      '@timestamp',
+      'ClientIP',
+      'ClientASN',
+      'ClientCountry',
+      'ClientDeviceType',
+      'ClientRequestBytes',
+      'ClientRequestHost',
+      'ClientRequestMethod',
+      'ClientRequestPath',
+      'ClientRequestProtocol',
+      'ClientRequestReferer',
+      'ClientRequestScheme',
+      'ClientRequestURI',
+      'ClientRequestUserAgent',
+      'EdgeStartTimestamp',
+      'EdgeEndTimestamp',
+      'EdgeResponseStatus',
+      'EdgeResponseBytes',
+      'OriginResponseStatus',
+      'SecurityAction',
+      'SecurityActions',
+      'SecurityRuleID',
+      'SecurityRuleIDs',
+      'SecurityRuleDescription',
+      'WAFAttackScore',
+      'WAFSQLiAttackScore',
+      'WAFXSSAttackScore',
+      'WAFRCEAttackScore',
+      'ZoneName',
+      'RayID',
+      'EdgeColoCode'
+    ];
+
+    // ES|QL 查詢語法（使用 NOW() 相對時間）
+    const query = `FROM ${index} | WHERE @timestamp >= NOW() - ${timeExpression} | KEEP ${keepFields.join(',')} | LIMIT ${limit}`;
+
+    return query;
+  }
+
+  /**
+   * Cloudflare 趨勢對比分析用
+   * 呼叫 MCP 的 esql 工具執行查詢
+   * @param {string} query - ES|QL 查詢語句
+   * @returns {Promise<Array>} 日誌記錄陣列
+   */
+  async callESQLTool(query) {
+    try {
+      console.log('🔍 執行 Cloudflare 趨勢對比分析用 ES|QL 查詢...');
+      console.log('查詢語句:', query.substring(0, 200) + (query.length > 200 ? '...' : ''));
+
+      const result = await this.callHttpTool('esql', { query });
+
+      if (result.isError) {
+        throw new Error(`ES|QL 查詢錯誤: ${result.content?.[0]?.text || 'Unknown error'}`);
+      }
+
+      // 解析 ES|QL 回應格式
+      const responseText = result.content?.[0]?.text || '';
+      const dataText = result.content?.[1]?.text || responseText;
+
+      let records = [];
+
+      try {
+        const parsed = JSON.parse(dataText);
+
+        // ES|QL 回應格式通常是 { columns: [...], values: [...] }
+        if (parsed.columns && parsed.values) {
+          // 將 columns + values 轉換為物件陣列
+          const columns = parsed.columns.map(col => col.name || col);
+          records = parsed.values.map(row => {
+            const record = {};
+            columns.forEach((col, idx) => {
+              record[col] = row[idx];
+            });
+            return record;
+          });
+          console.log(`✅ ES|QL 查詢成功，轉換 ${records.length} 筆記錄`);
+        } else if (Array.isArray(parsed)) {
+          // 已經是記錄陣列
+          records = parsed;
+          console.log(`✅ ES|QL 查詢成功，取得 ${records.length} 筆記錄`);
+        } else {
+          // 嘗試從其他格式提取
+          console.warn('⚠️ ES|QL 回應格式不明，嘗試直接使用');
+          records = [parsed];
+        }
+      } catch (parseError) {
+        console.error('❌ ES|QL 回應解析失敗:', parseError.message);
+        console.log('原始回應:', responseText.substring(0, 500));
+        throw new Error(`ES|QL 回應解析失敗: ${parseError.message}`);
+      }
+
+      return records;
+    } catch (error) {
+      console.error('❌ ES|QL 查詢失敗:', error.message);
+      throw error;
+    }
+  }
+
+  /**
+   * Cloudflare 趨勢對比分析用
+   * 根據時間範圍生成查詢批次
+   * @param {string} timeRange - 時間範圍（1h, 6h, 1d, 3d, 7d, 30d）
+   * @returns {Array} 批次物件陣列
+   */
+  generateTimeBatches(timeRange) {
+    const now = new Date();
+
+    // 時間範圍配置（毫秒）
+    const TIME_RANGES = {
+      '1h': { ms: 60 * 60 * 1000, batches: 1 },
+      '6h': { ms: 6 * 60 * 60 * 1000, batches: 1 },
+      '1d': { ms: 24 * 60 * 60 * 1000, batches: 4 },      // 每批 6 小時
+      '3d': { ms: 3 * 24 * 60 * 60 * 1000, batches: 6 },  // 每批 12 小時
+      '7d': { ms: 7 * 24 * 60 * 60 * 1000, batches: 7 },  // 每批 1 天
+      '30d': { ms: 30 * 24 * 60 * 60 * 1000, batches: 10 } // 每批 3 天
+    };
+
+    const config = TIME_RANGES[timeRange];
+    if (!config) {
+      throw new Error(`不支援的時間範圍: ${timeRange}。支援: ${Object.keys(TIME_RANGES).join(', ')}`);
+    }
+
+    const totalDuration = config.ms;
+    const batchCount = config.batches;
+    const batchDuration = totalDuration / batchCount;
+
+    const batches = [];
+    for (let i = 0; i < batchCount; i++) {
+      const batchEnd = new Date(now.getTime() - (i * batchDuration));
+      const batchStart = new Date(batchEnd.getTime() - batchDuration);
+
+      batches.push({
+        start: batchStart,
+        end: batchEnd,
+        batchIndex: i + 1,
+        totalBatches: batchCount,
+        description: `批次 ${i + 1}/${batchCount}`
+      });
+    }
+
+    // 反轉順序，從最早的批次開始查詢
+    return batches.reverse();
+  }
+
+  /**
+   * Cloudflare 趨勢對比分析用
+   * 使用 ES|QL 分時間批次查詢
+   * @param {string} timeRange - 時間範圍（1h, 6h, 1d, 3d, 7d, 30d）
+   * @param {Function} progressCallback - 進度回調函數
+   * @param {string} indexPattern - 索引模式（可選）
+   * @returns {Promise<Array>} 合併後的日誌記錄陣列
+   */
+  async queryESQLTimeBatched(timeRange, progressCallback = null, indexPattern = null) {
+    console.log(`\n🚀 開始 ES|QL 分批查詢 (時間範圍: ${timeRange})`);
+
+    // 生成批次
+    const batches = this.generateTimeBatches(timeRange);
+    console.log(`📋 生成 ${batches.length} 個查詢批次`);
+
+    const allRecords = [];
+    let successCount = 0;
+    const partialFailures = [];
+
+    for (const batch of batches) {
+      try {
+        // 進度回報：批次開始
+        if (progressCallback) {
+          progressCallback({
+            type: 'batch_start',
+            batchIndex: batch.batchIndex,
+            totalBatches: batch.totalBatches,
+            description: batch.description,
+            timeRange: `${batch.start.toISOString()} - ${batch.end.toISOString()}`
+          });
+        }
+
+        console.log(`\n🔍 執行 ${batch.description}...`);
+        console.log(`   時間範圍: ${batch.start.toISOString()} - ${batch.end.toISOString()}`);
+
+        // 建構並執行 ES|QL 查詢
+        const query = this.buildESQLQuery(batch.start, batch.end, 10000, indexPattern);
+        const records = await this.callESQLTool(query);
+
+        if (records && records.length > 0) {
+          allRecords.push(...records);
+          successCount++;
+          console.log(`✅ ${batch.description} 完成，取得 ${records.length} 筆記錄`);
+        } else {
+          console.log(`⚠️ ${batch.description} 無資料`);
+        }
+
+        // 進度回報：批次完成
+        if (progressCallback) {
+          progressCallback({
+            type: 'batch_complete',
+            batchIndex: batch.batchIndex,
+            totalBatches: batch.totalBatches,
+            recordCount: records ? records.length : 0,
+            success: true
+          });
+        }
+
+      } catch (error) {
+        console.error(`❌ ${batch.description} 失敗:`, error.message);
+        partialFailures.push({
+          batch: batch.description,
+          error: error.message,
+          timeRange: `${batch.start.toISOString()} - ${batch.end.toISOString()}`
+        });
+
+        // 進度回報：批次錯誤
+        if (progressCallback) {
+          progressCallback({
+            type: 'batch_error',
+            batchIndex: batch.batchIndex,
+            totalBatches: batch.totalBatches,
+            error: error.message
+          });
+        }
+
+        // 繼續執行其他批次
+        console.log(`⏭️ 跳過失敗的批次，繼續處理...`);
+      }
+
+      // 批次間延遲（避免過載）
+      if (batch.batchIndex < batch.totalBatches) {
+        await new Promise(resolve => setTimeout(resolve, 500));
+      }
+    }
+
+    // 統計結果
+    console.log(`\n📊 ES|QL 分批查詢完成:`);
+    console.log(`   成功批次: ${successCount}/${batches.length}`);
+    console.log(`   總記錄數: ${allRecords.length}`);
+    if (partialFailures.length > 0) {
+      console.log(`   失敗批次: ${partialFailures.length}`);
+      partialFailures.forEach(f => console.log(`     - ${f.batch}: ${f.error}`));
+    }
+
+    // 按時間排序
+    allRecords.sort((a, b) => {
+      const timeA = new Date(a['@timestamp'] || a.EdgeStartTimestamp || a.timestamp || 0);
+      const timeB = new Date(b['@timestamp'] || b.EdgeStartTimestamp || b.timestamp || 0);
+      return timeA - timeB;
+    });
+
+    return allRecords;
+  }
+
+  // ========== Cloudflare 趨勢對比分析用 ES|QL 查詢方法結束 ==========
 
   // 測試連接
   async testConnection() {
