@@ -154,6 +154,14 @@ const ELK_CONFIG = {
     maxTimeRange: process.env.ELK_MAX_TIME_RANGE || '24h', // 最大24小時
     attackThreshold: parsePositiveInt(process.env.ELK_ATTACK_THRESHOLD, 20), // DDoS 攻擊閾值
     timeWindowSeconds: parsePositiveInt(process.env.ELK_TIME_WINDOW, 10) // 時間窗口
+  },
+
+  // 趨勢分析並發控制配置（避免 Elasticsearch 429 錯誤）
+  trend: {
+    // 最大同時執行的查詢數量（預設 5，避免觸發 Elasticsearch 速率限制）
+    maxConcurrency: parsePositiveInt(process.env.ELK_MAX_CONCURRENCY, 5),
+    // 每批查詢之間的延遲時間（毫秒，預設 100ms）
+    batchDelayMs: parsePositiveInt(process.env.ELK_BATCH_DELAY_MS, 100)
   }
 };
 

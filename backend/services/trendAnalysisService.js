@@ -1,16 +1,70 @@
 // backend/services/trendAnalysisService.js
 // Cloudflare 趨勢對比分析服務
-// 使用 ES|QL 聚合查詢 + 多工並行查詢策略
+// 使用 ES|QL 聚合查詢 + 多工並行查詢策略（含請求限流）
 
 const { elkMCPClient } = require('./elkMCPClient');
 const cloudflareELKConfig = require('../config/products/cloudflare/cloudflareELKConfig');
+const { ELK_CONFIG } = require('../config/elkConfig');
+
+/**
+ * 簡易並發限制器
+ * 用於控制同時執行的 Promise 數量，避免 Elasticsearch 429 錯誤
+ */
+class ConcurrencyLimiter {
+  /**
+   * @param {number} maxConcurrency - 最大並發數量
+   * @param {number} delayBetweenBatches - 批次間延遲（毫秒）
+   */
+  constructor(maxConcurrency = 5, delayBetweenBatches = 100) {
+    this.maxConcurrency = maxConcurrency;
+    this.delayBetweenBatches = delayBetweenBatches;
+  }
+
+  /**
+   * 延遲函數
+   * @param {number} ms - 延遲毫秒數
+   * @returns {Promise<void>}
+   */
+  sleep(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms));
+  }
+
+  /**
+   * 分批並發執行任務
+   * @param {Array<() => Promise<T>>} tasks - 任務函數陣列
+   * @returns {Promise<T[]>} 所有任務的結果
+   */
+  async runAll(tasks) {
+    const results = [];
+    
+    // 分批執行
+    for (let i = 0; i < tasks.length; i += this.maxConcurrency) {
+      const batch = tasks.slice(i, i + this.maxConcurrency);
+      const batchNumber = Math.floor(i / this.maxConcurrency) + 1;
+      const totalBatches = Math.ceil(tasks.length / this.maxConcurrency);
+      
+      console.log(`   📦 執行批次 ${batchNumber}/${totalBatches}（${batch.length} 個查詢）`);
+      
+      // 執行當前批次
+      const batchResults = await Promise.all(batch.map(task => task()));
+      results.push(...batchResults);
+      
+      // 如果還有下一批，添加延遲
+      if (i + this.maxConcurrency < tasks.length) {
+        await this.sleep(this.delayBetweenBatches);
+      }
+    }
+    
+    return results;
+  }
+}
 
 /**
  * Cloudflare 趨勢分析服務類別
  * 提供趨勢對比分析的核心邏輯，包含：
  * - 時間區間計算
  * - ES|QL 查詢建構
- * - 多工並行查詢執行
+ * - 多工並行查詢執行（含限流機制）
  * - 數據格式化與組裝
  */
 class TrendAnalysisService {
@@ -31,6 +85,19 @@ class TrendAnalysisService {
 
     // 取得趨勢分析專用索引模式
     this.indexPattern = cloudflareELKConfig.trendIndex || cloudflareELKConfig.index;
+    
+    /**
+     * 並發限制器配置（從 elkConfig 讀取）
+     * - maxConcurrency: 最大同時查詢數（避免 Elasticsearch 429 錯誤）
+     * - delayBetweenBatches: 批次間延遲（毫秒）
+     */
+    const trendConfig = ELK_CONFIG.trend || {};
+    this.limiter = new ConcurrencyLimiter(
+      trendConfig.maxConcurrency || 5,
+      trendConfig.batchDelayMs || 100
+    );
+    
+    console.log(`📊 趨勢分析並發配置：最大並發 ${this.limiter.maxConcurrency}，批次延遲 ${this.limiter.delayBetweenBatches}ms`);
   }
 
   // ==================== 工具函數區塊 ====================
@@ -190,12 +257,55 @@ class TrendAnalysisService {
    * @param {Date} end - 結束時間
    * @returns {string} ES|QL 查詢語句
    */
-  buildAttackTrendQuery(start, end) {
+  buildAttackTrendQueryHour(start, end) {
     const startISO = start.toISOString();
     const endISO = end.toISOString();
     return `FROM ${this.indexPattern} | WHERE @timestamp >= "${startISO}" AND @timestamp <= "${endISO}" | WHERE SecurityAction.keyword IN ("jschallenge", "block", "managedChallenge") | EVAL hour = DATE_TRUNC(1 hour, @timestamp) | STATS count = COUNT(*) BY hour | SORT hour ASC | KEEP hour, count`;
   }
-
+    /**
+   * 建構攻擊趨勢查詢（依10分彙總）
+   * @param {Date} start - 開始時間
+   * @param {Date} end - 結束時間
+   * @returns {string} ES|QL 查詢語句
+   */
+  buildAttackTrendQuery10Minute(start, end) {
+    const startISO = start.toISOString();
+    const endISO = end.toISOString();
+    return `FROM ${this.indexPattern} | WHERE @timestamp >= "${startISO}" AND @timestamp <= "${endISO}" | WHERE SecurityAction.keyword IN ("jschallenge", "block", "managedChallenge") | EVAL hour = DATE_TRUNC(10 minute, @timestamp) | STATS count = COUNT(*) BY hour | SORT hour ASC | KEEP hour, count`;
+  }
+    /**
+   * 建構攻擊趨勢查詢（依30分彙總）
+   * @param {Date} start - 開始時間
+   * @param {Date} end - 結束時間
+   * @returns {string} ES|QL 查詢語句
+   */
+  buildAttackTrendQuery30Minute(start, end) {
+    const startISO = start.toISOString();
+    const endISO = end.toISOString();
+    return `FROM ${this.indexPattern} | WHERE @timestamp >= "${startISO}" AND @timestamp <= "${endISO}" | WHERE SecurityAction.keyword IN ("jschallenge", "block", "managedChallenge") | EVAL hour = DATE_TRUNC(30 minute, @timestamp) | STATS count = COUNT(*) BY hour | SORT hour ASC | KEEP hour, count`;
+  }
+  /**
+   * 建構攻擊趨勢查詢（依天彙總）
+   * @param {Date} start - 開始時間
+   * @param {Date} end - 結束時間
+   * @returns {string} ES|QL 查詢語句
+   */
+  buildAttackTrendQuery1Day(start, end) {
+    const startISO = start.toISOString();
+    const endISO = end.toISOString();
+    return `FROM ${this.indexPattern} | WHERE @timestamp >= "${startISO}" AND @timestamp <= "${endISO}" | WHERE SecurityAction.keyword IN ("jschallenge", "block", "managedChallenge") | EVAL hour = DATE_TRUNC(1 day, @timestamp) | STATS count = COUNT(*) BY hour | SORT hour ASC | KEEP hour, count`;
+  }
+    /**
+   * 建構攻擊趨勢查詢（依3天彙總）
+   * @param {Date} start - 開始時間
+   * @param {Date} end - 結束時間
+   * @returns {string} ES|QL 查詢語句
+   */
+  buildAttackTrendQuery3Day(start, end) {
+    const startISO = start.toISOString();
+    const endISO = end.toISOString();
+    return `FROM ${this.indexPattern} | WHERE @timestamp >= "${startISO}" AND @timestamp <= "${endISO}" | WHERE SecurityAction.keyword IN ("jschallenge", "block", "managedChallenge") | EVAL hour = DATE_TRUNC(3 day, @timestamp) | STATS count = COUNT(*) BY hour | SORT hour ASC | KEEP hour, count`;
+  }
   /**
    * 建構資料傳送量查詢（SUM EdgeResponseBytes）
    * @param {Date} start - 開始時間
@@ -443,67 +553,78 @@ class TrendAnalysisService {
     console.log(`📅 當期區間: ${current.start.toISOString()} - ${current.end.toISOString()}`);
     console.log(`📅 上期區間: ${previous.start.toISOString()} - ${previous.end.toISOString()}`);
 
-    // ========== 第一階段：19 個查詢並行執行 ==========
-    console.log('\n⚡ 第一階段：執行 19 個並行查詢...');
+    // ========== 第一階段：19 個查詢（分批並發執行，避免 429 錯誤） ==========
+    console.log('\n⚡ 第一階段：執行 19 個查詢（分批並發，每批最多 5 個）...');
     const phase1Start = Date.now();
 
-    const [
+    // 建立查詢任務陣列（延遲執行）
+    const phase1Tasks = [
       // 攻擊活動量（2 個）
+      () => this.executeESQLQuery(this.buildAttackCountQuery(current.start, current.end)),
+      () => this.executeESQLQuery(this.buildAttackCountQuery(previous.start, previous.end)),
+      // HTTP 活動量（2 個）
+      () => this.executeESQLQuery(this.buildHttpVolumeQuery(current.start, current.end)),
+      () => this.executeESQLQuery(this.buildHttpVolumeQuery(previous.start, previous.end)),
+      // 封鎖數（2 個）
+      () => this.executeESQLQuery(this.buildBlockCountQuery(current.start, current.end)),
+      () => this.executeESQLQuery(this.buildBlockCountQuery(previous.start, previous.end)),
+      // 攻擊趨勢（2 個）
+      () => {
+        if (timeRange === '1h') return this.executeESQLQuery(this.buildAttackTrendQuery10Minute(current.start, current.end));
+        if (timeRange === '6h') return this.executeESQLQuery(this.buildAttackTrendQuery30Minute(current.start, current.end));
+        if (timeRange === '14d') return this.executeESQLQuery(this.buildAttackTrendQuery1Day(current.start, current.end));
+        if (timeRange === '30d') return this.executeESQLQuery(this.buildAttackTrendQuery3Day(current.start, current.end));
+        return this.executeESQLQuery(this.buildAttackTrendQueryHour(current.start, current.end));
+      },
+      () => {
+        if (timeRange === '1h') return this.executeESQLQuery(this.buildAttackTrendQuery10Minute(previous.start, previous.end));
+        if (timeRange === '6h') return this.executeESQLQuery(this.buildAttackTrendQuery30Minute(previous.start, previous.end));
+        if (timeRange === '14d') return this.executeESQLQuery(this.buildAttackTrendQuery1Day(previous.start, previous.end));
+        if (timeRange === '30d') return this.executeESQLQuery(this.buildAttackTrendQuery3Day(previous.start, previous.end));
+        return this.executeESQLQuery(this.buildAttackTrendQueryHour(previous.start, previous.end));
+      },
+      // 資料傳送量（2 個）
+      () => this.executeESQLQuery(this.buildDataVolumeQuery(current.start, current.end)),
+      () => this.executeESQLQuery(this.buildDataVolumeQuery(previous.start, previous.end)),
+      // 頁面瀏覽次數（2 個）
+      () => this.executeESQLQuery(this.buildPageViewQuery(current.start, current.end)),
+      () => this.executeESQLQuery(this.buildPageViewQuery(previous.start, previous.end)),
+      // 造訪次數（2 個）
+      () => this.executeESQLQuery(this.buildVisitsQuery(current.start, current.end)),
+      () => this.executeESQLQuery(this.buildVisitsQuery(previous.start, previous.end)),
+      // 當期 Top 5（5 個）
+      () => this.executeESQLQuery(this.buildCurrentSourceIPQuery(current.start, current.end)),
+      () => this.executeESQLQuery(this.buildCurrentTriggerRuleQuery(current.start, current.end)),
+      () => this.executeESQLQuery(this.buildCurrentHostsQuery(current.start, current.end)),
+      () => this.executeESQLQuery(this.buildCurrentPathQuery(current.start, current.end)),
+      () => this.executeESQLQuery(this.buildCurrentCountryQuery(current.start, current.end))
+    ];
+
+    // 使用限流器分批執行
+    const phase1Results = await this.limiter.runAll(phase1Tasks);
+
+    // 解構結果
+    const [
       currentAttackResult,
       previousAttackResult,
-      // HTTP 活動量（2 個）
       currentHttpResult,
       previousHttpResult,
-      // 封鎖數（2 個）
       currentBlockResult,
       previousBlockResult,
-      // 攻擊趨勢（2 個）
       currentTrendResult,
       previousTrendResult,
-      // 資料傳送量（2 個）
       currentDataResult,
       previousDataResult,
-      // 頁面瀏覽次數（2 個）
       currentPageViewResult,
       previousPageViewResult,
-      // 造訪次數（2 個）
       currentVisitsResult,
       previousVisitsResult,
-      // 當期 Top 5（5 個）
       currentSourceIPResult,
       currentTriggerRuleResult,
       currentHostsResult,
       currentPathResult,
       currentCountryResult
-    ] = await Promise.all([
-      // 攻擊活動量
-      this.executeESQLQuery(this.buildAttackCountQuery(current.start, current.end)),
-      this.executeESQLQuery(this.buildAttackCountQuery(previous.start, previous.end)),
-      // HTTP 活動量
-      this.executeESQLQuery(this.buildHttpVolumeQuery(current.start, current.end)),
-      this.executeESQLQuery(this.buildHttpVolumeQuery(previous.start, previous.end)),
-      // 封鎖數
-      this.executeESQLQuery(this.buildBlockCountQuery(current.start, current.end)),
-      this.executeESQLQuery(this.buildBlockCountQuery(previous.start, previous.end)),
-      // 攻擊趨勢
-      this.executeESQLQuery(this.buildAttackTrendQuery(current.start, current.end)),
-      this.executeESQLQuery(this.buildAttackTrendQuery(previous.start, previous.end)),
-      // 資料傳送量
-      this.executeESQLQuery(this.buildDataVolumeQuery(current.start, current.end)),
-      this.executeESQLQuery(this.buildDataVolumeQuery(previous.start, previous.end)),
-      // 頁面瀏覽次數
-      this.executeESQLQuery(this.buildPageViewQuery(current.start, current.end)),
-      this.executeESQLQuery(this.buildPageViewQuery(previous.start, previous.end)),
-      // 造訪次數
-      this.executeESQLQuery(this.buildVisitsQuery(current.start, current.end)),
-      this.executeESQLQuery(this.buildVisitsQuery(previous.start, previous.end)),
-      // 當期 Top 5
-      this.executeESQLQuery(this.buildCurrentSourceIPQuery(current.start, current.end)),
-      this.executeESQLQuery(this.buildCurrentTriggerRuleQuery(current.start, current.end)),
-      this.executeESQLQuery(this.buildCurrentHostsQuery(current.start, current.end)),
-      this.executeESQLQuery(this.buildCurrentPathQuery(current.start, current.end)),
-      this.executeESQLQuery(this.buildCurrentCountryQuery(current.start, current.end))
-    ]);
+    ] = phase1Results;
 
     console.log(`✅ 第一階段完成，耗時 ${Date.now() - phase1Start}ms`);
 
@@ -514,33 +635,37 @@ class TrendAnalysisService {
     const currentPathList = currentPathResult.map(r => r.ClientRequestPath).filter(Boolean);
     const currentCountryList = currentCountryResult.map(r => r['geoip.geo.country_name']).filter(Boolean);
 
-    // ========== 第二階段：5 個查詢並行執行 ==========
-    console.log('\n⚡ 第二階段：執行 5 個並行查詢（上期 Top 5）...');
+    // ========== 第二階段：5 個查詢（分批並發執行） ==========
+    console.log('\n⚡ 第二階段：執行 5 個查詢（上期 Top 5，分批並發）...');
     const phase2Start = Date.now();
 
+    // 建立第二階段查詢任務
+    const phase2Tasks = [
+      () => currentIPList.length > 0 
+        ? this.executeESQLQuery(this.buildPreviousSourceIPQuery(previous.start, previous.end, currentIPList))
+        : Promise.resolve([]),
+      () => currentRuleList.length > 0 
+        ? this.executeESQLQuery(this.buildPreviousTriggerRuleQuery(previous.start, previous.end, currentRuleList))
+        : Promise.resolve([]),
+      () => currentHostList.length > 0 
+        ? this.executeESQLQuery(this.buildPreviousHostsQuery(previous.start, previous.end, currentHostList))
+        : Promise.resolve([]),
+      () => currentPathList.length > 0 
+        ? this.executeESQLQuery(this.buildPreviousPathQuery(previous.start, previous.end, currentPathList))
+        : Promise.resolve([]),
+      () => currentCountryList.length > 0 
+        ? this.executeESQLQuery(this.buildPreviousCountryQuery(previous.start, previous.end, currentCountryList))
+        : Promise.resolve([])
+    ];
+
+    // 使用限流器分批執行
     const [
       previousSourceIPResult,
       previousTriggerRuleResult,
       previousHostsResult,
       previousPathResult,
       previousCountryResult
-    ] = await Promise.all([
-      currentIPList.length > 0 
-        ? this.executeESQLQuery(this.buildPreviousSourceIPQuery(previous.start, previous.end, currentIPList))
-        : Promise.resolve([]),
-      currentRuleList.length > 0 
-        ? this.executeESQLQuery(this.buildPreviousTriggerRuleQuery(previous.start, previous.end, currentRuleList))
-        : Promise.resolve([]),
-      currentHostList.length > 0 
-        ? this.executeESQLQuery(this.buildPreviousHostsQuery(previous.start, previous.end, currentHostList))
-        : Promise.resolve([]),
-      currentPathList.length > 0 
-        ? this.executeESQLQuery(this.buildPreviousPathQuery(previous.start, previous.end, currentPathList))
-        : Promise.resolve([]),
-      currentCountryList.length > 0 
-        ? this.executeESQLQuery(this.buildPreviousCountryQuery(previous.start, previous.end, currentCountryList))
-        : Promise.resolve([])
-    ]);
+    ] = await this.limiter.runAll(phase2Tasks);
 
     console.log(`✅ 第二階段完成，耗時 ${Date.now() - phase2Start}ms`);
 
