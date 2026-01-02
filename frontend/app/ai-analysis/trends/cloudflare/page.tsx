@@ -24,11 +24,7 @@ import {
   transformToDashboardData,
 } from '@/services/cloudflare-trend';
 import type { GeneratePPTResponse } from '@/services/gamma/type';
-import {
-  type DashboardData,
-  generateMockData,
-  type TimeRange,
-} from '@/utils/trend-mockData';
+import type { DashboardData, TimeRange } from '@/utils/trend-mockData';
 
 // import { generateZTNAData } from '@/utils/ztnaData'; // TODO: 未來將實作 ZTNA 功能
 
@@ -72,12 +68,7 @@ export default function CloudflareTrendsPage() {
     },
     onError: (err) => {
       console.error('趨勢分析 API 錯誤:', err);
-      // TODO: 後端 API 串接成功後，移除此 mock data fallback 並改為顯示錯誤訊息
-      console.warn('使用 mock data 作為 fallback');
-      const mockData = generateMockData(tempRange);
-      setDashboardData(mockData);
-      setHasAnalyzed(true);
-      setError(null);
+      setError('service-timeout');
     },
   });
 
