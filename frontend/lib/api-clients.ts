@@ -9,6 +9,11 @@
  * 環境變數配置（服務端，用於 next.config.mjs）：
  * - AUTH_SERVICE_URL: 認證服務 URL
  * - BACKEND_SERVICE_URL: 後端 API 服務 URL
+ *
+ * TODO: 考慮重構 API Client 架構
+ * 目前所有 API 請求（auth, backend, local）都已透過 Next.js Route Handlers (/api/*) 處理。
+ * 理論上可以統一使用一個 base URL 為 /api 的 client 即可，不需要區分 authClient 和 backendClient。
+ * 未來可以簡化為單一 client，透過不同路徑前綴 (auth/, backend/, chat/) 區分服務。
  */
 
 import axios, { type AxiosError, type AxiosInstance } from 'axios';
@@ -95,6 +100,22 @@ export const backendClient: AxiosInstance = axios.create({
 });
 
 setupResponseInterceptor(backendClient, false);
+
+/**
+ * Next.js Client - Next.js Route Handlers
+ * 用於：呼叫 Next.js 內部的 API Route Handlers (/api/*)
+ *
+ * 適用於非串流的 API 呼叫，串流 API 應直接使用 fetch
+ *
+ * Base URL: /api
+ */
+export const nextClient: AxiosInstance = axios.create({
+  baseURL: '/api',
+  timeout: 30000,
+  withCredentials: true,
+});
+
+setupResponseInterceptor(nextClient, false);
 
 // 為了向後兼容，導出 authClient 作為默認導出
 export default authClient;
