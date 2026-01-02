@@ -9,6 +9,10 @@
 
 import type { NextRequest } from 'next/server';
 
+// Route Segment Config: 設定最大執行時間為 600 秒 (10 分鐘)
+// 這會覆蓋 Next.js 預設的 timeout 限制
+export const maxDuration = 600;
+
 const BACKEND_SERVICE_URL = process.env.BACKEND_SERVICE_URL;
 
 async function proxyRequest(request: NextRequest, path: string[]) {
