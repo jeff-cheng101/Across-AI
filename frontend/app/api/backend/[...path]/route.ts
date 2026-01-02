@@ -8,10 +8,17 @@
  */
 
 import type { NextRequest } from 'next/server';
+import { Agent } from 'undici';
 
-// Route Segment Config: 設定最大執行時間為 600 秒 (10 分鐘)
-// 這會覆蓋 Next.js 預設的 timeout 限制
-export const maxDuration = 600;
+// 建立自訂 Agent，設定較長的 timeout（20 分鐘）
+const fetchAgent = new Agent({
+  headersTimeout: 1200 * 1000, // 20 分鐘 - 等待收到回應 headers 的時間
+  bodyTimeout: 1200 * 1000, // 20 分鐘 - 等待收到回應 body 的時間
+  connectTimeout: 30 * 1000, // 30 秒 - 連線建立逾時
+});
+
+// 強制動態路由
+export const dynamic = 'force-dynamic';
 
 const BACKEND_SERVICE_URL = process.env.BACKEND_SERVICE_URL;
 
@@ -44,15 +51,17 @@ async function proxyRequest(request: NextRequest, path: string[]) {
       body = await request.arrayBuffer();
     }
 
-    // 設定 10 分鐘超時，以支援長時間的後端查詢
+    // 設定 20 分鐘超時，以支援長時間的後端查詢
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 600000); // 10 分鐘
+    const timeoutId = setTimeout(() => controller.abort(), 1200 * 1000); // 20 分鐘
 
     const response = await fetch(targetUrl, {
       method: request.method,
       headers,
       body: body,
       signal: controller.signal,
+      // @ts-expect-error - undici dispatcher 在 Node.js 環境下可用
+      dispatcher: fetchAgent,
     });
 
     clearTimeout(timeoutId);
