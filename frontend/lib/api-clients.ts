@@ -90,7 +90,7 @@ setupResponseInterceptor(authClient, true);
  */
 export const backendClient: AxiosInstance = axios.create({
   baseURL: '/api/backend',
-  timeout: 300000,
+  timeout: 600000,
   withCredentials: true,
 });
 
