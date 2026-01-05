@@ -48,7 +48,7 @@ const PathItemSchema = z.object({
 });
 
 const CountryItemSchema = z.object({
-  'geoip.geo.country_name': z.string().nullable(),
+  'geoip_client.country_name': z.string().nullable(),
   cnt: z.number(),
   change: z.number(),
 });

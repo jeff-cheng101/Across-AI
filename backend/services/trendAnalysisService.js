@@ -455,7 +455,7 @@ class TrendAnalysisService {
   buildCurrentCountryQuery(start, end) {
     const startISO = start.toISOString();
     const endISO = end.toISOString();
-    return `FROM ${this.indexPattern} | WHERE @timestamp >= "${startISO}" AND @timestamp <= "${endISO}" | STATS cnt = count(*) BY geoip.geo.country_name | SORT cnt DESC | LIMIT 5`;
+    return `FROM ${this.indexPattern} | WHERE @timestamp >= "${startISO}" AND @timestamp <= "${endISO}" | STATS cnt = count(*) BY geoip_client.country_name | SORT cnt DESC | LIMIT 5`;
   }
 
   /**
@@ -469,7 +469,7 @@ class TrendAnalysisService {
     const startISO = start.toISOString();
     const endISO = end.toISOString();
     const countryFilter = countryList.map(c => `"${c}"`).join(',');
-    return `FROM ${this.indexPattern} | WHERE @timestamp >= "${startISO}" AND @timestamp <= "${endISO}" | WHERE geoip.geo.country_name IN (${countryFilter}) | STATS cnt = COUNT(*) BY geoip.geo.country_name | SORT cnt DESC`;
+    return `FROM ${this.indexPattern} | WHERE @timestamp >= "${startISO}" AND @timestamp <= "${endISO}" | WHERE geoip_client.country_name IN (${countryFilter}) | STATS cnt = COUNT(*) BY geoip_client.country_name | SORT cnt DESC`;
   }
 
   // ==================== ES|QL 查詢執行 ====================
@@ -633,7 +633,7 @@ class TrendAnalysisService {
     const currentRuleList = currentTriggerRuleResult.map(r => r.SecurityRuleDescription);
     const currentHostList = currentHostsResult.map(r => r.ClientRequestHost).filter(Boolean);
     const currentPathList = currentPathResult.map(r => r.ClientRequestPath).filter(Boolean);
-    const currentCountryList = currentCountryResult.map(r => r['geoip.geo.country_name']).filter(Boolean);
+    const currentCountryList = currentCountryResult.map(r => r['geoip_client.country_name']).filter(Boolean);
 
     // ========== 第二階段：5 個查詢（分批並發執行） ==========
     console.log('\n⚡ 第二階段：執行 5 個查詢（上期 Top 5，分批並發）...');
@@ -697,7 +697,7 @@ class TrendAnalysisService {
     const previousRuleMap = new Map(previousTriggerRuleResult.map(r => [r.SecurityRuleDescription, r.cnt]));
     const previousHostMap = new Map(previousHostsResult.map(r => [r.ClientRequestHost, r.cnt]));
     const previousPathMap = new Map(previousPathResult.map(r => [r.ClientRequestPath, r.cnt]));
-    const previousCountryMap = new Map(previousCountryResult.map(r => [r['geoip.geo.country_name'], r.cnt]));
+    const previousCountryMap = new Map(previousCountryResult.map(r => [r['geoip_client.country_name'], r.cnt]));
 
     // 組裝最終回應（符合 trend_GUIDE.md 規格）
     const response = {
@@ -787,9 +787,9 @@ class TrendAnalysisService {
 
       // 國家 Top 5
       country: currentCountryResult.map(r => ({
-        'geoip.geo.country_name': r['geoip.geo.country_name'],
+        'geoip_client.country_name': r['geoip_client.country_name'],
         cnt: r.cnt,
-        change: this.pctChange(r.cnt, previousCountryMap.get(r['geoip.geo.country_name']) || 0)
+        change: this.pctChange(r.cnt, previousCountryMap.get(r['geoip_client.country_name']) || 0)
       })),
 
       // 預留擴展欄位
