@@ -149,6 +149,7 @@ router.post('/analyze-waf-risks', async (req, res) => {
     } catch (apiError) {
       clearTimeout(timeoutId);
 
+      // 處理超時錯誤
       if (apiError.name === 'AbortError') {
         console.error(`❌ ${provider} 請求超時（5 分鐘），使用 Fallback 資料`);
         const aiAnalysisFallback =
@@ -164,6 +165,26 @@ router.post('/analyze-waf-risks', async (req, res) => {
             model: 'N/A',
             analysisTimestamp: new Date().toISOString(),
             note: 'AI 分析超時，使用預設風險資料',
+          },
+        });
+      }
+
+      // 處理 429 Rate Limit 錯誤
+      if (apiError.status === 429) {
+        console.error(`❌ ${provider} API 達到速率限制 (429)，使用 Fallback 資料`);
+        const aiAnalysisFallback =
+          wafService.generateFallbackRisks(analysisData);
+        return res.json({
+          success: true,
+          product: 'Cloudflare',
+          risks: aiAnalysisFallback.risks || [],
+          metadata: {
+            totalEvents: analysisData.totalEvents,
+            timeRange: analysisData.timeRange,
+            aiProvider: 'fallback',
+            model: 'N/A',
+            analysisTimestamp: new Date().toISOString(),
+            note: 'AI API 達到速率限制，使用預設風險資料',
           },
         });
       }
