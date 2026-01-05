@@ -8,7 +8,7 @@ module.exports = {
   index: process.env.ELK_CLOUDFLARE_INDEX || 'across-cf-*',
   
   // 趨勢分析專用索引模式（包含多個索引來源）
-  trendIndex: process.env.ELK_CLOUDFLARE_TREND_INDEX || 'adasone-cf-*,across-cf-logpush-*',
+  trendIndex: process.env.ELK_CLOUDFLARE_TREND_INDEX || 'adasone-cf-*,across-cf-*',
   
   // 產品識別
   productName: 'Cloudflare',
