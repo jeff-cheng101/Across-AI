@@ -188,6 +188,30 @@ router.post('/analyze-risks', async (req, res) => {
         });
       }
 
+      // 處理 429 速率限制錯誤
+      if (apiError.status === 429) {
+        console.error(`❌ ${provider} 達到速率限制 (429)，使用 Fallback 資料`);
+        const aiAnalysisFallback =
+          checkpointService.generateFallbackRisks(analysisData);
+        return res.json({
+          success: true,
+          product: 'CheckPoint',
+          productDisplayName: 'Check Point Firewall',
+          risks: aiAnalysisFallback.risks || [],
+          metadata: {
+            totalEvents: analysisData.totalEvents,
+            realThreats: analysisData.realThreats,
+            realAttacks: analysisData.realAttacks,
+            timeRange: analysisData.timeRange,
+            layerStats: analysisData.layerStats,
+            aiProvider: 'fallback',
+            model: 'N/A',
+            analysisTimestamp: new Date().toISOString(),
+            note: 'AI 達到速率限制，使用預設風險資料。請稍後再試或升級 API 配額。',
+          },
+        });
+      }
+
       console.error(`❌ ${provider} API 呼叫失敗:`, apiError.message);
       throw apiError;
     }
