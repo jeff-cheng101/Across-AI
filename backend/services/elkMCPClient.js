@@ -398,6 +398,12 @@ class ElkMCPClient {
   buildElasticsearchQuery(timeRange = '1h', filters = {}, fieldMapping = null, maxResults = ELK_CONFIG.elasticsearch.maxResults) {
     // 智能時間範圍查詢策略
     let query;
+
+    //處理 ELK_MAX_RESULTS(maxResults) 不能超過 10000，Elasticsearch 單次查詢限制
+    if (maxResults > 10000) {
+      console.log('ELK_MAX_RESULTS 超過 Elasticsearch 單次查詢限制 10000 實際env設定為:', maxResults, '=> 調整為 10000');
+      maxResults = 10000;      
+    }
     
     if (timeRange === 'auto' || timeRange === '1h') {
       // 自動模式：查詢最近的資料，不限特定時間範圍
