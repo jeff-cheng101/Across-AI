@@ -413,7 +413,7 @@ class ElkMCPClient {
             }
           }
         ],
-        size: 1000  // 增加資料量以確保涵蓋所有攻擊事件
+        size: maxResults  // 增加資料量以確保涵蓋所有攻擊事件
       };
     } else if (typeof timeRange === 'object' && timeRange.start && timeRange.end) {
       // 自定義日期範圍查詢（物件格式）
@@ -434,7 +434,7 @@ class ElkMCPClient {
             }
           }
         ],
-        size: 1000
+        size: maxResults
       };
     } else {
       // 傳統時間範圍查詢（字串格式，如 "24h", "7d"）
@@ -459,7 +459,7 @@ class ElkMCPClient {
             }
           }
         ],
-        size: 1000
+        size: maxResults
       };
     }
 

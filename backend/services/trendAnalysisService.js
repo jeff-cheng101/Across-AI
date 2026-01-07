@@ -6,9 +6,10 @@ const { elkMCPClient } = require('./elkMCPClient');
 const cloudflareELKConfig = require('../config/products/cloudflare/cloudflareELKConfig');
 const { ELK_CONFIG } = require('../config/elkConfig');
 const { GoogleGenerativeAI } = require('@google/generative-ai');
+const OpenAI = require('openai');
 const {
-  logOllamaRequest,
-  logOllamaResponse,
+  logOpenAICompatibleRequest,
+  logOpenAICompatibleResponse,
 } = require('../utils/ollamaLogger');
 
 /**
@@ -32,115 +33,6 @@ class ConcurrencyLimiter {
    */
   sleep(ms) {
     return new Promise((resolve) => setTimeout(resolve, ms));
-  }
-
-  /**
-   * 執行 AI 分析
-   * @param {Object} params - AI 參數
-   * @returns {Promise<Object>} AI 分析結果
-   */
-  async performAIAnalysis(params) {
-    const { aiProvider, apiKey, model, promptData, apiUrl } = params;
-    const analysisId = Math.random().toString(36).substr(2, 9);
-    const timestamp = new Date().toISOString();
-    const useModel =
-      model || (aiProvider === 'gemini' ? 'gemini-2.5-flash' : 'llama3');
-    const useApiUrl =
-      apiUrl || process.env.OLLAMA_URL || 'http://localhost:11434';
-
-    console.log(`\n🤖 開始 AI 趨勢分析...`);
-    console.log(`   AI 提供商: ${aiProvider}`);
-    console.log(`   模型: ${useModel}`);
-    if (aiProvider === 'ollama') {
-      console.log(`   Ollama URL: ${useApiUrl}`);
-    }
-
-    try {
-      let trendAnalysis;
-      let responseTime;
-
-      if (aiProvider === 'ollama') {
-        console.log(`   使用 Ollama API`);
-
-        const requestBody = {
-          model: useModel,
-          prompt: promptData,
-          stream: false,
-          options: {
-            temperature: 0.7,
-            num_predict: 2048,
-          },
-        };
-
-        const startTime = Date.now();
-        logOllamaRequest(`${useApiUrl}/api/generate`, requestBody);
-
-        const ollamaResponse = await fetch(`${useApiUrl}/api/generate`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify(requestBody),
-        });
-
-        const elapsedTime = ((Date.now() - startTime) / 1000).toFixed(2);
-
-        if (!ollamaResponse.ok) {
-          const errorText = await ollamaResponse.text();
-          throw new Error(
-            `Ollama API 錯誤 (${ollamaResponse.status}): ${errorText}`,
-          );
-        }
-
-        const ollamaData = await ollamaResponse.json();
-        logOllamaResponse(ollamaData, elapsedTime);
-
-        trendAnalysis = ollamaData.response;
-        responseTime = Math.round(Date.now() - startTime);
-
-        console.log(`✅ Ollama 分析完成，耗時 ${responseTime}ms`);
-      } else {
-        console.log(`   使用 Gemini API`);
-        const genAI = new GoogleGenerativeAI(apiKey);
-        const geminiModel = genAI.getGenerativeModel({ model: useModel });
-
-        const startTime = Date.now();
-        const result = await geminiModel.generateContent(promptData);
-        const elapsedTime = Date.now() - startTime;
-
-        trendAnalysis = result.response.text();
-        responseTime = elapsedTime;
-
-        console.log(`✅ Gemini 分析完成，耗時 ${responseTime}ms`);
-      }
-
-      return {
-        success: true,
-        trendAnalysis,
-        metadata: {
-          analysisId,
-          timestamp,
-          model: useModel,
-          aiProvider,
-          isAIGenerated: true,
-          analysisType: 'traffic_trend_comparison',
-          responseTime,
-          promptLength: promptData.length,
-        },
-      };
-    } catch (error) {
-      console.error('❌ AI 趨勢分析失敗:', error);
-      return {
-        success: false,
-        error: error.message,
-        metadata: {
-          analysisId,
-          timestamp,
-          model: useModel,
-          aiProvider,
-        },
-      };
-    }
   }
 
   /**
@@ -1181,78 +1073,6 @@ ${response.country
   }
 
   /**
-   * 執行 AI 分析
-   * @param {Object} params - AI 參數
-   * @returns {Promise<Object>} AI 分析結果
-   */
-  buildTrendAnalysisPrompt(response) {
-    return `
-請基於以下趨勢對比資料進行分析：
-
-**攻擊活動量對比:**
-- 當前時期攻擊量: ${response.totalAttack.quantity} (${response.totalAttack.change}% 變化)
-- HTTP 攻擊佔比: ${response.httpPct.quantity}% (${response.httpPct.change}% 變化)
-- 封鎖成功率: ${response.lockdownRate.quantity}% (${response.lockdownRate.change}% 變化)
-
-**HTTP 流量對比:**
-- 當前時期: ${response.httpVolume.quantity} (${response.httpVolume.change}% 變化)
-- 資料量: ${response.dataVolume.quantity} (${response.dataVolume.change}% 變化)
-- 頁面瀏覽: ${response.pageView.quantity} (${response.pageView.change}% 變化)
-- 造訪次數: ${response.visits.quantity} (${response.visits.change}% 變化)
-
-**來源 IP Top 5 對比:**
-${response.sourceIP
-        .map(
-          (ip, idx) =>
-            `${idx + 1}. ${ip.ClientIP}: ${ip.cnt} 次 (${ip.change}% 變化)`,
-        )
-        .join('\n')}
-
-**觸發規則 Top 5 對比:**
-${response.triggerRule
-        .map(
-          (rule, idx) =>
-            `${idx + 1}. ${rule.SecurityRuleDescription}: ${rule.cnt} 次 (${rule.change}% 變化)`,
-        )
-        .join('\n')}
-
-**主機 Top 5 對比:**
-${response.hosts
-        .map(
-          (host, idx) =>
-            `${idx + 1}. ${host.ClientRequestHost}: ${host.cnt} 次 (${host.change}% 變化)`,
-        )
-        .join('\n')}
-
-**路徑 Top 5 對比:**
-${response.path
-        .map(
-          (path, idx) =>
-            `${idx + 1}. ${path.ClientRequestPath}: ${path.cnt} 次 (${path.change}% 變化)`,
-        )
-        .join('\n')}
-
-**國家 Top 5 對比:**
-${response.country
-        .map(
-          (country, idx) =>
-            `${idx + 1}. ${country['geoip_client.country_name']}: ${country.cnt} 次 (${country.change}% 變化)`,
-        )
-        .join('\n')}
-
-**請分析以下面向:**
-1. **整體攻擊活動趨勢**：分析攻擊量、HTTP 流量、封鎖率的變化趨勢
-2. **流量模式變化**：分析 HTTP 流量、資料量、頁面瀏覽、造訪次數的變化
-3. **來源變化分析**：分析 Top 5 IP、觸發規則、主機、路徑、國家的變化
-4. **異常模式識別**：識別新增的威脅源、消失的攻擊路徑等異常行為
-5. **潛在安全威脅**：基於趨勢評估潛在的安全風險
-6. **建議的監控和防護措施**：提供具體的、可執行的防護建議
-
-請以繁體中文回答，並提供具體的數據支撐和可執行的建議。
-`;
-  }
-
-  /**
    * 將比較回應轉換為提示詞格式
    * @param {Object} comparisonResponse - 趨勢對比回應
    * @returns {Object} 轉換後的格式
@@ -1307,7 +1127,7 @@ ${response.country
   }
 
   /**
-   * 執行 AI 分析
+   * 執行 AI 分析（使用 OpenAI 相容 API 格式）
    * @param {Object} params - AI 參數
    * @returns {Promise<Object>} AI 分析結果
    */
@@ -1316,70 +1136,85 @@ ${response.country
     const analysisId = Math.random().toString(36).substr(2, 9);
     const timestamp = new Date().toISOString();
     const useModel = model || (aiProvider === 'gemini' ? 'gemini-2.5-flash' : 'llama3');
+    const serviceUrl = process.env.LLM_SERVICE_URL;
+    const useApiKey = apiKey || process.env.LLM_API_KEY;
 
     console.log(`\n🤖 開始 AI 趨勢分析...`);
     console.log(`   AI 提供商: ${aiProvider}`);
     console.log(`   模型: ${useModel}`);
+    console.log(`   API URL: ${serviceUrl}`);
+
+    if (!serviceUrl) {
+      console.error('❌ 未設定 LLM_SERVICE_URL');
+      return {
+        success: false,
+        error: '請設定 LLM_SERVICE_URL 環境變數',
+        metadata: { analysisId, timestamp, model: useModel, aiProvider },
+      };
+    }
 
     try {
       let trendAnalysis;
       let responseTime;
 
-      if (aiProvider === 'ollama') {
-        console.log(`   使用 Ollama API`);
-        const ollamaUrl = process.env.OLLAMA_URL || 'http://localhost:11434';
+      // 使用 OpenAI 相容 API（統一格式）
+      console.log(`   使用 OpenAI 相容 API`);
 
-        const requestBody = {
-          model: useModel,
-          prompt: promptData,
-          stream: false,
-          options: {
-            temperature: 0.7,
-            num_predict: 2048,
+      /** @type {import("openai").default} */
+      const openai = new OpenAI({
+        baseURL: serviceUrl,
+        apiKey: useApiKey,
+      });
+
+      // 設定 5 分鐘超時
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => {
+        controller.abort();
+        console.error(`❌ ${aiProvider} 請求超時（5 分鐘）`);
+      }, 300000);
+
+      const startTime = Date.now();
+      console.log(`⏱️ 開始呼叫 ${aiProvider} API...`);
+
+      // 構建請求參數
+      const requestParams = {
+        model: useModel,
+        messages: [
+          {
+            role: 'system',
+            content: '你是個資安專家，專精於分析網路流量趨勢和威脅識別。請根據提供的資料，分析趨勢變化並提供建議。',
           },
-        };
-
-        const startTime = Date.now();
-        logOllamaRequest(`${ollamaUrl}/api/generate`, requestBody);
-
-        const ollamaResponse = await fetch(`${ollamaUrl}/api/generate`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
+          {
+            role: 'user',
+            content: promptData,
           },
-          body: JSON.stringify(requestBody),
-        });
+        ],
+      };
 
-        const elapsedTime = ((Date.now() - startTime) / 1000).toFixed(2);
+      // 📤 記錄完整請求訊息
+      logOpenAICompatibleRequest(serviceUrl, requestParams);
 
-        if (!ollamaResponse.ok) {
-          const errorText = await ollamaResponse.text();
-          throw new Error(
-            `Ollama API 錯誤 (${ollamaResponse.status}): ${errorText}`,
-          );
-        }
+      const completion = await openai.chat.completions.create(
+        requestParams,
+        { signal: controller.signal },
+      );
 
-        const ollamaData = await ollamaResponse.json();
-        logOllamaResponse(ollamaData, elapsedTime);
+      clearTimeout(timeoutId);
+      const elapsedTime = ((Date.now() - startTime) / 1000).toFixed(2);
+      console.log(`⏱️ ${aiProvider} API 回應時間: ${elapsedTime} 秒`);
 
-        trendAnalysis = ollamaData.response;
-        responseTime = Math.round(Date.now() - startTime);
+      // 📥 記錄完整回應訊息
+      logOpenAICompatibleResponse(completion, elapsedTime);
 
-        console.log(`✅ Ollama 分析完成，耗時 ${responseTime}ms`);
-      } else {
-        console.log(`   使用 Gemini API`);
-        const genAI = new GoogleGenerativeAI(apiKey);
-        const geminiModel = genAI.getGenerativeModel({ model: useModel });
+      trendAnalysis = completion.choices[0]?.message?.content || '';
+      responseTime = Math.round(Date.now() - startTime);
 
-        const startTime = Date.now();
-        const result = await geminiModel.generateContent(promptData);
-        const elapsedTime = Date.now() - startTime;
-
-        trendAnalysis = result.response.text();
-        responseTime = elapsedTime;
-
-        console.log(`✅ Gemini 分析完成，耗時 ${responseTime}ms`);
+      if (!trendAnalysis || trendAnalysis.trim().length === 0) {
+        console.warn(`⚠️ ${aiProvider} 返回空回應`);
+        throw new Error(`${aiProvider} 返回空回應`);
       }
+
+      console.log(`✅ ${aiProvider} 分析完成，耗時 ${responseTime}ms`);
 
       return {
         success: true,
@@ -1396,6 +1231,26 @@ ${response.country
         },
       };
     } catch (error) {
+      // 處理超時錯誤
+      if (error.name === 'AbortError') {
+        console.error(`❌ ${aiProvider} 請求超時（5 分鐘）`);
+        return {
+          success: false,
+          error: 'AI 分析請求超時（5 分鐘）',
+          metadata: { analysisId, timestamp, model: useModel, aiProvider },
+        };
+      }
+
+      // 處理 429 Rate Limit 錯誤
+      if (error.status === 429) {
+        console.error(`❌ ${aiProvider} API 達到速率限制 (429)`);
+        return {
+          success: false,
+          error: 'AI API 達到速率限制，請稍後再試',
+          metadata: { analysisId, timestamp, model: useModel, aiProvider },
+        };
+      }
+
       console.error('❌ AI 趨勢分析失敗:', error);
       return {
         success: false,
