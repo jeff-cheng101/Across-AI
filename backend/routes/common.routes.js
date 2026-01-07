@@ -33,7 +33,7 @@ router.post('/test-ai', async (req, res) => {
         });
       }
       
-      const ollamaUrl = process.env.OLLAMA_URL || 'http://localhost:11434';
+      const ollamaUrl = process.env.LLM_SERVICE_URL || 'http://localhost:11434';
       console.log(`🦙 Ollama URL: ${ollamaUrl}`);
       
       // 先檢查 Ollama 服務是否可用

@@ -5,6 +5,12 @@
 const { elkMCPClient } = require('./elkMCPClient');
 const cloudflareELKConfig = require('../config/products/cloudflare/cloudflareELKConfig');
 const { ELK_CONFIG } = require('../config/elkConfig');
+const { GoogleGenerativeAI } = require('@google/generative-ai');
+const OpenAI = require('openai');
+const {
+  logOpenAICompatibleRequest,
+  logOpenAICompatibleResponse,
+} = require('../utils/ollamaLogger');
 
 /**
  * 簡易並發限制器
@@ -21,12 +27,12 @@ class ConcurrencyLimiter {
   }
 
   /**
-   * 延遲函數
+   * 延遲執行
    * @param {number} ms - 延遲毫秒數
    * @returns {Promise<void>}
    */
   sleep(ms) {
-    return new Promise(resolve => setTimeout(resolve, ms));
+    return new Promise((resolve) => setTimeout(resolve, ms));
   }
 
   /**
@@ -36,25 +42,27 @@ class ConcurrencyLimiter {
    */
   async runAll(tasks) {
     const results = [];
-    
+
     // 分批執行
     for (let i = 0; i < tasks.length; i += this.maxConcurrency) {
       const batch = tasks.slice(i, i + this.maxConcurrency);
       const batchNumber = Math.floor(i / this.maxConcurrency) + 1;
       const totalBatches = Math.ceil(tasks.length / this.maxConcurrency);
-      
-      console.log(`   📦 執行批次 ${batchNumber}/${totalBatches}（${batch.length} 個查詢）`);
-      
+
+      console.log(
+        `   📦 執行批次 ${batchNumber}/${totalBatches}（${batch.length} 個查詢）`,
+      );
+
       // 執行當前批次
-      const batchResults = await Promise.all(batch.map(task => task()));
+      const batchResults = await Promise.all(batch.map((task) => task()));
       results.push(...batchResults);
-      
+
       // 如果還有下一批，添加延遲
       if (i + this.maxConcurrency < tasks.length) {
         await this.sleep(this.delayBetweenBatches);
       }
     }
-    
+
     return results;
   }
 }
@@ -79,13 +87,14 @@ class TrendAnalysisService {
       '1d': { ms: 24 * 60 * 60 * 1000, label: '1天' },
       '3d': { ms: 3 * 24 * 60 * 60 * 1000, label: '3天' },
       '7d': { ms: 7 * 24 * 60 * 60 * 1000, label: '7天' },
-      '14d': { ms: 14 * 24 * 60 * 60 * 1000, label: '14天' },  // 新增 14d 支援
-      '30d': { ms: 30 * 24 * 60 * 60 * 1000, label: '30天' }
+      '14d': { ms: 14 * 24 * 60 * 60 * 1000, label: '14天' }, // 新增 14d 支援
+      '30d': { ms: 30 * 24 * 60 * 60 * 1000, label: '30天' },
     };
 
     // 取得趨勢分析專用索引模式
-    this.indexPattern = cloudflareELKConfig.trendIndex || cloudflareELKConfig.index;
-    
+    this.indexPattern =
+      cloudflareELKConfig.trendIndex || cloudflareELKConfig.index;
+
     /**
      * 並發限制器配置（從 elkConfig 讀取）
      * - maxConcurrency: 最大同時查詢數（避免 Elasticsearch 429 錯誤）
@@ -94,10 +103,12 @@ class TrendAnalysisService {
     const trendConfig = ELK_CONFIG.trend || {};
     this.limiter = new ConcurrencyLimiter(
       trendConfig.maxConcurrency || 5,
-      trendConfig.batchDelayMs || 100
+      trendConfig.batchDelayMs || 100,
     );
-    
-    console.log(`📊 趨勢分析並發配置：最大並發 ${this.limiter.maxConcurrency}，批次延遲 ${this.limiter.delayBetweenBatches}ms`);
+
+    console.log(
+      `📊 趨勢分析並發配置：最大並發 ${this.limiter.maxConcurrency}，批次延遲 ${this.limiter.delayBetweenBatches}ms`,
+    );
   }
 
   // ==================== 工具函數區塊 ====================
@@ -195,7 +206,9 @@ class TrendAnalysisService {
   calculateTimeRanges(timeRange) {
     const config = this.TIME_RANGES[timeRange];
     if (!config) {
-      throw new Error(`不支援的時間範圍: ${timeRange}。支援: ${Object.keys(this.TIME_RANGES).join(', ')}`);
+      throw new Error(
+        `不支援的時間範圍: ${timeRange}。支援: ${Object.keys(this.TIME_RANGES).join(', ')}`,
+      );
     }
 
     const now = new Date();
@@ -204,12 +217,12 @@ class TrendAnalysisService {
     return {
       current: {
         start: new Date(now.getTime() - duration),
-        end: now
+        end: now,
       },
       previous: {
         start: new Date(now.getTime() - duration * 2),
-        end: new Date(now.getTime() - duration)
-      }
+        end: new Date(now.getTime() - duration),
+      },
     };
   }
 
@@ -262,7 +275,7 @@ class TrendAnalysisService {
     const endISO = end.toISOString();
     return `FROM ${this.indexPattern} | WHERE @timestamp >= "${startISO}" AND @timestamp <= "${endISO}" | WHERE SecurityAction.keyword IN ("jschallenge", "block", "managedChallenge") | EVAL hour = DATE_TRUNC(1 hour, @timestamp) | STATS count = COUNT(*) BY hour | SORT hour ASC | KEEP hour, count`;
   }
-    /**
+  /**
    * 建構攻擊趨勢查詢（依10分彙總）
    * @param {Date} start - 開始時間
    * @param {Date} end - 結束時間
@@ -273,7 +286,7 @@ class TrendAnalysisService {
     const endISO = end.toISOString();
     return `FROM ${this.indexPattern} | WHERE @timestamp >= "${startISO}" AND @timestamp <= "${endISO}" | WHERE SecurityAction.keyword IN ("jschallenge", "block", "managedChallenge") | EVAL hour = DATE_TRUNC(10 minute, @timestamp) | STATS count = COUNT(*) BY hour | SORT hour ASC | KEEP hour, count`;
   }
-    /**
+  /**
    * 建構攻擊趨勢查詢（依30分彙總）
    * @param {Date} start - 開始時間
    * @param {Date} end - 結束時間
@@ -295,7 +308,7 @@ class TrendAnalysisService {
     const endISO = end.toISOString();
     return `FROM ${this.indexPattern} | WHERE @timestamp >= "${startISO}" AND @timestamp <= "${endISO}" | WHERE SecurityAction.keyword IN ("jschallenge", "block", "managedChallenge") | EVAL hour = DATE_TRUNC(1 day, @timestamp) | STATS count = COUNT(*) BY hour | SORT hour ASC | KEEP hour, count`;
   }
-    /**
+  /**
    * 建構攻擊趨勢查詢（依3天彙總）
    * @param {Date} start - 開始時間
    * @param {Date} end - 結束時間
@@ -364,7 +377,7 @@ class TrendAnalysisService {
   buildPreviousSourceIPQuery(start, end, ipList) {
     const startISO = start.toISOString();
     const endISO = end.toISOString();
-    const ipFilter = ipList.map(ip => `"${ip}"`).join(',');
+    const ipFilter = ipList.map((ip) => `"${ip}"`).join(',');
     return `FROM ${this.indexPattern} | WHERE @timestamp >= "${startISO}" AND @timestamp <= "${endISO}" | WHERE ClientIP IN (${ipFilter}) | STATS cnt = COUNT(*) BY ClientIP | SORT cnt DESC`;
   }
 
@@ -390,7 +403,7 @@ class TrendAnalysisService {
   buildPreviousTriggerRuleQuery(start, end, ruleList) {
     const startISO = start.toISOString();
     const endISO = end.toISOString();
-    const ruleFilter = ruleList.map(r => `"${r}"`).join(',');
+    const ruleFilter = ruleList.map((r) => `"${r}"`).join(',');
     return `FROM ${this.indexPattern} | WHERE @timestamp >= "${startISO}" AND @timestamp <= "${endISO}" | WHERE SecurityRuleDescription IN (${ruleFilter}) | STATS cnt = COUNT(*) BY SecurityRuleDescription | SORT cnt DESC`;
   }
 
@@ -416,7 +429,7 @@ class TrendAnalysisService {
   buildPreviousHostsQuery(start, end, hostList) {
     const startISO = start.toISOString();
     const endISO = end.toISOString();
-    const hostFilter = hostList.map(h => `"${h}"`).join(',');
+    const hostFilter = hostList.map((h) => `"${h}"`).join(',');
     return `FROM ${this.indexPattern} | WHERE @timestamp >= "${startISO}" AND @timestamp <= "${endISO}" | WHERE ClientRequestHost IN (${hostFilter}) | STATS cnt = COUNT(*) BY ClientRequestHost | SORT cnt DESC`;
   }
 
@@ -442,7 +455,7 @@ class TrendAnalysisService {
   buildPreviousPathQuery(start, end, pathList) {
     const startISO = start.toISOString();
     const endISO = end.toISOString();
-    const pathFilter = pathList.map(p => `"${p}"`).join(',');
+    const pathFilter = pathList.map((p) => `"${p}"`).join(',');
     return `FROM ${this.indexPattern} | WHERE @timestamp >= "${startISO}" AND @timestamp <= "${endISO}" | WHERE ClientRequestPath IN (${pathFilter}) | STATS cnt = COUNT(*) BY ClientRequestPath | SORT cnt DESC`;
   }
 
@@ -468,7 +481,7 @@ class TrendAnalysisService {
   buildPreviousCountryQuery(start, end, countryList) {
     const startISO = start.toISOString();
     const endISO = end.toISOString();
-    const countryFilter = countryList.map(c => `"${c}"`).join(',');
+    const countryFilter = countryList.map((c) => `"${c}"`).join(',');
     return `FROM ${this.indexPattern} | WHERE @timestamp >= "${startISO}" AND @timestamp <= "${endISO}" | WHERE geoip_client.country_name IN (${countryFilter}) | STATS cnt = COUNT(*) BY geoip_client.country_name | SORT cnt DESC`;
   }
 
@@ -482,10 +495,12 @@ class TrendAnalysisService {
   async executeESQLQuery(query) {
     try {
       const result = await elkMCPClient.callHttpTool('esql', { query });
-      
+
       // 解析 ES|QL 回應格式
       if (result.isError) {
-        throw new Error(`ES|QL 查詢錯誤: ${result.content?.[0]?.text || 'Unknown error'}`);
+        throw new Error(
+          `ES|QL 查詢錯誤: ${result.content?.[0]?.text || 'Unknown error'}`,
+        );
       }
 
       const responseText = result.content?.[0]?.text || '';
@@ -493,11 +508,11 @@ class TrendAnalysisService {
 
       try {
         const parsed = JSON.parse(dataText);
-        
+
         // ES|QL 回應格式：{ columns: [...], values: [...] }
         if (parsed.columns && parsed.values) {
-          const columns = parsed.columns.map(col => col.name || col);
-          return parsed.values.map(row => {
+          const columns = parsed.columns.map((col) => col.name || col);
+          return parsed.values.map((row) => {
             const record = {};
             columns.forEach((col, idx) => {
               record[col] = row[idx];
@@ -550,8 +565,12 @@ class TrendAnalysisService {
     const timeRanges = this.calculateTimeRanges(timeRange);
     const { current, previous } = timeRanges;
 
-    console.log(`📅 當期區間: ${current.start.toISOString()} - ${current.end.toISOString()}`);
-    console.log(`📅 上期區間: ${previous.start.toISOString()} - ${previous.end.toISOString()}`);
+    console.log(
+      `📅 當期區間: ${current.start.toISOString()} - ${current.end.toISOString()}`,
+    );
+    console.log(
+      `📅 上期區間: ${previous.start.toISOString()} - ${previous.end.toISOString()}`,
+    );
 
     // ========== 第一階段：19 個查詢（分批並發執行，避免 429 錯誤） ==========
     console.log('\n⚡ 第一階段：執行 19 個查詢（分批並發，每批最多 5 個）...');
@@ -560,44 +579,123 @@ class TrendAnalysisService {
     // 建立查詢任務陣列（延遲執行）
     const phase1Tasks = [
       // 攻擊活動量（2 個）
-      () => this.executeESQLQuery(this.buildAttackCountQuery(current.start, current.end)),
-      () => this.executeESQLQuery(this.buildAttackCountQuery(previous.start, previous.end)),
+      () =>
+        this.executeESQLQuery(
+          this.buildAttackCountQuery(current.start, current.end),
+        ),
+      () =>
+        this.executeESQLQuery(
+          this.buildAttackCountQuery(previous.start, previous.end),
+        ),
       // HTTP 活動量（2 個）
-      () => this.executeESQLQuery(this.buildHttpVolumeQuery(current.start, current.end)),
-      () => this.executeESQLQuery(this.buildHttpVolumeQuery(previous.start, previous.end)),
+      () =>
+        this.executeESQLQuery(
+          this.buildHttpVolumeQuery(current.start, current.end),
+        ),
+      () =>
+        this.executeESQLQuery(
+          this.buildHttpVolumeQuery(previous.start, previous.end),
+        ),
       // 封鎖數（2 個）
-      () => this.executeESQLQuery(this.buildBlockCountQuery(current.start, current.end)),
-      () => this.executeESQLQuery(this.buildBlockCountQuery(previous.start, previous.end)),
+      () =>
+        this.executeESQLQuery(
+          this.buildBlockCountQuery(current.start, current.end),
+        ),
+      () =>
+        this.executeESQLQuery(
+          this.buildBlockCountQuery(previous.start, previous.end),
+        ),
       // 攻擊趨勢（2 個）
       () => {
-        if (timeRange === '1h') return this.executeESQLQuery(this.buildAttackTrendQuery10Minute(current.start, current.end));
-        if (timeRange === '6h') return this.executeESQLQuery(this.buildAttackTrendQuery30Minute(current.start, current.end));
-        if (timeRange === '14d') return this.executeESQLQuery(this.buildAttackTrendQuery1Day(current.start, current.end));
-        if (timeRange === '30d') return this.executeESQLQuery(this.buildAttackTrendQuery3Day(current.start, current.end));
-        return this.executeESQLQuery(this.buildAttackTrendQueryHour(current.start, current.end));
+        if (timeRange === '1h')
+          return this.executeESQLQuery(
+            this.buildAttackTrendQuery10Minute(current.start, current.end),
+          );
+        if (timeRange === '6h')
+          return this.executeESQLQuery(
+            this.buildAttackTrendQuery30Minute(current.start, current.end),
+          );
+        if (timeRange === '14d')
+          return this.executeESQLQuery(
+            this.buildAttackTrendQuery1Day(current.start, current.end),
+          );
+        if (timeRange === '30d')
+          return this.executeESQLQuery(
+            this.buildAttackTrendQuery3Day(current.start, current.end),
+          );
+        return this.executeESQLQuery(
+          this.buildAttackTrendQueryHour(current.start, current.end),
+        );
       },
       () => {
-        if (timeRange === '1h') return this.executeESQLQuery(this.buildAttackTrendQuery10Minute(previous.start, previous.end));
-        if (timeRange === '6h') return this.executeESQLQuery(this.buildAttackTrendQuery30Minute(previous.start, previous.end));
-        if (timeRange === '14d') return this.executeESQLQuery(this.buildAttackTrendQuery1Day(previous.start, previous.end));
-        if (timeRange === '30d') return this.executeESQLQuery(this.buildAttackTrendQuery3Day(previous.start, previous.end));
-        return this.executeESQLQuery(this.buildAttackTrendQueryHour(previous.start, previous.end));
+        if (timeRange === '1h')
+          return this.executeESQLQuery(
+            this.buildAttackTrendQuery10Minute(previous.start, previous.end),
+          );
+        if (timeRange === '6h')
+          return this.executeESQLQuery(
+            this.buildAttackTrendQuery30Minute(previous.start, previous.end),
+          );
+        if (timeRange === '14d')
+          return this.executeESQLQuery(
+            this.buildAttackTrendQuery1Day(previous.start, previous.end),
+          );
+        if (timeRange === '30d')
+          return this.executeESQLQuery(
+            this.buildAttackTrendQuery3Day(previous.start, previous.end),
+          );
+        return this.executeESQLQuery(
+          this.buildAttackTrendQueryHour(previous.start, previous.end),
+        );
       },
       // 資料傳送量（2 個）
-      () => this.executeESQLQuery(this.buildDataVolumeQuery(current.start, current.end)),
-      () => this.executeESQLQuery(this.buildDataVolumeQuery(previous.start, previous.end)),
+      () =>
+        this.executeESQLQuery(
+          this.buildDataVolumeQuery(current.start, current.end),
+        ),
+      () =>
+        this.executeESQLQuery(
+          this.buildDataVolumeQuery(previous.start, previous.end),
+        ),
       // 頁面瀏覽次數（2 個）
-      () => this.executeESQLQuery(this.buildPageViewQuery(current.start, current.end)),
-      () => this.executeESQLQuery(this.buildPageViewQuery(previous.start, previous.end)),
+      () =>
+        this.executeESQLQuery(
+          this.buildPageViewQuery(current.start, current.end),
+        ),
+      () =>
+        this.executeESQLQuery(
+          this.buildPageViewQuery(previous.start, previous.end),
+        ),
       // 造訪次數（2 個）
-      () => this.executeESQLQuery(this.buildVisitsQuery(current.start, current.end)),
-      () => this.executeESQLQuery(this.buildVisitsQuery(previous.start, previous.end)),
+      () =>
+        this.executeESQLQuery(
+          this.buildVisitsQuery(current.start, current.end),
+        ),
+      () =>
+        this.executeESQLQuery(
+          this.buildVisitsQuery(previous.start, previous.end),
+        ),
       // 當期 Top 5（5 個）
-      () => this.executeESQLQuery(this.buildCurrentSourceIPQuery(current.start, current.end)),
-      () => this.executeESQLQuery(this.buildCurrentTriggerRuleQuery(current.start, current.end)),
-      () => this.executeESQLQuery(this.buildCurrentHostsQuery(current.start, current.end)),
-      () => this.executeESQLQuery(this.buildCurrentPathQuery(current.start, current.end)),
-      () => this.executeESQLQuery(this.buildCurrentCountryQuery(current.start, current.end))
+      () =>
+        this.executeESQLQuery(
+          this.buildCurrentSourceIPQuery(current.start, current.end),
+        ),
+      () =>
+        this.executeESQLQuery(
+          this.buildCurrentTriggerRuleQuery(current.start, current.end),
+        ),
+      () =>
+        this.executeESQLQuery(
+          this.buildCurrentHostsQuery(current.start, current.end),
+        ),
+      () =>
+        this.executeESQLQuery(
+          this.buildCurrentPathQuery(current.start, current.end),
+        ),
+      () =>
+        this.executeESQLQuery(
+          this.buildCurrentCountryQuery(current.start, current.end),
+        ),
     ];
 
     // 使用限流器分批執行
@@ -623,17 +721,27 @@ class TrendAnalysisService {
       currentTriggerRuleResult,
       currentHostsResult,
       currentPathResult,
-      currentCountryResult
+      currentCountryResult,
     ] = phase1Results;
 
     console.log(`✅ 第一階段完成，耗時 ${Date.now() - phase1Start}ms`);
 
     // 提取當期 Top 5 列表（用於第二階段查詢）
-    const currentIPList = currentSourceIPResult.map(r => r.ClientIP).filter(Boolean);
-    const currentRuleList = currentTriggerRuleResult.map(r => r.SecurityRuleDescription);
-    const currentHostList = currentHostsResult.map(r => r.ClientRequestHost).filter(Boolean);
-    const currentPathList = currentPathResult.map(r => r.ClientRequestPath).filter(Boolean);
-    const currentCountryList = currentCountryResult.map(r => r['geoip_client.country_name']).filter(Boolean);
+    const currentIPList = currentSourceIPResult
+      .map((r) => r.ClientIP)
+      .filter(Boolean);
+    const currentRuleList = currentTriggerRuleResult.map(
+      (r) => r.SecurityRuleDescription,
+    );
+    const currentHostList = currentHostsResult
+      .map((r) => r.ClientRequestHost)
+      .filter(Boolean);
+    const currentPathList = currentPathResult
+      .map((r) => r.ClientRequestPath)
+      .filter(Boolean);
+    const currentCountryList = currentCountryResult
+      .map((r) => r['geoip_client.country_name'])
+      .filter(Boolean);
 
     // ========== 第二階段：5 個查詢（分批並發執行） ==========
     console.log('\n⚡ 第二階段：執行 5 個查詢（上期 Top 5，分批並發）...');
@@ -641,21 +749,56 @@ class TrendAnalysisService {
 
     // 建立第二階段查詢任務
     const phase2Tasks = [
-      () => currentIPList.length > 0 
-        ? this.executeESQLQuery(this.buildPreviousSourceIPQuery(previous.start, previous.end, currentIPList))
-        : Promise.resolve([]),
-      () => currentRuleList.length > 0 
-        ? this.executeESQLQuery(this.buildPreviousTriggerRuleQuery(previous.start, previous.end, currentRuleList))
-        : Promise.resolve([]),
-      () => currentHostList.length > 0 
-        ? this.executeESQLQuery(this.buildPreviousHostsQuery(previous.start, previous.end, currentHostList))
-        : Promise.resolve([]),
-      () => currentPathList.length > 0 
-        ? this.executeESQLQuery(this.buildPreviousPathQuery(previous.start, previous.end, currentPathList))
-        : Promise.resolve([]),
-      () => currentCountryList.length > 0 
-        ? this.executeESQLQuery(this.buildPreviousCountryQuery(previous.start, previous.end, currentCountryList))
-        : Promise.resolve([])
+      () =>
+        currentIPList.length > 0
+          ? this.executeESQLQuery(
+            this.buildPreviousSourceIPQuery(
+              previous.start,
+              previous.end,
+              currentIPList,
+            ),
+          )
+          : Promise.resolve([]),
+      () =>
+        currentRuleList.length > 0
+          ? this.executeESQLQuery(
+            this.buildPreviousTriggerRuleQuery(
+              previous.start,
+              previous.end,
+              currentRuleList,
+            ),
+          )
+          : Promise.resolve([]),
+      () =>
+        currentHostList.length > 0
+          ? this.executeESQLQuery(
+            this.buildPreviousHostsQuery(
+              previous.start,
+              previous.end,
+              currentHostList,
+            ),
+          )
+          : Promise.resolve([]),
+      () =>
+        currentPathList.length > 0
+          ? this.executeESQLQuery(
+            this.buildPreviousPathQuery(
+              previous.start,
+              previous.end,
+              currentPathList,
+            ),
+          )
+          : Promise.resolve([]),
+      () =>
+        currentCountryList.length > 0
+          ? this.executeESQLQuery(
+            this.buildPreviousCountryQuery(
+              previous.start,
+              previous.end,
+              currentCountryList,
+            ),
+          )
+          : Promise.resolve([]),
     ];
 
     // 使用限流器分批執行
@@ -664,7 +807,7 @@ class TrendAnalysisService {
       previousTriggerRuleResult,
       previousHostsResult,
       previousPathResult,
-      previousCountryResult
+      previousCountryResult,
     ] = await this.limiter.runAll(phase2Tasks);
 
     console.log(`✅ 第二階段完成，耗時 ${Date.now() - phase2Start}ms`);
@@ -674,17 +817,35 @@ class TrendAnalysisService {
 
     // 提取數值
     const currentAttack = this.extractSingleValue(currentAttackResult, 'count');
-    const previousAttack = this.extractSingleValue(previousAttackResult, 'count');
+    const previousAttack = this.extractSingleValue(
+      previousAttackResult,
+      'count',
+    );
     const currentHttp = this.extractSingleValue(currentHttpResult, 'count');
     const previousHttp = this.extractSingleValue(previousHttpResult, 'count');
     const currentBlock = this.extractSingleValue(currentBlockResult, 'count');
     const previousBlock = this.extractSingleValue(previousBlockResult, 'count');
-    const currentData = this.extractSingleValue(currentDataResult, 'totalBytes');
-    const previousData = this.extractSingleValue(previousDataResult, 'totalBytes');
-    const currentPageView = this.extractSingleValue(currentPageViewResult, 'count');
-    const previousPageView = this.extractSingleValue(previousPageViewResult, 'count');
+    const currentData = this.extractSingleValue(
+      currentDataResult,
+      'totalBytes',
+    );
+    const previousData = this.extractSingleValue(
+      previousDataResult,
+      'totalBytes',
+    );
+    const currentPageView = this.extractSingleValue(
+      currentPageViewResult,
+      'count',
+    );
+    const previousPageView = this.extractSingleValue(
+      previousPageViewResult,
+      'count',
+    );
     const currentVisits = this.extractSingleValue(currentVisitsResult, 'count');
-    const previousVisits = this.extractSingleValue(previousVisitsResult, 'count');
+    const previousVisits = this.extractSingleValue(
+      previousVisitsResult,
+      'count',
+    );
 
     // 計算衍生指標
     const currentHttpPct = this.ratioPct(currentAttack, currentHttp);
@@ -693,11 +854,21 @@ class TrendAnalysisService {
     const previousLockdownRate = this.ratioPct(previousBlock, previousAttack);
 
     // 建立上期 Top 5 查找表（用於快速對比）
-    const previousIPMap = new Map(previousSourceIPResult.map(r => [r.ClientIP, r.cnt]));
-    const previousRuleMap = new Map(previousTriggerRuleResult.map(r => [r.SecurityRuleDescription, r.cnt]));
-    const previousHostMap = new Map(previousHostsResult.map(r => [r.ClientRequestHost, r.cnt]));
-    const previousPathMap = new Map(previousPathResult.map(r => [r.ClientRequestPath, r.cnt]));
-    const previousCountryMap = new Map(previousCountryResult.map(r => [r['geoip_client.country_name'], r.cnt]));
+    const previousIPMap = new Map(
+      previousSourceIPResult.map((r) => [r.ClientIP, r.cnt]),
+    );
+    const previousRuleMap = new Map(
+      previousTriggerRuleResult.map((r) => [r.SecurityRuleDescription, r.cnt]),
+    );
+    const previousHostMap = new Map(
+      previousHostsResult.map((r) => [r.ClientRequestHost, r.cnt]),
+    );
+    const previousPathMap = new Map(
+      previousPathResult.map((r) => [r.ClientRequestPath, r.cnt]),
+    );
+    const previousCountryMap = new Map(
+      previousCountryResult.map((r) => [r['geoip_client.country_name'], r.cnt]),
+    );
 
     // 組裝最終回應（符合 trend_GUIDE.md 規格）
     const response = {
@@ -706,99 +877,113 @@ class TrendAnalysisService {
       // 攻擊活動量
       totalAttack: {
         quantity: currentAttack,
-        change: this.pctChange(currentAttack, previousAttack)
+        change: this.pctChange(currentAttack, previousAttack),
       },
 
       // HTTP 攻擊佔比（0~100 百分比）
       httpPct: {
         quantity: this.round2(currentHttpPct),
-        change: this.pctChange(currentHttpPct, previousHttpPct)
+        change: this.pctChange(currentHttpPct, previousHttpPct),
       },
 
       // 封鎖成功率（0~100 百分比）
       lockdownRate: {
         quantity: this.round2(currentLockdownRate),
-        change: this.pctChange(currentLockdownRate, previousLockdownRate)
+        change: this.pctChange(currentLockdownRate, previousLockdownRate),
       },
 
       // 當期攻擊趨勢（依小時彙總）
-      currentAttackTrend: currentTrendResult.map(r => ({
+      currentAttackTrend: currentTrendResult.map((r) => ({
         hour: r.hour,
-        count: r.count || 0
+        count: r.count || 0,
       })),
 
       // 上期攻擊趨勢（依小時彙總）
-      previousAttackTrend: previousTrendResult.map(r => ({
+      previousAttackTrend: previousTrendResult.map((r) => ({
         hour: r.hour,
-        count: r.count || 0
+        count: r.count || 0,
       })),
 
       // HTTP 流量
       httpVolume: {
         quantity: this.formatCount(currentHttp),
-        change: this.pctChange(currentHttp, previousHttp)
+        change: this.pctChange(currentHttp, previousHttp),
       },
 
       // 資料量
       dataVolume: {
         quantity: this.formatBytes(currentData),
-        change: this.pctChange(currentData, previousData)
+        change: this.pctChange(currentData, previousData),
       },
 
       // 頁面瀏覽次數
       pageView: {
         quantity: this.formatCount(currentPageView),
-        change: this.pctChange(currentPageView, previousPageView)
+        change: this.pctChange(currentPageView, previousPageView),
       },
 
       // 造訪次數
       visits: {
         quantity: this.formatCount(currentVisits),
-        change: this.pctChange(currentVisits, previousVisits)
+        change: this.pctChange(currentVisits, previousVisits),
       },
 
       // 來源 IP Top 5
-      sourceIP: currentSourceIPResult.map(r => ({
+      sourceIP: currentSourceIPResult.map((r) => ({
         ClientIP: r.ClientIP,
         cnt: r.cnt,
-        change: this.pctChange(r.cnt, previousIPMap.get(r.ClientIP) || 0)
+        change: this.pctChange(r.cnt, previousIPMap.get(r.ClientIP) || 0),
       })),
 
       // 觸發規則 Top 5
-      triggerRule: currentTriggerRuleResult.map(r => ({
+      triggerRule: currentTriggerRuleResult.map((r) => ({
         SecurityRuleDescription: r.SecurityRuleDescription,
         cnt: r.cnt,
-        change: this.pctChange(r.cnt, previousRuleMap.get(r.SecurityRuleDescription) || 0)
+        change: this.pctChange(
+          r.cnt,
+          previousRuleMap.get(r.SecurityRuleDescription) || 0,
+        ),
       })),
 
       // 主機 Top 5
-      hosts: currentHostsResult.map(r => ({
+      hosts: currentHostsResult.map((r) => ({
         ClientRequestHost: r.ClientRequestHost,
         cnt: r.cnt,
-        change: this.pctChange(r.cnt, previousHostMap.get(r.ClientRequestHost) || 0)
+        change: this.pctChange(
+          r.cnt,
+          previousHostMap.get(r.ClientRequestHost) || 0,
+        ),
       })),
 
       // 路徑 Top 5
-      path: currentPathResult.map(r => ({
+      path: currentPathResult.map((r) => ({
         ClientRequestPath: r.ClientRequestPath,
         cnt: r.cnt,
-        change: this.pctChange(r.cnt, previousPathMap.get(r.ClientRequestPath) || 0)
+        change: this.pctChange(
+          r.cnt,
+          previousPathMap.get(r.ClientRequestPath) || 0,
+        ),
       })),
 
       // 國家 Top 5
-      country: currentCountryResult.map(r => ({
+      country: currentCountryResult.map((r) => ({
         'geoip_client.country_name': r['geoip_client.country_name'],
         cnt: r.cnt,
-        change: this.pctChange(r.cnt, previousCountryMap.get(r['geoip_client.country_name']) || 0)
+        change: this.pctChange(
+          r.cnt,
+          previousCountryMap.get(r['geoip_client.country_name']) || 0,
+        ),
       })),
 
       // 預留擴展欄位
-      other: {}
+      other: {},
     };
 
     const totalTime = Date.now() - startTime;
     console.log(`\n✅ 趨勢對比分析完成，總耗時 ${totalTime}ms`);
-    console.log(`   攻擊活動量: ${currentAttack} (${response.totalAttack.change}%)`);
+    console.log(
+      `   攻擊活動量: ${currentAttack} (${response.totalAttack.change}%)`,
+    );
     console.log(`   HTTP 流量: ${response.httpVolume.quantity}`);
     console.log(`   資料量: ${response.dataVolume.quantity}`);
 
@@ -811,6 +996,273 @@ class TrendAnalysisService {
    */
   getValidTimeRanges() {
     return Object.keys(this.TIME_RANGES);
+  }
+
+  // ==================== AI 趨勢分析功能 ====================
+
+  /**
+   * 建構趨勢分析提示詞
+   * @param {Object} response - 趨勢對比回應
+   * @returns {string} 提示詞字串
+   */
+  buildTrendAnalysisPrompt(response) {
+    return `
+請基於以下趨勢對比資料進行分析：
+
+**攻擊活動量對比:**
+- 當前時期攻擊量: ${response.totalAttack.quantity} (${response.totalAttack.change}% 變化)
+- HTTP 攻擊佔比: ${response.httpPct.quantity}% (${response.httpPct.change}% 變化)
+- 封鎖成功率: ${response.lockdownRate.quantity}% (${response.lockdownRate.change}% 變化)
+
+**HTTP 流量對比:**
+- 當前時期: ${response.httpVolume.quantity} (${response.httpVolume.change}% 變化)
+- 資料量: ${response.dataVolume.quantity} (${response.dataVolume.change}% 變化)
+- 頁面瀏覽: ${response.pageView.quantity} (${response.pageView.change}% 變化)
+- 造訪次數: ${response.visits.quantity} (${response.visits.change}% 變化)
+
+**來源 IP Top 5 對比:**
+${response.sourceIP
+        .map(
+          (ip, idx) =>
+            `${idx + 1}. ${ip.ClientIP}: ${ip.cnt} 次 (${ip.change}% 變化)`,
+        )
+        .join('\n')}
+
+**觸發規則 Top 5 對比:**
+${response.triggerRule
+        .map(
+          (rule, idx) =>
+            `${idx + 1}. ${rule.SecurityRuleDescription}: ${rule.cnt} 次 (${rule.change}% 變化)`,
+        )
+        .join('\n')}
+
+**主機 Top 5 對比:**
+${response.hosts
+        .map(
+          (host, idx) =>
+            `${idx + 1}. ${host.ClientRequestHost}: ${host.cnt} 次 (${host.change}% 變化)`,
+        )
+        .join('\n')}
+
+**路徑 Top 5 對比:**
+${response.path
+        .map(
+          (path, idx) =>
+            `${idx + 1}. ${path.ClientRequestPath}: ${path.cnt} 次 (${path.change}% 變化)`,
+        )
+        .join('\n')}
+
+**國家 Top 5 對比:**
+${response.country
+        .map(
+          (country, idx) =>
+            `${idx + 1}. ${country['geoip_client.country_name']}: ${country.cnt} 次 (${country.change}% 變化)`,
+        )
+        .join('\n')}
+
+**請分析以下面向:**
+1. **整體攻擊活動趨勢**：分析攻擊量、HTTP 流量、封鎖率的變化趨勢
+2. **流量模式變化**：分析 HTTP 流量、資料量、頁面瀏覽、造訪次數的變化
+3. **來源變化分析**：分析 Top 5 IP、觸發規則、主機、路徑、國家的變化
+4. **異常模式識別**：識別新增的威脅源、消失的攻擊路徑等異常行為
+5. **潛在安全威脅**：基於趨勢評估潛在的安全風險
+6. **建議的監控和防護措施**：提供具體的、可執行的防護建議
+
+請以繁體中文回答，並提供具體的數據支撐和可執行的建議。
+`;
+  }
+
+  /**
+   * 將比較回應轉換為提示詞格式
+   * @param {Object} comparisonResponse - 趨勢對比回應
+   * @returns {Object} 轉換後的格式
+   */
+  convertToPromptFormat(comparisonResponse) {
+    return {
+      period: {
+        start: new Date(),
+        end: new Date(),
+        label: '當前時期',
+      },
+      totalRequestTraffic: this.parseFormattedValue(
+        comparisonResponse.dataVolume.quantity,
+      ),
+      totalRequests: this.parseFormattedValue(
+        comparisonResponse.httpVolume.quantity,
+      ),
+      uniqueIPs: 0,
+      attackIPs: 0,
+      topTrafficIPs: comparisonResponse.sourceIP.map((item) => ({
+        ip: item.ClientIP,
+        traffic: this.parseFormattedValue(item.cnt),
+        requests: item.cnt,
+        country: 'N/A',
+        asn: 'N/A',
+      })),
+    };
+  }
+
+  /**
+   * 解析格式化數值（如 "129.99K" 轉為整數）
+   * @param {string} formattedValue - 格式化的數值字串
+   * @returns {number} 數值
+   */
+  parseFormattedValue(formattedValue) {
+    if (!formattedValue || typeof formattedValue !== 'string') {
+      return 0;
+    }
+
+    const valueStr = formattedValue.toUpperCase();
+    const num = parseFloat(valueStr);
+
+    if (valueStr.includes('K')) {
+      return Math.round(num * 1000);
+    } else if (valueStr.includes('M')) {
+      return Math.round(num * 1000 * 1000);
+    } else if (valueStr.includes('B')) {
+      return Math.round(num * 1024 * 1024 * 1024);
+    }
+
+    return Math.round(num);
+  }
+
+  /**
+   * 執行 AI 分析（使用 OpenAI 相容 API 格式）
+   * @param {Object} params - AI 參數
+   * @returns {Promise<Object>} AI 分析結果
+   */
+  async performAIAnalysis(params) {
+    const { aiProvider, apiKey, model, promptData } = params;
+    const analysisId = Math.random().toString(36).substr(2, 9);
+    const timestamp = new Date().toISOString();
+    const useModel = model || (aiProvider === 'gemini' ? 'gemini-2.5-flash' : 'llama3');
+    const serviceUrl = process.env.LLM_SERVICE_URL;
+    const useApiKey = apiKey || process.env.LLM_API_KEY;
+
+    console.log(`\n🤖 開始 AI 趨勢分析...`);
+    console.log(`   AI 提供商: ${aiProvider}`);
+    console.log(`   模型: ${useModel}`);
+    console.log(`   API URL: ${serviceUrl}`);
+
+    if (!serviceUrl) {
+      console.error('❌ 未設定 LLM_SERVICE_URL');
+      return {
+        success: false,
+        error: '請設定 LLM_SERVICE_URL 環境變數',
+        metadata: { analysisId, timestamp, model: useModel, aiProvider },
+      };
+    }
+
+    try {
+      let trendAnalysis;
+      let responseTime;
+
+      // 使用 OpenAI 相容 API（統一格式）
+      console.log(`   使用 OpenAI 相容 API`);
+
+      /** @type {import("openai").default} */
+      const openai = new OpenAI({
+        baseURL: serviceUrl,
+        apiKey: useApiKey,
+      });
+
+      // 設定 5 分鐘超時
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => {
+        controller.abort();
+        console.error(`❌ ${aiProvider} 請求超時（5 分鐘）`);
+      }, 300000);
+
+      const startTime = Date.now();
+      console.log(`⏱️ 開始呼叫 ${aiProvider} API...`);
+
+      // 構建請求參數
+      const requestParams = {
+        model: useModel,
+        messages: [
+          {
+            role: 'system',
+            content: '你是個資安專家，專精於分析網路流量趨勢和威脅識別。請根據提供的資料，分析趨勢變化並提供建議。',
+          },
+          {
+            role: 'user',
+            content: promptData,
+          },
+        ],
+      };
+
+      // 📤 記錄完整請求訊息
+      logOpenAICompatibleRequest(serviceUrl, requestParams);
+
+      const completion = await openai.chat.completions.create(
+        requestParams,
+        { signal: controller.signal },
+      );
+
+      clearTimeout(timeoutId);
+      const elapsedTime = ((Date.now() - startTime) / 1000).toFixed(2);
+      console.log(`⏱️ ${aiProvider} API 回應時間: ${elapsedTime} 秒`);
+
+      // 📥 記錄完整回應訊息
+      logOpenAICompatibleResponse(completion, elapsedTime);
+
+      trendAnalysis = completion.choices[0]?.message?.content || '';
+      responseTime = Math.round(Date.now() - startTime);
+
+      if (!trendAnalysis || trendAnalysis.trim().length === 0) {
+        console.warn(`⚠️ ${aiProvider} 返回空回應`);
+        throw new Error(`${aiProvider} 返回空回應`);
+      }
+
+      console.log(`✅ ${aiProvider} 分析完成，耗時 ${responseTime}ms`);
+
+      return {
+        success: true,
+        trendAnalysis,
+        metadata: {
+          analysisId,
+          timestamp,
+          model: useModel,
+          aiProvider,
+          isAIGenerated: true,
+          analysisType: 'traffic_trend_comparison',
+          responseTime,
+          promptLength: promptData.length,
+        },
+      };
+    } catch (error) {
+      // 處理超時錯誤
+      if (error.name === 'AbortError') {
+        console.error(`❌ ${aiProvider} 請求超時（5 分鐘）`);
+        return {
+          success: false,
+          error: 'AI 分析請求超時（5 分鐘）',
+          metadata: { analysisId, timestamp, model: useModel, aiProvider },
+        };
+      }
+
+      // 處理 429 Rate Limit 錯誤
+      if (error.status === 429) {
+        console.error(`❌ ${aiProvider} API 達到速率限制 (429)`);
+        return {
+          success: false,
+          error: 'AI API 達到速率限制，請稍後再試',
+          metadata: { analysisId, timestamp, model: useModel, aiProvider },
+        };
+      }
+
+      console.error('❌ AI 趨勢分析失敗:', error);
+      return {
+        success: false,
+        error: error.message,
+        metadata: {
+          analysisId,
+          timestamp,
+          model: useModel,
+          aiProvider,
+        },
+      };
+    }
   }
 }
 
