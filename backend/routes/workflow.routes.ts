@@ -30,6 +30,9 @@ const InputsSchemaMap: Record<WorkflowType, z.ZodType<InputsBase>> = {
   'ip-unblock-quick': z.object({
     IPlist: z.string().min(1),
   }),
+  'cloudflare-attack-analysis': z.object({
+    time_range: z.string().min(1), // 時間範圍，如 "1h", "24h", "7d" 等
+  }),
 };
 
 /**
@@ -212,7 +215,11 @@ router.post('/:type', async (req: Request, res: Response<ApiResponse>) => {
       console.warn('⚠️ 無效的 workflow 類型', {
         timestamp: new Date().toISOString(),
         providedType: typeParam,
-        allowedTypes: ['ip-block-quick', 'ip-unblock-quick'],
+        allowedTypes: [
+          'ip-block-quick',
+          'ip-unblock-quick',
+          'cloudflare-attack-analysis',
+        ],
         validationErrors: typeResult.error.issues || [],
       });
       return res.status(400).json({
