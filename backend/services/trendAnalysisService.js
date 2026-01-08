@@ -1136,16 +1136,28 @@ ${response.country
     const analysisId = Math.random().toString(36).substr(2, 9);
     const timestamp = new Date().toISOString();
     const useModel = model || (aiProvider === 'gemini' ? 'gemini-2.5-flash' : 'llama3');
-    const serviceUrl = process.env.LLM_SERVICE_URL;
+
+    // Portkey Configuration
+    const usePortkey = process.env.USE_PORTKEY === 'true';
+    const portkeyGatewayUrl = process.env.PORTKEY_GATEWAY_URL || 'http://localhost:8787/v1';
+    // Portkey needs to know where Ollama is (e.g., http://host.docker.internal:11434)
+    const portkeyOllamaHost = process.env.PORTKEY_OLLAMA_HOST || 'http://host.docker.internal:11434';
+
+    let serviceUrl = process.env.LLM_SERVICE_URL;
     const useApiKey = apiKey || process.env.LLM_API_KEY;
+
+    // If using Portkey, override serviceUrl
+    if (usePortkey) {
+      serviceUrl = portkeyGatewayUrl;
+    }
 
     console.log(`\n🤖 開始 AI 趨勢分析...`);
     console.log(`   AI 提供商: ${aiProvider}`);
     console.log(`   模型: ${useModel}`);
-    console.log(`   API URL: ${serviceUrl}`);
+    console.log(`   API URL: ${serviceUrl} ${usePortkey ? '(via Portkey Gateway)' : ''}`);
 
     if (!serviceUrl) {
-      console.error('❌ 未設定 LLM_SERVICE_URL');
+      console.error('❌ 未設定 LLM_SERVICE_URL (或 Portkey URL)');
       return {
         success: false,
         error: '請設定 LLM_SERVICE_URL 環境變數',
@@ -1160,11 +1172,33 @@ ${response.country
       // 使用 OpenAI 相容 API（統一格式）
       console.log(`   使用 OpenAI 相容 API`);
 
-      /** @type {import("openai").default} */
-      const openai = new OpenAI({
+      const openaiConfig = {
         baseURL: serviceUrl,
-        apiKey: useApiKey,
-      });
+        apiKey: useApiKey || 'dummy', // Portkey requires a key, even if dummy for Ollama
+      };
+
+      // Configure Portkey Headers if enabled
+      if (usePortkey) {
+        const headers = {
+          'x-portkey-provider': aiProvider === 'gemini' ? 'google' : 'ollama',
+          'Content-Type': 'application/json'
+        };
+
+        // For Ollama, we need to tell Portkey where the custom host is
+        if (aiProvider === 'ollama' || aiProvider !== 'gemini') {
+          // Default to ollama behavior for non-gemini
+          headers['x-portkey-custom-host'] = portkeyOllamaHost;
+          headers['x-portkey-provider'] = 'ollama';
+        }
+
+        openaiConfig.defaultHeaders = headers;
+
+        // When using Portkey with Gemini, we ensure the virtual key or API key is passed
+        // If it's pure proxy, the API key in headers/body is forwarded.
+      }
+
+      /** @type {import("openai").default} */
+      const openai = new OpenAI(openaiConfig);
 
       // 設定 5 分鐘超時
       const controller = new AbortController();

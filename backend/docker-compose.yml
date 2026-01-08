@@ -1,0 +1,14 @@
+version: '3.9'
+
+services:
+  portkey-gateway:
+    image: portkeyai/gateway:latest
+    container_name: portkey-gateway
+    restart: always
+    ports:
+      - "8787:8787"
+    environment:
+      - PORT=8787
+    # If you need to persist logs or config, you might want to add volumes here in the future
+    # volumes:
+    #   - ./portkey_data:/data
