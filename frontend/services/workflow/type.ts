@@ -167,10 +167,23 @@ export const AnalysisMetadataSchema = z.object({
 });
 
 /**
+ * 將字串 "true"/"false" 或 boolean 轉換為 boolean
+ * 用於處理 LLM 輸出可能回傳字串的情況
+ */
+const coerceBoolean = z.preprocess((val) => {
+  if (typeof val === 'boolean') return val;
+  if (typeof val === 'string') {
+    if (val.toLowerCase() === 'true') return true;
+    if (val.toLowerCase() === 'false') return false;
+  }
+  return val;
+}, z.boolean());
+
+/**
  * Cloudflare 分析回應 Schema
  */
 export const CloudflareAnalysisResponseSchema = z.object({
-  success: z.boolean(),
+  success: coerceBoolean,
   product: z.string().optional(),
   risks: z.array(RiskSchema).optional(),
   metadata: AnalysisMetadataSchema.optional(),
