@@ -27,7 +27,7 @@ export const WorkflowConfigs: Record<WorkflowType, WorkflowConfig> = {
   },
   'cloudflare-attack-analysis': {
     mode: 'streaming',
-    timeout: 300000, // 5 分鐘
+    timeout: 3000000, // 50 分鐘
   },
 };
 
