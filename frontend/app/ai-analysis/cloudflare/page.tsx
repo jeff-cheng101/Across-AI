@@ -41,6 +41,7 @@ import { useToast } from '@/hooks/use-toast';
 import { type ActionRecord, saveActionRecord } from '@/lib/action-records';
 import { backendClient } from '@/lib/api-clients';
 import { executeCloudflareAnalysis } from '@/services/workflow';
+import { Streamdown } from 'streamdown';
 
 /**
  * 操作步驟類型
@@ -1713,10 +1714,10 @@ export default function CloudflareAIAnalysisPage() {
                                 AI 深度分析
                               </h4>
                             </div>
-                            <p className="text-slate-300 leading-relaxed text-sm">
+                            <Streamdown className="text-slate-300 leading-relaxed text-sm prose prose-invert prose-sm max-w-none [&>*:first-child]:mt-0 [&>*:last-child]:mb-0 [&_pre]:bg-slate-800/50 [&_pre]:border [&_pre]:border-slate-700/50 [&_code]:text-cyan-300 [&_strong]:text-white [&_h1]:text-white [&_h2]:text-white [&_h3]:text-white [&_h4]:text-white [&_a]:text-cyan-400">
                               {assessment.aiInsight ||
                                 `根據威脅情報分析，檢測到 ${assessment.openIssues} 次攻擊事件，共影響 ${assessment.affectedAssets} 個資產。建議立即採取防護措施並監控相關日誌。`}
-                            </p>
+                            </Streamdown>
                           </div>
                         </div>
                       ))}
