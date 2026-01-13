@@ -100,7 +100,7 @@ async function sendDifyBlockingRequest(
     return null;
   }
 
-  const url = `${baseUrl}/v1/workflows/run`;
+  const url = `${baseUrl}/workflows/run`;
   const startTime = Date.now();
 
   const controller = new AbortController();
@@ -199,7 +199,7 @@ async function sendDifyStreamingRequest(
     return null;
   }
 
-  const url = `${baseUrl}/v1/workflows/run`;
+  const url = `${baseUrl}/workflows/run`;
   const startTime = Date.now();
 
   const controller = new AbortController();
