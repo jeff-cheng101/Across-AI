@@ -237,7 +237,7 @@ class TrendAnalysisService {
   buildAttackCountQuery(start, end) {
     const startISO = start.toISOString();
     const endISO = end.toISOString();
-    return `FROM ${this.indexPattern} | WHERE @timestamp >= "${startISO}" AND @timestamp <= "${endISO}" AND SecurityAction.keyword IN ("jschallenge", "block", "managedChallenge") | STATS count = COUNT(*)`;
+    return `FROM ${this.indexPattern} | WHERE @timestamp >= "${startISO}" AND @timestamp <= "${endISO}" AND SecurityAction IN ("jschallenge", "block", "managedChallenge") | STATS count = COUNT(*)`;
   }
 
   /**
@@ -261,7 +261,7 @@ class TrendAnalysisService {
   buildBlockCountQuery(start, end) {
     const startISO = start.toISOString();
     const endISO = end.toISOString();
-    return `FROM ${this.indexPattern} | WHERE @timestamp >= "${startISO}" AND @timestamp <= "${endISO}" AND SecurityAction.keyword IN ("block") | STATS count = COUNT(*)`;
+    return `FROM ${this.indexPattern} | WHERE @timestamp >= "${startISO}" AND @timestamp <= "${endISO}" AND SecurityAction IN ("block") | STATS count = COUNT(*)`;
   }
 
   /**
@@ -273,7 +273,7 @@ class TrendAnalysisService {
   buildAttackTrendQueryHour(start, end) {
     const startISO = start.toISOString();
     const endISO = end.toISOString();
-    return `FROM ${this.indexPattern} | WHERE @timestamp >= "${startISO}" AND @timestamp <= "${endISO}" | WHERE SecurityAction.keyword IN ("jschallenge", "block", "managedChallenge") | EVAL hour = DATE_TRUNC(1 hour, @timestamp) | STATS count = COUNT(*) BY hour | SORT hour ASC | KEEP hour, count`;
+    return `FROM ${this.indexPattern} | WHERE @timestamp >= "${startISO}" AND @timestamp <= "${endISO}" | WHERE SecurityAction IN ("jschallenge", "block", "managedChallenge") | EVAL hour = DATE_TRUNC(1 hour, @timestamp) | STATS count = COUNT(*) BY hour | SORT hour ASC | KEEP hour, count`;
   }
   /**
    * 建構攻擊趨勢查詢（依10分彙總）
@@ -284,7 +284,7 @@ class TrendAnalysisService {
   buildAttackTrendQuery10Minute(start, end) {
     const startISO = start.toISOString();
     const endISO = end.toISOString();
-    return `FROM ${this.indexPattern} | WHERE @timestamp >= "${startISO}" AND @timestamp <= "${endISO}" | WHERE SecurityAction.keyword IN ("jschallenge", "block", "managedChallenge") | EVAL hour = DATE_TRUNC(10 minute, @timestamp) | STATS count = COUNT(*) BY hour | SORT hour ASC | KEEP hour, count`;
+    return `FROM ${this.indexPattern} | WHERE @timestamp >= "${startISO}" AND @timestamp <= "${endISO}" | WHERE SecurityAction IN ("jschallenge", "block", "managedChallenge") | EVAL hour = DATE_TRUNC(10 minute, @timestamp) | STATS count = COUNT(*) BY hour | SORT hour ASC | KEEP hour, count`;
   }
   /**
    * 建構攻擊趨勢查詢（依30分彙總）
@@ -295,7 +295,7 @@ class TrendAnalysisService {
   buildAttackTrendQuery30Minute(start, end) {
     const startISO = start.toISOString();
     const endISO = end.toISOString();
-    return `FROM ${this.indexPattern} | WHERE @timestamp >= "${startISO}" AND @timestamp <= "${endISO}" | WHERE SecurityAction.keyword IN ("jschallenge", "block", "managedChallenge") | EVAL hour = DATE_TRUNC(30 minute, @timestamp) | STATS count = COUNT(*) BY hour | SORT hour ASC | KEEP hour, count`;
+    return `FROM ${this.indexPattern} | WHERE @timestamp >= "${startISO}" AND @timestamp <= "${endISO}" | WHERE SecurityAction IN ("jschallenge", "block", "managedChallenge") | EVAL hour = DATE_TRUNC(30 minute, @timestamp) | STATS count = COUNT(*) BY hour | SORT hour ASC | KEEP hour, count`;
   }
   /**
    * 建構攻擊趨勢查詢（依天彙總）
@@ -306,7 +306,7 @@ class TrendAnalysisService {
   buildAttackTrendQuery1Day(start, end) {
     const startISO = start.toISOString();
     const endISO = end.toISOString();
-    return `FROM ${this.indexPattern} | WHERE @timestamp >= "${startISO}" AND @timestamp <= "${endISO}" | WHERE SecurityAction.keyword IN ("jschallenge", "block", "managedChallenge") | EVAL hour = DATE_TRUNC(1 day, @timestamp) | STATS count = COUNT(*) BY hour | SORT hour ASC | KEEP hour, count`;
+    return `FROM ${this.indexPattern} | WHERE @timestamp >= "${startISO}" AND @timestamp <= "${endISO}" | WHERE SecurityAction IN ("jschallenge", "block", "managedChallenge") | EVAL hour = DATE_TRUNC(1 day, @timestamp) | STATS count = COUNT(*) BY hour | SORT hour ASC | KEEP hour, count`;
   }
   /**
    * 建構攻擊趨勢查詢（依3天彙總）
@@ -317,7 +317,7 @@ class TrendAnalysisService {
   buildAttackTrendQuery3Day(start, end) {
     const startISO = start.toISOString();
     const endISO = end.toISOString();
-    return `FROM ${this.indexPattern} | WHERE @timestamp >= "${startISO}" AND @timestamp <= "${endISO}" | WHERE SecurityAction.keyword IN ("jschallenge", "block", "managedChallenge") | EVAL hour = DATE_TRUNC(3 day, @timestamp) | STATS count = COUNT(*) BY hour | SORT hour ASC | KEEP hour, count`;
+    return `FROM ${this.indexPattern} | WHERE @timestamp >= "${startISO}" AND @timestamp <= "${endISO}" | WHERE SecurityAction IN ("jschallenge", "block", "managedChallenge") | EVAL hour = DATE_TRUNC(3 day, @timestamp) | STATS count = COUNT(*) BY hour | SORT hour ASC | KEEP hour, count`;
   }
   /**
    * 建構資料傳送量查詢（SUM EdgeResponseBytes）
@@ -352,7 +352,7 @@ class TrendAnalysisService {
   buildVisitsQuery(start, end) {
     const startISO = start.toISOString();
     const endISO = end.toISOString();
-    return `FROM ${this.indexPattern} | WHERE @timestamp >= "${startISO}" AND @timestamp <= "${endISO}" AND ClientRequestReferer.keyword IN ("None") | STATS count = COUNT(*)`;
+    return `FROM ${this.indexPattern} | WHERE @timestamp >= "${startISO}" AND @timestamp <= "${endISO}" AND ClientRequestReferer IN ("None") | STATS count = COUNT(*)`;
   }
 
   /**

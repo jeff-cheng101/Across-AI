@@ -1,5 +1,6 @@
 'use client';
 
+import { useMutation } from '@tanstack/react-query';
 import { format } from 'date-fns';
 import { AnimatePresence, motion } from 'framer-motion';
 import {
@@ -22,8 +23,9 @@ import {
   TrendingUp,
   XCircle,
 } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useWAFData } from '@/app/dashboard/waf-data-context';
+import { getCurrentUser } from '@/app/util/authenticator';
 import { CustomDatePicker } from '@/components/custom-date-picker';
 import { ReportDownloadDialog } from '@/components/report-download-dialog';
 import { Badge } from '@/components/ui/badge';
@@ -38,6 +40,41 @@ import {
 import { useToast } from '@/hooks/use-toast';
 import { type ActionRecord, saveActionRecord } from '@/lib/action-records';
 import { backendClient } from '@/lib/api-clients';
+import { executeCloudflareAnalysis } from '@/services/workflow';
+import { Streamdown } from 'streamdown';
+
+/**
+ * 操作步驟類型
+ */
+interface OperationStep {
+  title: string;
+  description: string;
+  command?: string;
+  note?: string;
+  stepNumber?: number;
+  actions?: string[];
+  notes?: string[];
+}
+
+/**
+ * 操作指引類型
+ */
+interface OperationGuide {
+  title: string;
+  description: string;
+  steps: OperationStep[];
+  estimatedTime?: string;
+  severity?: 'critical' | 'high' | 'medium' | 'low';
+  prerequisites?: string[];
+  references?: Array<{
+    title: string;
+    url: string;
+  }>;
+  troubleshooting?: Array<{
+    issue: string;
+    solution: string;
+  }>;
+}
 
 interface ExecutionHistory {
   id: string;
@@ -69,9 +106,9 @@ interface ExecutionHistory {
 export default function CloudflareAIAnalysisPage() {
   const [selectedIssue, setSelectedIssue] = useState<string | null>(null);
   const [selectedCategory, setSelectedCategory] = useState<string>('high');
-  const [isLoading, setIsLoading] = useState(false);
+  // isLoading 由 mutation.isPending 提供，不再使用 useState
   const [error, setError] = useState<string | null>(null);
-  const [forceReload, setForceReload] = useState(0); // 強制重新載入計數器
+  // 移除了 forceReload（未使用）
   const [hasAttemptedLoad, setHasAttemptedLoad] = useState(false); // 防止無限循環
   const [selectedAction, setSelectedAction] = useState<{
     title: string;
@@ -97,8 +134,7 @@ export default function CloudflareAIAnalysisPage() {
     analysisTimestamp: '',
   });
 
-  // 手動分析控制
-  const [analysisTriggered, setAnalysisTriggered] = useState(false);
+  // 手動分析控制（由 mutation.mutate() 直接觸發）
   const [customDateRange, setCustomDateRange] = useState<{
     start: Date | undefined;
     end: Date | undefined;
@@ -114,12 +150,12 @@ export default function CloudflareAIAnalysisPage() {
 
   // 操作指引相關狀態
   const [expandedGuides, setExpandedGuides] = useState<Set<string>>(new Set());
-  const [operationGuides, setOperationGuides] = useState<{
-    [key: string]: any;
-  }>({});
+  const [operationGuides, setOperationGuides] = useState<
+    Record<string, OperationGuide>
+  >({});
   const [loadingGuides, setLoadingGuides] = useState<Set<string>>(new Set());
 
-  const [executionHistory, setExecutionHistory] = useState<{
+  const [_executionHistory, setExecutionHistory] = useState<{
     high: ExecutionHistory[];
     medium: ExecutionHistory[];
     low: ExecutionHistory[];
@@ -128,57 +164,47 @@ export default function CloudflareAIAnalysisPage() {
     medium: [],
     low: [],
   });
-  const [executedActions, setExecutedActions] = useState<Set<string>>(
+  const [_executedActions, setExecutedActions] = useState<Set<string>>(
     new Set(),
   );
 
   // 報告下載對話框狀態
   const [reportDialogOpen, setReportDialogOpen] = useState(false);
 
-  // 載入 Cloudflare WAF 風險分析資料
-  const loadCloudflareWAFRisks = async () => {
-    console.log('🔄 開始載入 Cloudflare WAF 風險分析...');
-    setIsLoading(true);
-    setError(null);
-
-    try {
-      // 從 localStorage 讀取配置（僅作為 fallback 資訊，後端使用 LLM_API_KEY）
-      const aiProvider = localStorage.getItem('aiProvider') || 'ollama';
-      const aiModel =
-        aiProvider === 'ollama'
-          ? localStorage.getItem('ollamaModel') || 'gpt-oss:20b'
-          : 'gemini-2.0-flash-exp';
-
-      console.log(`🤖 AI 提供者: ${aiProvider}`);
-      console.log(`🤖 AI 模型: ${aiModel}`);
-
+  /**
+   * 使用 React Query useMutation 載入 Cloudflare WAF 風險分析資料
+   */
+  const cloudflareAnalysisMutation = useMutation({
+    mutationFn: async () => {
       // 準備時間範圍參數
-      let timeRangeParam;
+      let timeRangeParam: string;
       if (useCustomDate && customDateRange.start && customDateRange.end) {
-        timeRangeParam = {
+        // 自定義日期範圍：轉換為 JSON 字串傳遞
+        timeRangeParam = JSON.stringify({
           start: customDateRange.start.toISOString(),
           end: customDateRange.end.toISOString(),
-        };
-        console.log(
-          `📅 使用自定義日期範圍: ${timeRangeParam.start} 至 ${timeRangeParam.end}`,
-        );
+        });
+        console.log(`📅 使用自定義日期範圍: ${timeRangeParam}`);
       } else {
         timeRangeParam = selectedTimeRange;
         console.log(`⏰ 使用快速時間選項: ${selectedTimeRange}`);
       }
 
-      // 呼叫後端 API（apiKey 由後端環境變數管理，不再從前端傳遞）
-      const response = await backendClient.post(
-        '/api/cloudflare/analyze-waf-risks',
-        {
-          aiProvider: aiProvider,
-          model: aiModel,
-          timeRange: timeRangeParam,
-        },
-      );
+      // 取得當前使用者
+      const currentUser = getCurrentUser();
+      const userEmail = currentUser?.email || 'anonymous';
+      console.log(`👤 使用者: ${userEmail}`);
+      console.log('🔄 開始載入 Cloudflare WAF 風險分析...');
 
-      const data = response.data;
+      // 呼叫 Dify Workflow API
+      return executeCloudflareAnalysis({
+        timeRange: timeRangeParam,
+        user: userEmail,
+      });
+    },
+    onSuccess: (data) => {
       console.log('✅ 成功載入 Cloudflare WAF 風險資料:', data);
+      setHasAttemptedLoad(true);
 
       // 保存分析 metadata
       if (data.metadata) {
@@ -193,6 +219,7 @@ export default function CloudflareAIAnalysisPage() {
       if (data.success && data.risks && data.risks.length > 0) {
         console.log(`📊 載入了 ${data.risks.length} 個風險項目`);
         setWafRisks(data.risks);
+        setError(null);
       } else {
         console.warn('⚠️ API 回傳空資料');
 
@@ -205,23 +232,17 @@ export default function CloudflareAIAnalysisPage() {
 
         setWafRisks([]);
       }
-    } catch (err) {
+    },
+    onError: (err) => {
       console.error('❌ 載入 Cloudflare WAF 風險分析失敗:', err);
       setError(err instanceof Error ? err.message : '未知錯誤');
       setWafRisks([]);
-    } finally {
-      setIsLoading(false);
       setHasAttemptedLoad(true);
-    }
-  };
+    },
+  });
 
-  // 手動觸發分析
-  useEffect(() => {
-    if (analysisTriggered) {
-      loadCloudflareWAFRisks();
-      setAnalysisTriggered(false);
-    }
-  }, [analysisTriggered]);
+  // 同步 mutation 狀態到元件 state（保持向後相容）
+  const isLoading = cloudflareAnalysisMutation.isPending;
 
   // 開始 AI 分析（首次）
   const handleStartAnalysis = () => {
@@ -268,11 +289,12 @@ export default function CloudflareAIAnalysisPage() {
     setHasAttemptedLoad(false);
 
     // 觸發分析
-    setAnalysisTriggered(true);
+    cloudflareAnalysisMutation.mutate();
 
-    const timeRangeText = useCustomDate
-      ? `${format(customDateRange.start!, 'yyyy-MM-dd HH:mm')} 至 ${format(customDateRange.end!, 'yyyy-MM-dd HH:mm')}`
-      : getTimeRangeLabel(selectedTimeRange);
+    const timeRangeText =
+      useCustomDate && customDateRange.start && customDateRange.end
+        ? `${format(customDateRange.start, 'yyyy-MM-dd HH:mm')} 至 ${format(customDateRange.end, 'yyyy-MM-dd HH:mm')}`
+        : getTimeRangeLabel(selectedTimeRange);
 
     // 寫入AI分析紀錄
     const affectedRisk = wafRisks.find((r) => r.id === selectedAction?.issueId);
@@ -441,11 +463,12 @@ export default function CloudflareAIAnalysisPage() {
     setError(null);
 
     // 觸發分析
-    setAnalysisTriggered(true);
+    cloudflareAnalysisMutation.mutate();
 
-    const timeRangeText = useCustomDate
-      ? `${format(customDateRange.start!, 'yyyy-MM-dd HH:mm')} 至 ${format(customDateRange.end!, 'yyyy-MM-dd HH:mm')}`
-      : getTimeRangeLabel(selectedTimeRange);
+    const timeRangeText =
+      useCustomDate && customDateRange.start && customDateRange.end
+        ? `${format(customDateRange.start, 'yyyy-MM-dd HH:mm')} 至 ${format(customDateRange.end, 'yyyy-MM-dd HH:mm')}`
+        : getTimeRangeLabel(selectedTimeRange);
 
     // 寫入AI分析紀錄
     const affectedRisk = wafRisks.find((r) => r.id === selectedAction?.issueId);
@@ -637,7 +660,7 @@ export default function CloudflareAIAnalysisPage() {
   // 格式化相對時間
   const getRelativeTime = (isoString: string) => {
     if (!isoString) return '';
-    const now = new Date().getTime();
+    const now = Date.now();
     const then = new Date(isoString).getTime();
     const diff = Math.floor((now - then) / 1000); // 秒
 
@@ -648,13 +671,16 @@ export default function CloudflareAIAnalysisPage() {
     return formatDateTime(isoString);
   };
 
-  const risksByCategory = {
-    high: wafRisks.filter(
-      (r) => r.severity === 'critical' || r.severity === 'high',
-    ),
-    medium: wafRisks.filter((r) => r.severity === 'medium'),
-    low: wafRisks.filter((r) => r.severity === 'low'),
-  };
+  const risksByCategory = useMemo(
+    () => ({
+      high: wafRisks.filter(
+        (r) => r.severity === 'critical' || r.severity === 'high',
+      ),
+      medium: wafRisks.filter((r) => r.severity === 'medium'),
+      low: wafRisks.filter((r) => r.severity === 'low'),
+    }),
+    [wafRisks],
+  );
 
   const categoryStats = {
     high: {
@@ -702,7 +728,7 @@ export default function CloudflareAIAnalysisPage() {
         risksByCategory[selectedCategory as keyof typeof risksByCategory][0].id,
       );
     }
-  }, [selectedCategory, selectedIssue]);
+  }, [selectedCategory, selectedIssue, risksByCategory]);
 
   const getSeverityColor = (severity: string) => {
     switch (severity) {
@@ -767,9 +793,9 @@ export default function CloudflareAIAnalysisPage() {
     actionTitle: string,
     actionDescription: string,
     issueId: string,
-    actionIndex: number,
+    recTitle: string,
   ) => {
-    const guideKey = `${issueId}-${actionIndex}`;
+    const guideKey = `${issueId}-${recTitle}`;
 
     // 如果已展開，則收起
     if (expandedGuides.has(guideKey)) {
@@ -1108,9 +1134,10 @@ export default function CloudflareAIAnalysisPage() {
             {/* 自定義日期範圍（可折疊）*/}
             <div className="mt-4 pt-4 border-t border-slate-700">
               {/* 折疊標題 */}
-              <div
+              <button
+                type="button"
                 onClick={() => setCustomDateExpanded(!customDateExpanded)}
-                className="flex items-center justify-between cursor-pointer hover:bg-slate-800/30 p-2 rounded transition-colors"
+                className="w-full flex items-center justify-between cursor-pointer hover:bg-slate-800/30 p-2 rounded transition-colors"
               >
                 <div className="flex items-center gap-2">
                   <CalendarIcon className="w-4 h-4 text-cyan-400" />
@@ -1133,7 +1160,7 @@ export default function CloudflareAIAnalysisPage() {
                 ) : (
                   <ChevronDown className="w-4 h-4 text-slate-400" />
                 )}
-              </div>
+              </button>
 
               {/* 可折疊內容 */}
               <AnimatePresence>
@@ -1548,13 +1575,14 @@ export default function CloudflareAIAnalysisPage() {
                       {risksByCategory[
                         selectedCategory as keyof typeof risksByCategory
                       ].map((risk) => (
-                        <div
+                        <button
+                          type="button"
                           key={risk.id}
                           onClick={(e) => {
                             e.stopPropagation();
                             setSelectedIssue(risk.id);
                           }}
-                          className={`p-3 rounded-lg border cursor-pointer transition-all text-sm ${
+                          className={`w-full text-left p-3 rounded-lg border cursor-pointer transition-all text-sm ${
                             selectedIssue === risk.id
                               ? 'border-cyan-400/60 bg-cyan-900/20'
                               : 'border-white/10 bg-slate-800/30 hover:border-white/20'
@@ -1568,7 +1596,7 @@ export default function CloudflareAIAnalysisPage() {
                             <span>•</span>
                             <span>{risk.affectedAssets} 資產</span>
                           </div>
-                        </div>
+                        </button>
                       ))}
                     </div>
                   </div>
@@ -1622,9 +1650,9 @@ export default function CloudflareAIAnalysisPage() {
                               {assessment.title}
                             </h3>
                             <div className="flex flex-wrap gap-2">
-                              {(assessment.tags || []).map((tag, idx) => (
+                              {(assessment.tags || []).map((tag) => (
                                 <Badge
-                                  key={idx}
+                                  key={tag}
                                   variant="outline"
                                   className="bg-red-500/20 text-red-400 border-red-500/50"
                                 >
@@ -1686,10 +1714,10 @@ export default function CloudflareAIAnalysisPage() {
                                 AI 深度分析
                               </h4>
                             </div>
-                            <p className="text-slate-300 leading-relaxed text-sm">
+                            <Streamdown className="text-slate-300 leading-relaxed text-sm prose prose-invert prose-sm max-w-none [&>*:first-child]:mt-0 [&>*:last-child]:mb-0 [&_pre]:bg-slate-800/50 [&_pre]:border [&_pre]:border-slate-700/50 [&_code]:text-cyan-300 [&_strong]:text-white [&_h1]:text-white [&_h2]:text-white [&_h3]:text-white [&_h4]:text-white [&_a]:text-cyan-400">
                               {assessment.aiInsight ||
                                 `根據威脅情報分析，檢測到 ${assessment.openIssues} 次攻擊事件，共影響 ${assessment.affectedAssets} 個資產。建議立即採取防護措施並監控相關日誌。`}
-                            </p>
+                            </Streamdown>
                           </div>
                         </div>
                       ))}
@@ -1743,14 +1771,17 @@ export default function CloudflareAIAnalysisPage() {
                             </span>
                           </div>
 
-                          {assessment.recommendations.map((rec, idx) => {
-                            const guideKey = `${assessment.id}-${idx}`;
+                          {assessment.recommendations.map((rec) => {
+                            const guideKey = `${assessment.id}-${rec.title}`;
                             const isExpanded = expandedGuides.has(guideKey);
                             const guide = operationGuides[guideKey];
                             const isLoading = loadingGuides.has(guideKey);
 
                             return (
-                              <div key={idx} className="space-y-2">
+                              <div
+                                key={`${assessment.id}-${rec.title}`}
+                                className="space-y-2"
+                              >
                                 {/* 建議卡片 */}
                                 <div className="p-4 rounded-lg bg-slate-800/50 border border-cyan-400/30">
                                   <div className="flex items-start gap-3 mb-4">
@@ -1784,7 +1815,7 @@ export default function CloudflareAIAnalysisPage() {
                                         rec.title,
                                         rec.description,
                                         assessment.id,
-                                        idx,
+                                        rec.title,
                                       )
                                     }
                                     disabled={isLoading}
@@ -1848,7 +1879,9 @@ export default function CloudflareAIAnalysisPage() {
                                                         : 'bg-yellow-500/20 text-yellow-400 border-yellow-500/50'
                                                   }
                                                 >
-                                                  {guide.severity.toUpperCase()}
+                                                  {(
+                                                    guide.severity ?? 'medium'
+                                                  ).toUpperCase()}
                                                 </Badge>
                                               </div>
                                             </div>
@@ -1866,12 +1899,9 @@ export default function CloudflareAIAnalysisPage() {
                                                 </div>
                                                 <ul className="space-y-1 text-sm text-slate-300">
                                                   {guide.prerequisites.map(
-                                                    (
-                                                      prereq: string,
-                                                      i: number,
-                                                    ) => (
+                                                    (prereq: string) => (
                                                       <li
-                                                        key={i}
+                                                        key={prereq}
                                                         className="flex items-start gap-2"
                                                       >
                                                         <span className="text-blue-400 mt-1">
@@ -1895,12 +1925,9 @@ export default function CloudflareAIAnalysisPage() {
                                             </div>
 
                                             {guide.steps.map(
-                                              (
-                                                step: any,
-                                                stepIndex: number,
-                                              ) => (
+                                              (step: OperationStep) => (
                                                 <div
-                                                  key={stepIndex}
+                                                  key={step.title}
                                                   className="p-4 bg-slate-900/50 border border-slate-600/50 rounded-lg space-y-3"
                                                 >
                                                   {/* 步驟標題 */}
@@ -1923,12 +1950,9 @@ export default function CloudflareAIAnalysisPage() {
                                                     step.actions.length > 0 && (
                                                       <div className="ml-11 space-y-2">
                                                         {step.actions.map(
-                                                          (
-                                                            action: string,
-                                                            actionIndex: number,
-                                                          ) => (
+                                                          (action: string) => (
                                                             <div
-                                                              key={actionIndex}
+                                                              key={action}
                                                               className="flex items-start gap-2 text-sm text-slate-300"
                                                             >
                                                               <CheckCircle className="w-4 h-4 text-green-400 mt-0.5 flex-shrink-0" />
@@ -1963,8 +1987,11 @@ export default function CloudflareAIAnalysisPage() {
                                                 </div>
                                                 <ul className="space-y-2">
                                                   {guide.references.map(
-                                                    (ref: any, i: number) => (
-                                                      <li key={i}>
+                                                    (ref: {
+                                                      title: string;
+                                                      url: string;
+                                                    }) => (
+                                                      <li key={ref.url}>
                                                         <a
                                                           href={ref.url}
                                                           target="_blank"
@@ -1996,9 +2023,12 @@ export default function CloudflareAIAnalysisPage() {
                                                 </div>
                                                 <div className="space-y-3">
                                                   {guide.troubleshooting.map(
-                                                    (item: any, i: number) => (
+                                                    (item: {
+                                                      issue: string;
+                                                      solution: string;
+                                                    }) => (
                                                       <div
-                                                        key={i}
+                                                        key={item.issue}
                                                         className="space-y-1"
                                                       >
                                                         <div className="text-sm font-semibold text-red-400">

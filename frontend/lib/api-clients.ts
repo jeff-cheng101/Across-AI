@@ -108,10 +108,11 @@ setupResponseInterceptor(backendClient, false);
  * 適用於非串流的 API 呼叫，串流 API 應直接使用 fetch
  *
  * Base URL: /api
+ * Timeout: 10 分鐘（支援長時間的 Dify Workflow 執行）
  */
 export const nextClient: AxiosInstance = axios.create({
   baseURL: '/api',
-  timeout: 30000,
+  timeout: 600 * 1000, // 10 分鐘
   withCredentials: true,
 });
 
