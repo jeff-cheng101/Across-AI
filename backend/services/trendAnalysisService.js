@@ -127,6 +127,34 @@ class TrendAnalysisService {
     console.log(
       `📊 趨勢分析並發配置：最大並發 ${this.limiter.maxConcurrency}，批次延遲 ${this.limiter.delayBetweenBatches}ms`,
     );
+
+    /**
+     * 欄位映射快取
+     * 儲存每個欄位的正確名稱（原始名稱或 .keyword 版本）
+     * @type {Map<string, string>}
+     */
+    this.fieldMappingCache = new Map();
+
+    /**
+     * 欄位映射是否已初始化
+     * @type {boolean}
+     */
+    this.fieldMappingInitialized = false;
+
+    /**
+     * 需要檢查的欄位列表（用於聚合和精確匹配）
+     * @type {string[]}
+     */
+    this.fieldsToCheck = [
+      'ClientIP',
+      'SecurityRuleDescription',
+      'ClientRequestHost',
+      'ClientRequestPath',
+      'geoip_client.country_name',
+      'SecurityAction',
+      'EdgeResponseContentType',
+      'ClientRequestReferer',
+    ];
   }
 
   // ==================== Elasticsearch 直連 API ====================
@@ -161,6 +189,305 @@ class TrendAnalysisService {
     }
 
     return await response.json();
+  }
+
+  /**
+   * 呼叫 Elasticsearch REST API（GET 方法）
+   * @param {string} endpoint - API 端點（如 '_mapping' 或 '_field_caps'）
+   * @returns {Promise<Object>} Elasticsearch 回應
+   */
+  async callElasticsearchAPIGet(endpoint) {
+    const url = `${this.elkHost}/${this.indexPattern}/${endpoint}`;
+    
+    const headers = {
+      'Content-Type': 'application/json',
+    };
+
+    if (this.elkApiKey) {
+      headers['Authorization'] = `ApiKey ${this.elkApiKey}`;
+    }
+
+    const response = await fetch(url, {
+      method: 'GET',
+      headers,
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`Elasticsearch API 錯誤 (${response.status}): ${errorText}`);
+    }
+
+    return await response.json();
+  }
+
+  // ==================== 欄位映射動態偵測 ====================
+
+  /**
+   * 初始化欄位映射
+   * 透過實際執行聚合查詢來驗證哪個欄位版本有數據且可聚合
+   * 解決 .keyword 和原始欄位數據不一致的問題
+   * 
+   * 選擇邏輯：
+   * 1. 優先選擇「可聚合且有數據」的欄位
+   * 2. 若兩者都可聚合且有數據，選擇數據量較多的
+   * 3. 若只有一方可聚合且有數據，選擇該方
+   * 4. 若 .keyword 可聚合但沒數據，原始欄位有數據但不可聚合 → 報警告
+   */
+  async initializeFieldMappings() {
+    if (this.fieldMappingInitialized) {
+      return;
+    }
+
+    console.log('🔍 正在偵測 Elasticsearch 欄位映射（數據存在性 + 可聚合性驗證）...');
+
+    try {
+      // 使用 multi-search API 批量驗證所有欄位
+      const results = await this.validateFieldsWithData();
+
+      for (const fieldName of this.fieldsToCheck) {
+        const keywordField = `${fieldName}.keyword`;
+        const keywordResult = results.get(keywordField) || { exists: 0, aggregatable: false };
+        const originalResult = results.get(fieldName) || { exists: 0, aggregatable: false };
+
+        let selectedField;
+        let reason;
+        let icon = '✅';
+
+        // 判斷邏輯
+        const keywordUsable = keywordResult.aggregatable && keywordResult.exists > 0;
+        const originalUsable = originalResult.aggregatable && originalResult.exists > 0;
+
+        if (keywordUsable && originalUsable) {
+          // 兩者都可用，選擇數據量較多的
+          if (keywordResult.exists >= originalResult.exists) {
+            selectedField = keywordField;
+            reason = `兩者皆可用，.keyword(${keywordResult.exists}) >= 原始(${originalResult.exists})`;
+          } else {
+            selectedField = fieldName;
+            reason = `兩者皆可用，原始(${originalResult.exists}) > .keyword(${keywordResult.exists})`;
+          }
+        } else if (keywordUsable) {
+          selectedField = keywordField;
+          reason = `.keyword 可用(${keywordResult.exists})`;
+        } else if (originalUsable) {
+          selectedField = fieldName;
+          reason = `原始欄位可用(${originalResult.exists})`;
+        } else if (keywordResult.aggregatable && originalResult.exists > 0 && !originalResult.aggregatable) {
+          // 特殊情況：.keyword 可聚合但沒數據，原始欄位有數據但不可聚合
+          selectedField = keywordField;
+          reason = `⚠️ .keyword 可聚合但無數據(0)，原始有數據(${originalResult.exists})但為 text 類型不可聚合`;
+          icon = '🚨';
+          console.warn(`   🚨 ${fieldName}: 數據可能未被索引到 .keyword 欄位！`);
+          console.warn(`      原因可能是: ignore_above 限制、mapping 變更、或數據遷移問題`);
+          console.warn(`      建議: 檢查 Elasticsearch mapping 和數據索引狀態`);
+        } else if (keywordResult.aggregatable) {
+          // .keyword 可聚合但沒數據
+          selectedField = keywordField;
+          reason = `.keyword 可聚合但無數據，使用作為預設`;
+          icon = '⚠️';
+        } else {
+          // 兩者都不可用
+          selectedField = keywordField;
+          reason = '兩者皆不可用，使用 .keyword 作為預設';
+          icon = '❓';
+        }
+
+        this.fieldMappingCache.set(fieldName, selectedField);
+        console.log(`   ${icon} ${fieldName} → ${selectedField}`);
+        console.log(`      exists: .keyword(${keywordResult.exists}) / 原始(${originalResult.exists})`);
+        console.log(`      aggregatable: .keyword(${keywordResult.aggregatable}) / 原始(${originalResult.aggregatable})`);
+        console.log(`      決策: ${reason}`);
+      }
+
+      this.fieldMappingInitialized = true;
+      console.log(`✅ 欄位映射偵測完成，共 ${this.fieldMappingCache.size} 個欄位`);
+
+    } catch (error) {
+      console.warn(`⚠️ 欄位映射偵測失敗，使用備用策略: ${error.message}`);
+      await this.initializeFallbackFieldMappings();
+    }
+  }
+
+  /**
+   * 使用 _msearch API 批量驗證欄位是否有數據且可聚合
+   * 對每個欄位同時測試原始版本和 .keyword 版本
+   * 分開測試：exists（數據存在性）和 terms（可聚合性）
+   * @returns {Promise<Map<string, {exists: number, aggregatable: boolean}>>} 欄位名稱 -> {文件數量, 是否可聚合}
+   */
+  async validateFieldsWithData() {
+    const results = new Map();
+    
+    // 建立 _msearch 請求體
+    // 每個欄位需要兩個查詢：exists 和 terms
+    const msearchLines = [];
+    const queryMeta = []; // 記錄每個查詢的元資訊
+
+    for (const fieldName of this.fieldsToCheck) {
+      const keywordField = `${fieldName}.keyword`;
+
+      // 測試 .keyword 版本 - exists 查詢（檢查數據存在性）
+      queryMeta.push({ field: keywordField, type: 'exists' });
+      msearchLines.push(JSON.stringify({}));
+      msearchLines.push(JSON.stringify({
+        size: 0,
+        query: { exists: { field: keywordField } },
+      }));
+
+      // 測試 .keyword 版本 - terms 聚合（檢查可聚合性）
+      queryMeta.push({ field: keywordField, type: 'terms' });
+      msearchLines.push(JSON.stringify({}));
+      msearchLines.push(JSON.stringify({
+        size: 0,
+        aggs: {
+          sample: {
+            terms: { field: keywordField, size: 1 }
+          }
+        }
+      }));
+
+      // 測試原始欄位版本 - exists 查詢
+      queryMeta.push({ field: fieldName, type: 'exists' });
+      msearchLines.push(JSON.stringify({}));
+      msearchLines.push(JSON.stringify({
+        size: 0,
+        query: { exists: { field: fieldName } },
+      }));
+
+      // 測試原始欄位版本 - terms 聚合
+      queryMeta.push({ field: fieldName, type: 'terms' });
+      msearchLines.push(JSON.stringify({}));
+      msearchLines.push(JSON.stringify({
+        size: 0,
+        aggs: {
+          sample: {
+            terms: { field: fieldName, size: 1 }
+          }
+        }
+      }));
+    }
+
+    // 執行 _msearch
+    const msearchBody = msearchLines.join('\n') + '\n';
+    
+    const url = `${this.elkHost}/${this.indexPattern}/_msearch`;
+    const headers = {
+      'Content-Type': 'application/x-ndjson',
+    };
+
+    if (this.elkApiKey) {
+      headers['Authorization'] = `ApiKey ${this.elkApiKey}`;
+    }
+
+    console.log(`🔍 執行欄位驗證 | POST ${this.indexPattern}/_msearch (${queryMeta.length} 個查詢)`);
+
+    const response = await fetch(url, {
+      method: 'POST',
+      headers,
+      body: msearchBody,
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`_msearch API 錯誤 (${response.status}): ${errorText}`);
+    }
+
+    const msearchResult = await response.json();
+    const responses = msearchResult.responses || [];
+
+    // 初始化結果 Map
+    for (const fieldName of this.fieldsToCheck) {
+      const keywordField = `${fieldName}.keyword`;
+      results.set(keywordField, { exists: 0, aggregatable: false });
+      results.set(fieldName, { exists: 0, aggregatable: false });
+    }
+
+    // 解析結果
+    for (let i = 0; i < responses.length; i++) {
+      const meta = queryMeta[i];
+      const resp = responses[i];
+      const fieldResult = results.get(meta.field);
+      
+      if (resp.error) {
+        // 查詢失敗
+        if (meta.type === 'terms') {
+          // terms 失敗表示不可聚合（text 類型）
+          fieldResult.aggregatable = false;
+          console.log(`   ⚠️ ${meta.field}: terms 聚合失敗 - ${resp.error.type || 'unknown'}`);
+        }
+      } else {
+        if (meta.type === 'exists') {
+          // exists 查詢成功，取得文件數量
+          fieldResult.exists = resp.hits?.total?.value || 0;
+        } else if (meta.type === 'terms') {
+          // terms 聚合成功，檢查是否有 buckets
+          const buckets = resp.aggregations?.sample?.buckets || [];
+          fieldResult.aggregatable = buckets.length > 0;
+        }
+      }
+    }
+
+    return results;
+  }
+
+  /**
+   * 備用欄位映射初始化
+   * 當 _msearch API 失敗時使用
+   * 會嘗試逐一測試每個欄位
+   */
+  async initializeFallbackFieldMappings() {
+    console.log('🔄 使用備用欄位映射策略（逐一測試）...');
+    
+    for (const fieldName of this.fieldsToCheck) {
+      const keywordField = `${fieldName}.keyword`;
+      
+      // 先嘗試 .keyword 版本
+      const keywordWorks = await this.testFieldAggregation(keywordField);
+      if (keywordWorks) {
+        this.fieldMappingCache.set(fieldName, keywordField);
+        console.log(`   ✅ ${fieldName} → ${keywordField}`);
+        continue;
+      }
+
+      // 再嘗試原始欄位
+      const originalWorks = await this.testFieldAggregation(fieldName);
+      if (originalWorks) {
+        this.fieldMappingCache.set(fieldName, fieldName);
+        console.log(`   ✅ ${fieldName} → ${fieldName}`);
+        continue;
+      }
+
+      // 兩者都失敗，使用 .keyword 作為預設
+      this.fieldMappingCache.set(fieldName, keywordField);
+      console.log(`   ⚠️ ${fieldName} → ${keywordField} (預設)`);
+    }
+
+    this.fieldMappingInitialized = true;
+    console.log(`✅ 備用欄位映射完成，共 ${this.fieldMappingCache.size} 個欄位`);
+  }
+
+  /**
+   * 測試單一欄位是否可用於聚合且有數據
+   * @param {string} fieldName - 欄位名稱
+   * @returns {Promise<boolean>} 是否可用
+   */
+  async testFieldAggregation(fieldName) {
+    try {
+      const result = await this.callElasticsearchAPI('_search', {
+        size: 0,
+        query: { exists: { field: fieldName } },
+        aggs: {
+          test: {
+            terms: { field: fieldName, size: 1 }
+          }
+        }
+      });
+
+      const buckets = result.aggregations?.test?.buckets || [];
+      return buckets.length > 0;
+    } catch (error) {
+      // 查詢失敗表示欄位不可用
+      return false;
+    }
   }
 
   // ==================== 工具函數區塊 ====================
@@ -455,12 +782,13 @@ class TrendAnalysisService {
 
   /**
    * 建構頁面瀏覽次數查詢（Query DSL，ContentType 為 text/html）
-   * 注意：Count/Filter 查詢不需要 .keyword 後綴
+   * 使用動態偵測的欄位名稱
    * @param {Date} start - 開始時間
    * @param {Date} end - 結束時間
    * @returns {Object} Query DSL 查詢物件
    */
   buildPageViewQuery(start, end) {
+    const contentTypeField = this.getKeywordField('EdgeResponseContentType');
     return {
       query: {
         bool: {
@@ -468,7 +796,7 @@ class TrendAnalysisService {
             this.buildQueryDSLTimeRange(start, end),
             {
               terms: {
-                'EdgeResponseContentType.keyword': ['text/html'],
+                [contentTypeField]: ['text/html'],
               },
             },
           ],
@@ -479,12 +807,13 @@ class TrendAnalysisService {
 
   /**
    * 建構造訪次數查詢（Query DSL，Referer 為 None）
-   * 注意：Count/Filter 查詢不需要 .keyword 後綴
+   * 使用動態偵測的欄位名稱
    * @param {Date} start - 開始時間
    * @param {Date} end - 結束時間
    * @returns {Object} Query DSL 查詢物件
    */
   buildVisitsQuery(start, end) {
+    const refererField = this.getKeywordField('ClientRequestReferer');
     return {
       query: {
         bool: {
@@ -492,7 +821,7 @@ class TrendAnalysisService {
             this.buildQueryDSLTimeRange(start, end),
             {
               terms: {
-                'ClientRequestReferer.keyword': ['None'],
+                [refererField]: ['None'],
               },
             },
           ],
@@ -521,30 +850,34 @@ class TrendAnalysisService {
   }
 
   /**
-   * 取得欄位的 keyword 版本（用於 terms aggregation 和 terms filter）
-   * Elasticsearch text 類型欄位在做 aggregation 時需要使用 .keyword 後綴
+   * 取得欄位的正確版本（用於 terms aggregation 和 terms filter）
+   * 根據動態偵測的結果，決定使用原始欄位或 .keyword 版本
    * @param {string} field - 原始欄位名稱
-   * @returns {string} keyword 版本的欄位名稱
+   * @returns {string} 正確的欄位名稱
    */
   getKeywordField(field) {
     // 如果已經有 .keyword 後綴，直接返回
     if (field.endsWith('.keyword')) {
       return field;
     }
-    // 這些欄位是 text 類型，需要加上 .keyword
-    const textFields = [
-      'ClientIP',
-      'SecurityRuleDescription',
-      'ClientRequestHost',
-      'ClientRequestPath',
-      'geoip_client.country_name',
-      'SecurityAction',
-      'EdgeResponseContentType',
-      'ClientRequestReferer',
-    ];
-    if (textFields.includes(field)) {
+
+    // 優先使用快取的映射結果
+    if (this.fieldMappingCache.has(field)) {
+      return this.fieldMappingCache.get(field);
+    }
+
+    // 如果快取中沒有，檢查是否在需要處理的欄位列表中
+    // 若已初始化但不在快取中，表示不需要轉換
+    if (this.fieldMappingInitialized) {
+      return field;
+    }
+
+    // 尚未初始化時的備用邏輯：使用 .keyword 後綴
+    // （這種情況應該很少發生，因為 loadTrendComparison 會先初始化）
+    if (this.fieldsToCheck.includes(field)) {
       return `${field}.keyword`;
     }
+
     return field;
   }
 
@@ -596,6 +929,9 @@ class TrendAnalysisService {
    * @returns {Promise<Array>} 與原 ES|QL 相同格式的結果陣列
    */
   async executeQueryDSL(queryBody, fieldName) {
+    const endpoint = '_search';
+    const method = 'POST';
+    
     try {
       // 設置 size: 0，只需要 aggregation 結果
       const aggQuery = {
@@ -603,11 +939,11 @@ class TrendAnalysisService {
         size: 0,
       };
 
-      console.log(`🔍 [QueryDSL] 執行 Top N 聚合查詢 (${fieldName}):`);
+      console.log(`🔍 [QueryDSL] 執行 Top N 聚合查詢 [${fieldName}] | ${method} ${this.indexPattern}/${endpoint}`);
       console.log(JSON.stringify(aggQuery, null, 2));
 
       // 直接呼叫 Elasticsearch _search API
-      const result = await this.callElasticsearchAPI('_search', aggQuery);
+      const result = await this.callElasticsearchAPI(endpoint, aggQuery);
 
       // 從 aggregations.top_items.buckets 提取結果
       const buckets = result.aggregations?.top_items?.buckets || [];
@@ -619,7 +955,7 @@ class TrendAnalysisService {
         cnt: bucket.doc_count,
       }));
     } catch (error) {
-      console.error(`❌ [${fieldName}] Query DSL 查詢執行失敗:`, error.message);
+      console.error(`❌ [${fieldName}] Query DSL 查詢執行失敗 (${method} ${endpoint}):`, error.message);
       // 回傳空結果，不中斷整體查詢
       return [];
     }
@@ -632,18 +968,21 @@ class TrendAnalysisService {
    * @returns {Promise<Array>} 回傳 [{ count: number }] 格式
    */
   async executeCountQueryDSL(queryBody, queryName = '') {
+    const endpoint = '_count';
+    const method = 'POST';
+    
     try {
-      console.log(`🔍 [QueryDSL] 執行計數查詢 [${queryName}]:`);
+      console.log(`🔍 [QueryDSL] 執行計數查詢 [${queryName}] | ${method} ${this.indexPattern}/${endpoint}`);
       console.log(JSON.stringify(queryBody, null, 2));
 
       // 直接呼叫 Elasticsearch _count API
-      const result = await this.callElasticsearchAPI('_count', queryBody);
+      const result = await this.callElasticsearchAPI(endpoint, queryBody);
 
       console.log(`📥 [${queryName}] 計數結果: ${result.count}`);
 
       return [{ count: result.count || 0 }];
     } catch (error) {
-      console.error(`❌ [${queryName}] Count Query DSL 查詢執行失敗:`, error.message);
+      console.error(`❌ [${queryName}] Count Query DSL 查詢執行失敗 (${method} ${endpoint}):`, error.message);
       return [{ count: 0 }];
     }
   }
@@ -656,6 +995,9 @@ class TrendAnalysisService {
    * @returns {Promise<Array>} 回傳 [{ totalBytes: number }] 格式
    */
   async executeSumQueryDSL(queryBody, queryName = '') {
+    const endpoint = '_search';
+    const method = 'POST';
+    
     try {
       // 設置 size: 0，只需要 aggregation 結果
       const sumQuery = {
@@ -663,11 +1005,11 @@ class TrendAnalysisService {
         size: 0,
       };
 
-      console.log(`🔍 [QueryDSL] 執行加總查詢 [${queryName}]:`);
+      console.log(`🔍 [QueryDSL] 執行加總查詢 [${queryName}] | ${method} ${this.indexPattern}/${endpoint}`);
       console.log(JSON.stringify(sumQuery, null, 2));
 
       // 直接呼叫 Elasticsearch _search API
-      const result = await this.callElasticsearchAPI('_search', sumQuery);
+      const result = await this.callElasticsearchAPI(endpoint, sumQuery);
 
       // 從 aggregations.total_bytes.value 取得加總
       const totalBytes = result.aggregations?.total_bytes?.value || 0;
@@ -675,7 +1017,7 @@ class TrendAnalysisService {
 
       return [{ totalBytes }];
     } catch (error) {
-      console.error(`❌ [${queryName}] Sum Query DSL 查詢執行失敗:`, error.message);
+      console.error(`❌ [${queryName}] Sum Query DSL 查詢執行失敗 (${method} ${endpoint}):`, error.message);
       return [{ totalBytes: 0 }];
     }
   }
@@ -688,6 +1030,9 @@ class TrendAnalysisService {
    * @returns {Promise<Array>} 回傳 [{ hour: string, count: number }, ...] 格式
    */
   async executeHistogramQueryDSL(queryBody, queryName = '') {
+    const endpoint = '_search';
+    const method = 'POST';
+    
     try {
       // 設置 size: 0，只需要 aggregation 結果
       const histogramQuery = {
@@ -695,11 +1040,11 @@ class TrendAnalysisService {
         size: 0,
       };
 
-      console.log(`🔍 [QueryDSL] 執行時間分組查詢 [${queryName}]:`);
+      console.log(`🔍 [QueryDSL] 執行時間分組查詢 [${queryName}] | ${method} ${this.indexPattern}/${endpoint}`);
       console.log(JSON.stringify(histogramQuery, null, 2));
 
       // 直接呼叫 Elasticsearch _search API
-      const result = await this.callElasticsearchAPI('_search', histogramQuery);
+      const result = await this.callElasticsearchAPI(endpoint, histogramQuery);
 
       // 從 aggregations.trend.buckets 提取結果
       const buckets = result.aggregations?.trend?.buckets || [];
@@ -711,7 +1056,7 @@ class TrendAnalysisService {
         count: bucket.doc_count,
       }));
     } catch (error) {
-      console.error(`❌ [${queryName}] Histogram Query DSL 查詢執行失敗:`, error.message);
+      console.error(`❌ [${queryName}] Histogram Query DSL 查詢執行失敗 (${method} ${endpoint}):`, error.message);
       return [];
     }
   }
@@ -848,6 +1193,9 @@ class TrendAnalysisService {
   async loadTrendComparison(timeRange) {
     console.log(`\n🚀 開始載入趨勢對比分析（時間範圍: ${timeRange}）`);
     const startTime = Date.now();
+
+    // 初始化欄位映射（首次呼叫時會偵測 Elasticsearch 欄位類型）
+    await this.initializeFieldMappings();
 
     // 計算時間區間
     const timeRanges = this.calculateTimeRanges(timeRange);
