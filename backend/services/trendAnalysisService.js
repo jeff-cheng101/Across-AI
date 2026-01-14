@@ -1,8 +1,8 @@
 // backend/services/trendAnalysisService.js
 // Cloudflare 趨勢對比分析服務
-// 使用 ES|QL 聚合查詢 + 多工並行查詢策略（含請求限流）
+// 使用 Query DSL 聚合查詢 + 多工並行查詢策略（含請求限流）
+// 直接連接 Elasticsearch REST API（不透過 MCP）
 
-const { elkMCPClient } = require('./elkMCPClient');
 const cloudflareELKConfig = require('../config/products/cloudflare/cloudflareELKConfig');
 const { ELK_CONFIG } = require('../config/elkConfig');
 const { GoogleGenerativeAI } = require('@google/generative-ai');
@@ -11,6 +11,9 @@ const {
   logOpenAICompatibleRequest,
   logOpenAICompatibleResponse,
 } = require('../utils/ollamaLogger');
+
+// 使用 Node.js 內建的 fetch（Node.js 18+）或 node-fetch
+const fetch = globalThis.fetch;
 
 /**
  * 簡易並發限制器
@@ -96,6 +99,21 @@ class TrendAnalysisService {
       cloudflareELKConfig.trendIndex || cloudflareELKConfig.index;
 
     /**
+     * Elasticsearch 直連配置（不透過 MCP）
+     * - elkHost: Elasticsearch 主機 URL
+     * - elkApiKey: Elasticsearch API Key
+     */
+    this.elkHost = ELK_CONFIG.elasticsearch?.host;
+    this.elkApiKey = ELK_CONFIG.elasticsearch?.apiKey;
+
+    if (!this.elkHost) {
+      throw new Error('❌ 未設定 ELK_HOST 環境變數');
+    }
+
+    console.log(`🔗 Elasticsearch 直連配置：${this.elkHost}`);
+    console.log(`📂 索引模式：${this.indexPattern}`);
+
+    /**
      * 並發限制器配置（從 elkConfig 讀取）
      * - maxConcurrency: 最大同時查詢數（避免 Elasticsearch 429 錯誤）
      * - delayBetweenBatches: 批次間延遲（毫秒）
@@ -109,6 +127,40 @@ class TrendAnalysisService {
     console.log(
       `📊 趨勢分析並發配置：最大並發 ${this.limiter.maxConcurrency}，批次延遲 ${this.limiter.delayBetweenBatches}ms`,
     );
+  }
+
+  // ==================== Elasticsearch 直連 API ====================
+
+  /**
+   * 直接呼叫 Elasticsearch REST API
+   * @param {string} endpoint - API 端點（如 '_search' 或 '_count'）
+   * @param {Object} body - 請求內容
+   * @returns {Promise<Object>} Elasticsearch 回應
+   */
+  async callElasticsearchAPI(endpoint, body) {
+    const url = `${this.elkHost}/${this.indexPattern}/${endpoint}`;
+    
+    const headers = {
+      'Content-Type': 'application/json',
+    };
+
+    // 如果有 API Key，加入 Authorization header
+    if (this.elkApiKey) {
+      headers['Authorization'] = `ApiKey ${this.elkApiKey}`;
+    }
+
+    const response = await fetch(url, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(body),
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`Elasticsearch API 錯誤 (${response.status}): ${errorText}`);
+    }
+
+    return await response.json();
   }
 
   // ==================== 工具函數區塊 ====================
@@ -229,311 +281,547 @@ class TrendAnalysisService {
   // ==================== ES|QL 查詢建構器 ====================
 
   /**
-   * 建構攻擊活動量查詢（SecurityAction 為 jschallenge/block/managedChallenge）
+   * 建構攻擊活動量查詢（Query DSL，SecurityAction 為 jschallenge/block/managedChallenge）
+   * 注意：Count/Filter 查詢不需要 .keyword 後綴（與 aggregation 不同）
    * @param {Date} start - 開始時間
    * @param {Date} end - 結束時間
-   * @returns {string} ES|QL 查詢語句
+   * @returns {Object} Query DSL 查詢物件
    */
   buildAttackCountQuery(start, end) {
-    const startISO = start.toISOString();
-    const endISO = end.toISOString();
-    return `FROM ${this.indexPattern} | WHERE @timestamp >= "${startISO}" AND @timestamp <= "${endISO}" AND SecurityAction IN ("jschallenge", "block", "managedChallenge") | STATS count = COUNT(*)`;
+    return {
+      query: {
+        bool: {
+          filter: [
+            this.buildQueryDSLTimeRange(start, end),
+            {
+              terms: {
+                SecurityAction: ['jschallenge', 'block', 'managedChallenge'],
+              },
+            },
+          ],
+        },
+      },
+    };
   }
 
   /**
-   * 建構 HTTP 活動量查詢（所有請求）
+   * 建構 HTTP 活動量查詢（Query DSL，所有請求）
    * @param {Date} start - 開始時間
    * @param {Date} end - 結束時間
-   * @returns {string} ES|QL 查詢語句
+   * @returns {Object} Query DSL 查詢物件
    */
   buildHttpVolumeQuery(start, end) {
-    const startISO = start.toISOString();
-    const endISO = end.toISOString();
-    return `FROM ${this.indexPattern} | WHERE @timestamp >= "${startISO}" AND @timestamp <= "${endISO}" | STATS count = COUNT(*)`;
+    return {
+      query: {
+        bool: {
+          filter: [this.buildQueryDSLTimeRange(start, end)],
+        },
+      },
+    };
   }
 
   /**
-   * 建構封鎖數查詢（SecurityAction 為 block）
+   * 建構封鎖數查詢（Query DSL，SecurityAction 為 block）
+   * 注意：Count/Filter 查詢不需要 .keyword 後綴
    * @param {Date} start - 開始時間
    * @param {Date} end - 結束時間
-   * @returns {string} ES|QL 查詢語句
+   * @returns {Object} Query DSL 查詢物件
    */
   buildBlockCountQuery(start, end) {
-    const startISO = start.toISOString();
-    const endISO = end.toISOString();
-    return `FROM ${this.indexPattern} | WHERE @timestamp >= "${startISO}" AND @timestamp <= "${endISO}" AND SecurityAction IN ("block") | STATS count = COUNT(*)`;
+    return {
+      query: {
+        bool: {
+          filter: [
+            this.buildQueryDSLTimeRange(start, end),
+            {
+              term: {
+                SecurityAction: 'block',
+              },
+            },
+          ],
+        },
+      },
+    };
   }
 
   /**
-   * 建構攻擊趨勢查詢（依小時彙總）
+   * 建構攻擊趨勢查詢輔助方法（Query DSL，date_histogram）
+   * 注意：Filter 查詢不需要 .keyword 後綴
    * @param {Date} start - 開始時間
    * @param {Date} end - 結束時間
-   * @returns {string} ES|QL 查詢語句
+   * @param {string} interval - 時間間隔（如 '1h', '10m', '30m', '1d', '3d'）
+   * @returns {Object} Query DSL 查詢物件
+   */
+  buildAttackTrendQuery(start, end, interval) {
+    return {
+      query: {
+        bool: {
+          filter: [
+            this.buildQueryDSLTimeRange(start, end),
+            {
+              terms: {
+                SecurityAction: ['jschallenge', 'block', 'managedChallenge'],
+              },
+            },
+          ],
+        },
+      },
+      size: 0,
+      aggs: {
+        trend: {
+          date_histogram: {
+            field: '@timestamp',
+            fixed_interval: interval,
+            min_doc_count: 0,
+          },
+        },
+      },
+    };
+  }
+
+  /**
+   * 建構攻擊趨勢查詢（Query DSL，依小時彙總）
+   * @param {Date} start - 開始時間
+   * @param {Date} end - 結束時間
+   * @returns {Object} Query DSL 查詢物件
    */
   buildAttackTrendQueryHour(start, end) {
-    const startISO = start.toISOString();
-    const endISO = end.toISOString();
-    return `FROM ${this.indexPattern} | WHERE @timestamp >= "${startISO}" AND @timestamp <= "${endISO}" | WHERE SecurityAction IN ("jschallenge", "block", "managedChallenge") | EVAL hour = DATE_TRUNC(1 hour, @timestamp) | STATS count = COUNT(*) BY hour | SORT hour ASC | KEEP hour, count`;
+    return this.buildAttackTrendQuery(start, end, '1h');
   }
+
   /**
-   * 建構攻擊趨勢查詢（依10分彙總）
+   * 建構攻擊趨勢查詢（Query DSL，依10分彙總）
    * @param {Date} start - 開始時間
    * @param {Date} end - 結束時間
-   * @returns {string} ES|QL 查詢語句
+   * @returns {Object} Query DSL 查詢物件
    */
   buildAttackTrendQuery10Minute(start, end) {
-    const startISO = start.toISOString();
-    const endISO = end.toISOString();
-    return `FROM ${this.indexPattern} | WHERE @timestamp >= "${startISO}" AND @timestamp <= "${endISO}" | WHERE SecurityAction IN ("jschallenge", "block", "managedChallenge") | EVAL hour = DATE_TRUNC(10 minute, @timestamp) | STATS count = COUNT(*) BY hour | SORT hour ASC | KEEP hour, count`;
+    return this.buildAttackTrendQuery(start, end, '10m');
   }
+
   /**
-   * 建構攻擊趨勢查詢（依30分彙總）
+   * 建構攻擊趨勢查詢（Query DSL，依30分彙總）
    * @param {Date} start - 開始時間
    * @param {Date} end - 結束時間
-   * @returns {string} ES|QL 查詢語句
+   * @returns {Object} Query DSL 查詢物件
    */
   buildAttackTrendQuery30Minute(start, end) {
-    const startISO = start.toISOString();
-    const endISO = end.toISOString();
-    return `FROM ${this.indexPattern} | WHERE @timestamp >= "${startISO}" AND @timestamp <= "${endISO}" | WHERE SecurityAction IN ("jschallenge", "block", "managedChallenge") | EVAL hour = DATE_TRUNC(30 minute, @timestamp) | STATS count = COUNT(*) BY hour | SORT hour ASC | KEEP hour, count`;
+    return this.buildAttackTrendQuery(start, end, '30m');
   }
+
   /**
-   * 建構攻擊趨勢查詢（依天彙總）
+   * 建構攻擊趨勢查詢（Query DSL，依天彙總）
    * @param {Date} start - 開始時間
    * @param {Date} end - 結束時間
-   * @returns {string} ES|QL 查詢語句
+   * @returns {Object} Query DSL 查詢物件
    */
   buildAttackTrendQuery1Day(start, end) {
-    const startISO = start.toISOString();
-    const endISO = end.toISOString();
-    return `FROM ${this.indexPattern} | WHERE @timestamp >= "${startISO}" AND @timestamp <= "${endISO}" | WHERE SecurityAction IN ("jschallenge", "block", "managedChallenge") | EVAL hour = DATE_TRUNC(1 day, @timestamp) | STATS count = COUNT(*) BY hour | SORT hour ASC | KEEP hour, count`;
+    return this.buildAttackTrendQuery(start, end, '1d');
   }
+
   /**
-   * 建構攻擊趨勢查詢（依3天彙總）
+   * 建構攻擊趨勢查詢（Query DSL，依3天彙總）
    * @param {Date} start - 開始時間
    * @param {Date} end - 結束時間
-   * @returns {string} ES|QL 查詢語句
+   * @returns {Object} Query DSL 查詢物件
    */
   buildAttackTrendQuery3Day(start, end) {
-    const startISO = start.toISOString();
-    const endISO = end.toISOString();
-    return `FROM ${this.indexPattern} | WHERE @timestamp >= "${startISO}" AND @timestamp <= "${endISO}" | WHERE SecurityAction IN ("jschallenge", "block", "managedChallenge") | EVAL hour = DATE_TRUNC(3 day, @timestamp) | STATS count = COUNT(*) BY hour | SORT hour ASC | KEEP hour, count`;
+    return this.buildAttackTrendQuery(start, end, '3d');
   }
+
   /**
-   * 建構資料傳送量查詢（SUM EdgeResponseBytes）
+   * 建構資料傳送量查詢（Query DSL，SUM EdgeResponseBytes）
    * @param {Date} start - 開始時間
    * @param {Date} end - 結束時間
-   * @returns {string} ES|QL 查詢語句
+   * @returns {Object} Query DSL 查詢物件
    */
   buildDataVolumeQuery(start, end) {
-    const startISO = start.toISOString();
-    const endISO = end.toISOString();
-    return `FROM ${this.indexPattern} | WHERE @timestamp >= "${startISO}" AND @timestamp <= "${endISO}" | STATS totalBytes = SUM(EdgeResponseBytes)`;
+    return {
+      query: {
+        bool: {
+          filter: [this.buildQueryDSLTimeRange(start, end)],
+        },
+      },
+      size: 0,
+      aggs: {
+        total_bytes: {
+          sum: {
+            field: 'EdgeResponseBytes',
+          },
+        },
+      },
+    };
   }
 
   /**
-   * 建構頁面瀏覽次數查詢（ContentType 為 text/html）
+   * 建構頁面瀏覽次數查詢（Query DSL，ContentType 為 text/html）
+   * 注意：Count/Filter 查詢不需要 .keyword 後綴
    * @param {Date} start - 開始時間
    * @param {Date} end - 結束時間
-   * @returns {string} ES|QL 查詢語句
+   * @returns {Object} Query DSL 查詢物件
    */
   buildPageViewQuery(start, end) {
-    const startISO = start.toISOString();
-    const endISO = end.toISOString();
-    return `FROM ${this.indexPattern} | WHERE @timestamp >= "${startISO}" AND @timestamp <= "${endISO}" AND EdgeResponseContentType IN ("text/html") | STATS count = COUNT(*)`;
+    return {
+      query: {
+        bool: {
+          filter: [
+            this.buildQueryDSLTimeRange(start, end),
+            {
+              terms: {
+                'EdgeResponseContentType.keyword': ['text/html'],
+              },
+            },
+          ],
+        },
+      },
+    };
   }
 
   /**
-   * 建構造訪次數查詢（Referer 為 None）
+   * 建構造訪次數查詢（Query DSL，Referer 為 None）
+   * 注意：Count/Filter 查詢不需要 .keyword 後綴
    * @param {Date} start - 開始時間
    * @param {Date} end - 結束時間
-   * @returns {string} ES|QL 查詢語句
+   * @returns {Object} Query DSL 查詢物件
    */
   buildVisitsQuery(start, end) {
-    const startISO = start.toISOString();
-    const endISO = end.toISOString();
-    return `FROM ${this.indexPattern} | WHERE @timestamp >= "${startISO}" AND @timestamp <= "${endISO}" AND ClientRequestReferer IN ("None") | STATS count = COUNT(*)`;
+    return {
+      query: {
+        bool: {
+          filter: [
+            this.buildQueryDSLTimeRange(start, end),
+            {
+              terms: {
+                'ClientRequestReferer.keyword': ['None'],
+              },
+            },
+          ],
+        },
+      },
+    };
   }
 
+  // ==================== Query DSL Top 5 查詢（取代 ES|QL）====================
+
   /**
-   * 建構當期 Top 5 來源 IP 查詢
+   * 建構時間範圍 Query DSL 過濾條件
    * @param {Date} start - 開始時間
    * @param {Date} end - 結束時間
-   * @returns {string} ES|QL 查詢語句
+   * @returns {Object} Query DSL range 過濾條件
    */
-  buildCurrentSourceIPQuery(start, end) {
-    const startISO = start.toISOString();
-    const endISO = end.toISOString();
-    return `FROM ${this.indexPattern} | WHERE @timestamp >= "${startISO}" AND @timestamp <= "${endISO}" | STATS cnt = count(*) BY ClientIP | SORT cnt DESC | LIMIT 5`;
+  buildQueryDSLTimeRange(start, end) {
+    return {
+      range: {
+        '@timestamp': {
+          gte: start.toISOString(),
+          lte: end.toISOString(),
+        },
+      },
+    };
   }
 
   /**
-   * 建構上期 Top 5 來源 IP 查詢（使用當期 IP 列表作為過濾條件）
+   * 取得欄位的 keyword 版本（用於 terms aggregation 和 terms filter）
+   * Elasticsearch text 類型欄位在做 aggregation 時需要使用 .keyword 後綴
+   * @param {string} field - 原始欄位名稱
+   * @returns {string} keyword 版本的欄位名稱
+   */
+  getKeywordField(field) {
+    // 如果已經有 .keyword 後綴，直接返回
+    if (field.endsWith('.keyword')) {
+      return field;
+    }
+    // 這些欄位是 text 類型，需要加上 .keyword
+    const textFields = [
+      'ClientIP',
+      'SecurityRuleDescription',
+      'ClientRequestHost',
+      'ClientRequestPath',
+      'geoip_client.country_name',
+      'SecurityAction',
+      'EdgeResponseContentType',
+      'ClientRequestReferer',
+    ];
+    if (textFields.includes(field)) {
+      return `${field}.keyword`;
+    }
+    return field;
+  }
+
+  /**
+   * 建構 Top N 聚合查詢 Query DSL
    * @param {Date} start - 開始時間
    * @param {Date} end - 結束時間
-   * @param {string[]} ipList - 當期 Top 5 IP 列表
-   * @returns {string} ES|QL 查詢語句
+   * @param {string} field - 聚合欄位名稱
+   * @param {number} size - Top N 數量
+   * @param {string[]} filterValues - 過濾值列表（可選，用於上期查詢）
+   * @returns {Object} Query DSL 查詢物件
    */
-  buildPreviousSourceIPQuery(start, end, ipList) {
-    const startISO = start.toISOString();
-    const endISO = end.toISOString();
-    const ipFilter = ipList.map((ip) => `"${ip}"`).join(',');
-    return `FROM ${this.indexPattern} | WHERE @timestamp >= "${startISO}" AND @timestamp <= "${endISO}" | WHERE ClientIP IN (${ipFilter}) | STATS cnt = COUNT(*) BY ClientIP | SORT cnt DESC`;
+  buildTopNAggregationQuery(start, end, field, size = 5, filterValues = null) {
+    const filters = [this.buildQueryDSLTimeRange(start, end)];
+    const keywordField = this.getKeywordField(field);
+
+    // 若有過濾值列表，加入 terms 過濾條件
+    if (filterValues && filterValues.length > 0) {
+      filters.push({
+        terms: {
+          [keywordField]: filterValues,
+        },
+      });
+    }
+
+    return {
+      query: {
+        bool: {
+          filter: filters,
+        },
+      },
+      size: 0, // 不需要回傳文件，只要聚合結果
+      aggs: {
+        top_items: {
+          terms: {
+            field: keywordField,
+            size: size,
+          },
+        },
+      },
+    };
   }
 
   /**
-   * 建構當期 Top 5 觸發規則查詢
-   * @param {Date} start - 開始時間
-   * @param {Date} end - 結束時間
-   * @returns {string} ES|QL 查詢語句
+   * 執行 Query DSL 聚合查詢並轉換結果格式
+   * 注意：MCP 對 size=0 只回傳摘要，需設 size>=1 才能取得 aggregations
+   * @param {Object} queryBody - Query DSL 查詢物件
+   * @param {string} fieldName - 結果欄位名稱（用於輸出格式轉換）
+   * @returns {Promise<Array>} 與原 ES|QL 相同格式的結果陣列
    */
-  buildCurrentTriggerRuleQuery(start, end) {
-    const startISO = start.toISOString();
-    const endISO = end.toISOString();
-    return `FROM ${this.indexPattern} | WHERE @timestamp >= "${startISO}" AND @timestamp <= "${endISO}" | STATS cnt = count(*) BY SecurityRuleDescription | SORT cnt DESC | LIMIT 5`;
-  }
-
-  /**
-   * 建構上期 Top 5 觸發規則查詢
-   * @param {Date} start - 開始時間
-   * @param {Date} end - 結束時間
-   * @param {string[]} ruleList - 當期 Top 5 規則列表
-   * @returns {string} ES|QL 查詢語句
-   */
-  buildPreviousTriggerRuleQuery(start, end, ruleList) {
-    const startISO = start.toISOString();
-    const endISO = end.toISOString();
-    const ruleFilter = ruleList.map((r) => `"${r}"`).join(',');
-    return `FROM ${this.indexPattern} | WHERE @timestamp >= "${startISO}" AND @timestamp <= "${endISO}" | WHERE SecurityRuleDescription IN (${ruleFilter}) | STATS cnt = COUNT(*) BY SecurityRuleDescription | SORT cnt DESC`;
-  }
-
-  /**
-   * 建構當期 Top 5 主機查詢
-   * @param {Date} start - 開始時間
-   * @param {Date} end - 結束時間
-   * @returns {string} ES|QL 查詢語句
-   */
-  buildCurrentHostsQuery(start, end) {
-    const startISO = start.toISOString();
-    const endISO = end.toISOString();
-    return `FROM ${this.indexPattern} | WHERE @timestamp >= "${startISO}" AND @timestamp <= "${endISO}" | STATS cnt = count(*) BY ClientRequestHost | SORT cnt DESC | LIMIT 5`;
-  }
-
-  /**
-   * 建構上期 Top 5 主機查詢
-   * @param {Date} start - 開始時間
-   * @param {Date} end - 結束時間
-   * @param {string[]} hostList - 當期 Top 5 主機列表
-   * @returns {string} ES|QL 查詢語句
-   */
-  buildPreviousHostsQuery(start, end, hostList) {
-    const startISO = start.toISOString();
-    const endISO = end.toISOString();
-    const hostFilter = hostList.map((h) => `"${h}"`).join(',');
-    return `FROM ${this.indexPattern} | WHERE @timestamp >= "${startISO}" AND @timestamp <= "${endISO}" | WHERE ClientRequestHost IN (${hostFilter}) | STATS cnt = COUNT(*) BY ClientRequestHost | SORT cnt DESC`;
-  }
-
-  /**
-   * 建構當期 Top 5 路徑查詢
-   * @param {Date} start - 開始時間
-   * @param {Date} end - 結束時間
-   * @returns {string} ES|QL 查詢語句
-   */
-  buildCurrentPathQuery(start, end) {
-    const startISO = start.toISOString();
-    const endISO = end.toISOString();
-    return `FROM ${this.indexPattern} | WHERE @timestamp >= "${startISO}" AND @timestamp <= "${endISO}" | STATS cnt = count(*) BY ClientRequestPath | SORT cnt DESC | LIMIT 5`;
-  }
-
-  /**
-   * 建構上期 Top 5 路徑查詢
-   * @param {Date} start - 開始時間
-   * @param {Date} end - 結束時間
-   * @param {string[]} pathList - 當期 Top 5 路徑列表
-   * @returns {string} ES|QL 查詢語句
-   */
-  buildPreviousPathQuery(start, end, pathList) {
-    const startISO = start.toISOString();
-    const endISO = end.toISOString();
-    const pathFilter = pathList.map((p) => `"${p}"`).join(',');
-    return `FROM ${this.indexPattern} | WHERE @timestamp >= "${startISO}" AND @timestamp <= "${endISO}" | WHERE ClientRequestPath IN (${pathFilter}) | STATS cnt = COUNT(*) BY ClientRequestPath | SORT cnt DESC`;
-  }
-
-  /**
-   * 建構當期 Top 5 國家查詢
-   * @param {Date} start - 開始時間
-   * @param {Date} end - 結束時間
-   * @returns {string} ES|QL 查詢語句
-   */
-  buildCurrentCountryQuery(start, end) {
-    const startISO = start.toISOString();
-    const endISO = end.toISOString();
-    return `FROM ${this.indexPattern} | WHERE @timestamp >= "${startISO}" AND @timestamp <= "${endISO}" | STATS cnt = count(*) BY geoip_client.country_name | SORT cnt DESC | LIMIT 5`;
-  }
-
-  /**
-   * 建構上期 Top 5 國家查詢
-   * @param {Date} start - 開始時間
-   * @param {Date} end - 結束時間
-   * @param {string[]} countryList - 當期 Top 5 國家列表
-   * @returns {string} ES|QL 查詢語句
-   */
-  buildPreviousCountryQuery(start, end, countryList) {
-    const startISO = start.toISOString();
-    const endISO = end.toISOString();
-    const countryFilter = countryList.map((c) => `"${c}"`).join(',');
-    return `FROM ${this.indexPattern} | WHERE @timestamp >= "${startISO}" AND @timestamp <= "${endISO}" | WHERE geoip_client.country_name IN (${countryFilter}) | STATS cnt = COUNT(*) BY geoip_client.country_name | SORT cnt DESC`;
-  }
-
-  // ==================== ES|QL 查詢執行 ====================
-
-  /**
-   * 執行 ES|QL 查詢並解析結果
-   * @param {string} query - ES|QL 查詢語句
-   * @returns {Promise<Array>} 查詢結果陣列
-   */
-  async executeESQLQuery(query) {
+  async executeQueryDSL(queryBody, fieldName) {
     try {
-      const result = await elkMCPClient.callHttpTool('esql', { query });
+      // 設置 size: 0，只需要 aggregation 結果
+      const aggQuery = {
+        ...queryBody,
+        size: 0,
+      };
 
-      // 解析 ES|QL 回應格式
-      if (result.isError) {
-        throw new Error(
-          `ES|QL 查詢錯誤: ${result.content?.[0]?.text || 'Unknown error'}`,
-        );
-      }
+      console.log(`🔍 [QueryDSL] 執行 Top N 聚合查詢 (${fieldName}):`);
+      console.log(JSON.stringify(aggQuery, null, 2));
 
-      const responseText = result.content?.[0]?.text || '';
-      const dataText = result.content?.[1]?.text || responseText;
+      // 直接呼叫 Elasticsearch _search API
+      const result = await this.callElasticsearchAPI('_search', aggQuery);
 
-      try {
-        const parsed = JSON.parse(dataText);
+      // 從 aggregations.top_items.buckets 提取結果
+      const buckets = result.aggregations?.top_items?.buckets || [];
+      console.log(`📥 [${fieldName}] Top N 結果: ${buckets.length} 筆`);
 
-        // ES|QL 回應格式：{ columns: [...], values: [...] }
-        if (parsed.columns && parsed.values) {
-          const columns = parsed.columns.map((col) => col.name || col);
-          return parsed.values.map((row) => {
-            const record = {};
-            columns.forEach((col, idx) => {
-              record[col] = row[idx];
-            });
-            return record;
-          });
-        } else if (Array.isArray(parsed)) {
-          return parsed;
-        } else {
-          return [parsed];
-        }
-      } catch (parseError) {
-        console.error('❌ ES|QL 回應解析失敗:', parseError.message);
-        return [];
-      }
+      // 轉換為標準格式：[{ fieldName: key, cnt: doc_count }, ...]
+      return buckets.map((bucket) => ({
+        [fieldName]: bucket.key,
+        cnt: bucket.doc_count,
+      }));
     } catch (error) {
-      console.error('❌ ES|QL 查詢執行失敗:', error.message);
+      console.error(`❌ [${fieldName}] Query DSL 查詢執行失敗:`, error.message);
       // 回傳空結果，不中斷整體查詢
       return [];
     }
   }
+
+  /**
+   * 執行計數類 Query DSL（直接呼叫 Elasticsearch _count API）
+   * @param {Object} queryBody - Query DSL 查詢物件
+   * @param {string} queryName - 查詢名稱（用於日誌識別）
+   * @returns {Promise<Array>} 回傳 [{ count: number }] 格式
+   */
+  async executeCountQueryDSL(queryBody, queryName = '') {
+    try {
+      console.log(`🔍 [QueryDSL] 執行計數查詢 [${queryName}]:`);
+      console.log(JSON.stringify(queryBody, null, 2));
+
+      // 直接呼叫 Elasticsearch _count API
+      const result = await this.callElasticsearchAPI('_count', queryBody);
+
+      console.log(`📥 [${queryName}] 計數結果: ${result.count}`);
+
+      return [{ count: result.count || 0 }];
+    } catch (error) {
+      console.error(`❌ [${queryName}] Count Query DSL 查詢執行失敗:`, error.message);
+      return [{ count: 0 }];
+    }
+  }
+
+  /**
+   * 執行加總類 Query DSL（透過 MCP search 工具，使用 sum aggregation）
+   * 注意：MCP 對 size=0 只回傳摘要，需設 size>=1 才能取得 aggregations
+   * @param {Object} queryBody - Query DSL 查詢物件（含 aggs.total_bytes）
+   * @param {string} queryName - 查詢名稱（用於日誌識別）
+   * @returns {Promise<Array>} 回傳 [{ totalBytes: number }] 格式
+   */
+  async executeSumQueryDSL(queryBody, queryName = '') {
+    try {
+      // 設置 size: 0，只需要 aggregation 結果
+      const sumQuery = {
+        ...queryBody,
+        size: 0,
+      };
+
+      console.log(`🔍 [QueryDSL] 執行加總查詢 [${queryName}]:`);
+      console.log(JSON.stringify(sumQuery, null, 2));
+
+      // 直接呼叫 Elasticsearch _search API
+      const result = await this.callElasticsearchAPI('_search', sumQuery);
+
+      // 從 aggregations.total_bytes.value 取得加總
+      const totalBytes = result.aggregations?.total_bytes?.value || 0;
+      console.log(`📥 [${queryName}] 加總結果: ${totalBytes}`);
+
+      return [{ totalBytes }];
+    } catch (error) {
+      console.error(`❌ [${queryName}] Sum Query DSL 查詢執行失敗:`, error.message);
+      return [{ totalBytes: 0 }];
+    }
+  }
+
+  /**
+   * 執行時間分組類 Query DSL（透過 MCP search 工具，使用 date_histogram aggregation）
+   * 注意：MCP 對 size=0 只回傳摘要，需設 size>=1 才能取得 aggregations
+   * @param {Object} queryBody - Query DSL 查詢物件（含 aggs.trend）
+   * @param {string} queryName - 查詢名稱（用於日誌識別）
+   * @returns {Promise<Array>} 回傳 [{ hour: string, count: number }, ...] 格式
+   */
+  async executeHistogramQueryDSL(queryBody, queryName = '') {
+    try {
+      // 設置 size: 0，只需要 aggregation 結果
+      const histogramQuery = {
+        ...queryBody,
+        size: 0,
+      };
+
+      console.log(`🔍 [QueryDSL] 執行時間分組查詢 [${queryName}]:`);
+      console.log(JSON.stringify(histogramQuery, null, 2));
+
+      // 直接呼叫 Elasticsearch _search API
+      const result = await this.callElasticsearchAPI('_search', histogramQuery);
+
+      // 從 aggregations.trend.buckets 提取結果
+      const buckets = result.aggregations?.trend?.buckets || [];
+      console.log(`📥 [${queryName}] 時間分組結果: ${buckets.length} 筆`);
+
+      // 轉換為標準格式：[{ hour: key_as_string, count: doc_count }, ...]
+      return buckets.map((bucket) => ({
+        hour: bucket.key_as_string,
+        count: bucket.doc_count,
+      }));
+    } catch (error) {
+      console.error(`❌ [${queryName}] Histogram Query DSL 查詢執行失敗:`, error.message);
+      return [];
+    }
+  }
+
+  /**
+   * 建構當期 Top 5 來源 IP 查詢（Query DSL）
+   * @param {Date} start - 開始時間
+   * @param {Date} end - 結束時間
+   * @returns {Object} Query DSL 查詢物件
+   */
+  buildCurrentSourceIPQuery(start, end) {
+    return this.buildTopNAggregationQuery(start, end, 'ClientIP', 5);
+  }
+
+  /**
+   * 建構上期 Top 5 來源 IP 查詢（Query DSL，使用當期 IP 列表作為過濾條件）
+   * @param {Date} start - 開始時間
+   * @param {Date} end - 結束時間
+   * @param {string[]} ipList - 當期 Top 5 IP 列表（來自 buildCurrentSourceIPQuery 輸出）
+   * @returns {Object} Query DSL 查詢物件
+   */
+  buildPreviousSourceIPQuery(start, end, ipList) {
+    return this.buildTopNAggregationQuery(start, end, 'ClientIP', ipList.length, ipList);
+  }
+
+  /**
+   * 建構當期 Top 5 觸發規則查詢（Query DSL）
+   * @param {Date} start - 開始時間
+   * @param {Date} end - 結束時間
+   * @returns {Object} Query DSL 查詢物件
+   */
+  buildCurrentTriggerRuleQuery(start, end) {
+    return this.buildTopNAggregationQuery(start, end, 'SecurityRuleDescription', 5);
+  }
+
+  /**
+   * 建構上期 Top 5 觸發規則查詢（Query DSL，使用當期規則列表作為過濾條件）
+   * @param {Date} start - 開始時間
+   * @param {Date} end - 結束時間
+   * @param {string[]} ruleList - 當期 Top 5 規則列表（來自 buildCurrentTriggerRuleQuery 輸出）
+   * @returns {Object} Query DSL 查詢物件
+   */
+  buildPreviousTriggerRuleQuery(start, end, ruleList) {
+    return this.buildTopNAggregationQuery(start, end, 'SecurityRuleDescription', ruleList.length, ruleList);
+  }
+
+  /**
+   * 建構當期 Top 5 主機查詢（Query DSL）
+   * @param {Date} start - 開始時間
+   * @param {Date} end - 結束時間
+   * @returns {Object} Query DSL 查詢物件
+   */
+  buildCurrentHostsQuery(start, end) {
+    return this.buildTopNAggregationQuery(start, end, 'ClientRequestHost', 5);
+  }
+
+  /**
+   * 建構上期 Top 5 主機查詢（Query DSL，使用當期主機列表作為過濾條件）
+   * @param {Date} start - 開始時間
+   * @param {Date} end - 結束時間
+   * @param {string[]} hostList - 當期 Top 5 主機列表（來自 buildCurrentHostsQuery 輸出）
+   * @returns {Object} Query DSL 查詢物件
+   */
+  buildPreviousHostsQuery(start, end, hostList) {
+    return this.buildTopNAggregationQuery(start, end, 'ClientRequestHost', hostList.length, hostList);
+  }
+
+  /**
+   * 建構當期 Top 5 路徑查詢（Query DSL）
+   * @param {Date} start - 開始時間
+   * @param {Date} end - 結束時間
+   * @returns {Object} Query DSL 查詢物件
+   */
+  buildCurrentPathQuery(start, end) {
+    return this.buildTopNAggregationQuery(start, end, 'ClientRequestPath', 5);
+  }
+
+  /**
+   * 建構上期 Top 5 路徑查詢（Query DSL，使用當期路徑列表作為過濾條件）
+   * @param {Date} start - 開始時間
+   * @param {Date} end - 結束時間
+   * @param {string[]} pathList - 當期 Top 5 路徑列表（來自 buildCurrentPathQuery 輸出）
+   * @returns {Object} Query DSL 查詢物件
+   */
+  buildPreviousPathQuery(start, end, pathList) {
+    return this.buildTopNAggregationQuery(start, end, 'ClientRequestPath', pathList.length, pathList);
+  }
+
+  /**
+   * 建構當期 Top 5 國家查詢（Query DSL）
+   * @param {Date} start - 開始時間
+   * @param {Date} end - 結束時間
+   * @returns {Object} Query DSL 查詢物件
+   */
+  buildCurrentCountryQuery(start, end) {
+    return this.buildTopNAggregationQuery(start, end, 'geoip_client.country_name', 5);
+  }
+
+  /**
+   * 建構上期 Top 5 國家查詢（Query DSL，使用當期國家列表作為過濾條件）
+   * @param {Date} start - 開始時間
+   * @param {Date} end - 結束時間
+   * @param {string[]} countryList - 當期 Top 5 國家列表（來自 buildCurrentCountryQuery 輸出）
+   * @returns {Object} Query DSL 查詢物件
+   */
+  buildPreviousCountryQuery(start, end, countryList) {
+    return this.buildTopNAggregationQuery(start, end, 'geoip_client.country_name', countryList.length, countryList);
+  }
+
+  // ==================== 查詢結果處理 ====================
 
   /**
    * 從查詢結果中提取單一數值
@@ -576,125 +864,152 @@ class TrendAnalysisService {
     console.log('\n⚡ 第一階段：執行 19 個查詢（分批並發，每批最多 5 個）...');
     const phase1Start = Date.now();
 
-    // 建立查詢任務陣列（延遲執行）
+    // 建立查詢任務陣列（延遲執行）- 全部使用 Query DSL
     const phase1Tasks = [
-      // 攻擊活動量（2 個）
+      // 攻擊活動量（2 個）- 使用 Query DSL
       () =>
-        this.executeESQLQuery(
+        this.executeCountQueryDSL(
           this.buildAttackCountQuery(current.start, current.end),
+          'currentAttack',
         ),
       () =>
-        this.executeESQLQuery(
+        this.executeCountQueryDSL(
           this.buildAttackCountQuery(previous.start, previous.end),
+          'previousAttack',
         ),
-      // HTTP 活動量（2 個）
+      // HTTP 活動量（2 個）- 使用 Query DSL
       () =>
-        this.executeESQLQuery(
+        this.executeCountQueryDSL(
           this.buildHttpVolumeQuery(current.start, current.end),
+          'currentHttp',
         ),
       () =>
-        this.executeESQLQuery(
+        this.executeCountQueryDSL(
           this.buildHttpVolumeQuery(previous.start, previous.end),
+          'previousHttp',
         ),
-      // 封鎖數（2 個）
+      // 封鎖數（2 個）- 使用 Query DSL
       () =>
-        this.executeESQLQuery(
+        this.executeCountQueryDSL(
           this.buildBlockCountQuery(current.start, current.end),
+          'currentBlock',
         ),
       () =>
-        this.executeESQLQuery(
+        this.executeCountQueryDSL(
           this.buildBlockCountQuery(previous.start, previous.end),
+          'previousBlock',
         ),
-      // 攻擊趨勢（2 個）
+      // 攻擊趨勢（2 個）- 使用 Query DSL date_histogram
       () => {
         if (timeRange === '1h')
-          return this.executeESQLQuery(
+          return this.executeHistogramQueryDSL(
             this.buildAttackTrendQuery10Minute(current.start, current.end),
+            'currentAttackTrend',
           );
         if (timeRange === '6h')
-          return this.executeESQLQuery(
+          return this.executeHistogramQueryDSL(
             this.buildAttackTrendQuery30Minute(current.start, current.end),
+            'currentAttackTrend',
           );
         if (timeRange === '14d')
-          return this.executeESQLQuery(
+          return this.executeHistogramQueryDSL(
             this.buildAttackTrendQuery1Day(current.start, current.end),
+            'currentAttackTrend',
           );
         if (timeRange === '30d')
-          return this.executeESQLQuery(
+          return this.executeHistogramQueryDSL(
             this.buildAttackTrendQuery3Day(current.start, current.end),
+            'currentAttackTrend',
           );
-        return this.executeESQLQuery(
+        return this.executeHistogramQueryDSL(
           this.buildAttackTrendQueryHour(current.start, current.end),
+          'currentAttackTrend',
         );
       },
       () => {
         if (timeRange === '1h')
-          return this.executeESQLQuery(
+          return this.executeHistogramQueryDSL(
             this.buildAttackTrendQuery10Minute(previous.start, previous.end),
+            'previousAttackTrend',
           );
         if (timeRange === '6h')
-          return this.executeESQLQuery(
+          return this.executeHistogramQueryDSL(
             this.buildAttackTrendQuery30Minute(previous.start, previous.end),
+            'previousAttackTrend',
           );
         if (timeRange === '14d')
-          return this.executeESQLQuery(
+          return this.executeHistogramQueryDSL(
             this.buildAttackTrendQuery1Day(previous.start, previous.end),
+            'previousAttackTrend',
           );
         if (timeRange === '30d')
-          return this.executeESQLQuery(
+          return this.executeHistogramQueryDSL(
             this.buildAttackTrendQuery3Day(previous.start, previous.end),
+            'previousAttackTrend',
           );
-        return this.executeESQLQuery(
+        return this.executeHistogramQueryDSL(
           this.buildAttackTrendQueryHour(previous.start, previous.end),
+          'previousAttackTrend',
         );
       },
-      // 資料傳送量（2 個）
+      // 資料傳送量（2 個）- 使用 Query DSL sum aggregation
       () =>
-        this.executeESQLQuery(
+        this.executeSumQueryDSL(
           this.buildDataVolumeQuery(current.start, current.end),
+          'currentDataVolume',
         ),
       () =>
-        this.executeESQLQuery(
+        this.executeSumQueryDSL(
           this.buildDataVolumeQuery(previous.start, previous.end),
+          'previousDataVolume',
         ),
-      // 頁面瀏覽次數（2 個）
+      // 頁面瀏覽次數（2 個）- 使用 Query DSL
       () =>
-        this.executeESQLQuery(
+        this.executeCountQueryDSL(
           this.buildPageViewQuery(current.start, current.end),
+          'currentPageView',
         ),
       () =>
-        this.executeESQLQuery(
+        this.executeCountQueryDSL(
           this.buildPageViewQuery(previous.start, previous.end),
+          'previousPageView',
         ),
-      // 造訪次數（2 個）
+      // 造訪次數（2 個）- 使用 Query DSL
       () =>
-        this.executeESQLQuery(
+        this.executeCountQueryDSL(
           this.buildVisitsQuery(current.start, current.end),
+          'currentVisits',
         ),
       () =>
-        this.executeESQLQuery(
+        this.executeCountQueryDSL(
           this.buildVisitsQuery(previous.start, previous.end),
+          'previousVisits',
         ),
-      // 當期 Top 5（5 個）
+      // 當期 Top 5（5 個）- 使用 Query DSL
       () =>
-        this.executeESQLQuery(
+        this.executeQueryDSL(
           this.buildCurrentSourceIPQuery(current.start, current.end),
+          'ClientIP',
         ),
       () =>
-        this.executeESQLQuery(
+        this.executeQueryDSL(
           this.buildCurrentTriggerRuleQuery(current.start, current.end),
+          'SecurityRuleDescription',
         ),
       () =>
-        this.executeESQLQuery(
+        this.executeQueryDSL(
           this.buildCurrentHostsQuery(current.start, current.end),
+          'ClientRequestHost',
         ),
       () =>
-        this.executeESQLQuery(
+        this.executeQueryDSL(
           this.buildCurrentPathQuery(current.start, current.end),
+          'ClientRequestPath',
         ),
       () =>
-        this.executeESQLQuery(
+        this.executeQueryDSL(
           this.buildCurrentCountryQuery(current.start, current.end),
+          'geoip_client.country_name',
         ),
     ];
 
@@ -747,56 +1062,61 @@ class TrendAnalysisService {
     console.log('\n⚡ 第二階段：執行 5 個查詢（上期 Top 5，分批並發）...');
     const phase2Start = Date.now();
 
-    // 建立第二階段查詢任務
+    // 建立第二階段查詢任務 - 使用 Query DSL
     const phase2Tasks = [
       () =>
         currentIPList.length > 0
-          ? this.executeESQLQuery(
+          ? this.executeQueryDSL(
             this.buildPreviousSourceIPQuery(
               previous.start,
               previous.end,
               currentIPList,
             ),
+            'ClientIP',
           )
           : Promise.resolve([]),
       () =>
         currentRuleList.length > 0
-          ? this.executeESQLQuery(
+          ? this.executeQueryDSL(
             this.buildPreviousTriggerRuleQuery(
               previous.start,
               previous.end,
               currentRuleList,
             ),
+            'SecurityRuleDescription',
           )
           : Promise.resolve([]),
       () =>
         currentHostList.length > 0
-          ? this.executeESQLQuery(
+          ? this.executeQueryDSL(
             this.buildPreviousHostsQuery(
               previous.start,
               previous.end,
               currentHostList,
             ),
+            'ClientRequestHost',
           )
           : Promise.resolve([]),
       () =>
         currentPathList.length > 0
-          ? this.executeESQLQuery(
+          ? this.executeQueryDSL(
             this.buildPreviousPathQuery(
               previous.start,
               previous.end,
               currentPathList,
             ),
+            'ClientRequestPath',
           )
           : Promise.resolve([]),
       () =>
         currentCountryList.length > 0
-          ? this.executeESQLQuery(
+          ? this.executeQueryDSL(
             this.buildPreviousCountryQuery(
               previous.start,
               previous.end,
               currentCountryList,
             ),
+            'geoip_client.country_name',
           )
           : Promise.resolve([]),
     ];
