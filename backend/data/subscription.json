@@ -1,27 +1,21 @@
 [
   {
     "ai_name": "GPT Plus",
-    "price": 20.0,
+    "price": 20,
     "duration": 1,
     "subscribe_time": "2025-01-01 10:00:00",
     "currency_code": "USD",
-    "create_time": "2025-01-01 10:00:00"
+    "create_time": "2025-01-01 10:00:00",
+    "update_time": ""
   },
   {
     "ai_name": "Cursor Pro",
-    "price": 20.0,
+    "price": 20,
     "duration": 1,
     "subscribe_time": "2025-01-05 11:00:00",
     "currency_code": "USD",
-    "create_time": "2025-01-05 11:00:00"
-  },
-  {
-    "ai_name": "V0",
-    "price": 20.0,
-    "duration": 1,
-    "subscribe_time": "2025-01-10 09:30:00",
-    "currency_code": "USD",
-    "create_time": "2025-01-10 09:30:00"
+    "create_time": "2025-01-05 11:00:00",
+    "update_time": ""
   },
   {
     "ai_name": "Gemini Advanced",
@@ -29,6 +23,7 @@
     "duration": 1,
     "subscribe_time": "2025-01-12 08:45:00",
     "currency_code": "USD",
-    "create_time": "2025-01-12 08:45:00"
+    "create_time": "2025-01-12 08:45:00",
+    "update_time": ""
   }
 ]
