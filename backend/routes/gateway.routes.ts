@@ -229,6 +229,22 @@ function handleUpdateSubscription(
       return;
     }
 
+    // ai_name 重複時視為更新，以最後一次出現為準
+    const requestDataByAiName = new Map<string, Record<string, unknown>>();
+    const requestAiNameOrder: string[] = [];
+    for (const item of requestBody) {
+      const data = item as Record<string, unknown>;
+      const aiName = data.ai_name as string;
+      if (!requestDataByAiName.has(aiName)) {
+        requestAiNameOrder.push(aiName);
+      }
+      requestDataByAiName.set(aiName, data);
+    }
+
+    const normalizedRequestData = requestAiNameOrder.map(
+      (aiName) => requestDataByAiName.get(aiName) as Record<string, unknown>,
+    );
+
     const now = getNowDatetimeString();
     const hasExistingUpdateTime = existingData.some((item) => {
       if (typeof item !== 'object' || item === null) return false;
@@ -246,8 +262,7 @@ function handleUpdateSubscription(
       createTimeByAiName.set(data.ai_name, data.create_time);
     }
 
-    const updatedData = requestBody.map((item) => {
-      const data = item as Record<string, unknown>;
+    const updatedData = normalizedRequestData.map((data) => {
       const aiName = typeof data.ai_name === 'string' ? data.ai_name : '';
       const createTime =
         !hasExistingUpdateTime
