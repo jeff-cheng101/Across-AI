@@ -7,6 +7,12 @@ const cloudflareELKConfig = require('../config/products/cloudflare/cloudflareELK
 const { ELK_CONFIG } = require('../config/elkConfig');
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 const OpenAI = require('openai');
+let UndiciAgent = null;
+try {
+  ({ Agent: UndiciAgent } = require('undici'));
+} catch (_error) {
+  // 保持相容：若 undici 不可用則略過
+}
 const {
   logOpenAICompatibleRequest,
   logOpenAICompatibleResponse,
@@ -155,6 +161,44 @@ class TrendAnalysisService {
       'EdgeResponseContentType',
       'ClientRequestReferer',
     ];
+
+    /**
+     * 是否允許 Elasticsearch 使用不受信任的 TLS 憑證
+     * @type {boolean}
+     */
+    this.elkAllowInsecureTls =
+      process.env.ELK_INSECURE_TLS === 'true' ||
+      process.env.NODE_TLS_REJECT_UNAUTHORIZED === '0';
+
+    if (this.elkAllowInsecureTls && !UndiciAgent) {
+      console.warn('⚠️ 無法載入 undici，將無法關閉 TLS 驗證');
+    }
+  }
+
+  /**
+   * 組合 Elasticsearch fetch 參數
+   * @param {string} method - HTTP 方法
+   * @param {Object} headers - HTTP headers
+   * @param {Object} body - 請求內容
+   * @returns {Object} fetch 參數
+   */
+  buildElkFetchOptions(method, headers, body) {
+    const options = {
+      method,
+      headers,
+    };
+
+    if (body) {
+      options.body = JSON.stringify(body);
+    }
+
+    if (this.elkAllowInsecureTls && UndiciAgent) {
+      options.dispatcher = new UndiciAgent({
+        connect: { rejectUnauthorized: false },
+      });
+    }
+
+    return options;
   }
 
   // ==================== Elasticsearch 直連 API ====================
@@ -177,11 +221,7 @@ class TrendAnalysisService {
       headers['Authorization'] = `ApiKey ${this.elkApiKey}`;
     }
 
-    const response = await fetch(url, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify(body),
-    });
+    const response = await fetch(url, this.buildElkFetchOptions('POST', headers, body));
 
     if (!response.ok) {
       const errorText = await response.text();
@@ -207,10 +247,7 @@ class TrendAnalysisService {
       headers['Authorization'] = `ApiKey ${this.elkApiKey}`;
     }
 
-    const response = await fetch(url, {
-      method: 'GET',
-      headers,
-    });
+    const response = await fetch(url, this.buildElkFetchOptions('GET', headers));
 
     if (!response.ok) {
       const errorText = await response.text();
