@@ -104,40 +104,95 @@ type BasicSubscription = z.infer<typeof BasicSubscriptionSchema>;
 const SubscriptionListSchema = z.array(BasicSubscriptionSchema);
 
 /**
- * LiteLLM Spend Log Schema
- * 用於驗證第三方 API 回應（基於 LiteLLM 1.80.15 /spend/logs/v2 API）
- *
- * 注意：error_information 存在於 metadata 物件中，不是頂層欄位
+ * LiteLLM /user/daily/activity API 的 metrics Schema
+ * 包含每日的 spend、tokens、requests 等指標
  */
-const LiteLLMSpendLogSchema = z.object({
-  request_id: z.string(),
-  call_type: z.string(),
-  api_key: z.string(),
+const DailyActivityMetricsSchema = z.object({
   spend: z.number(),
-  total_tokens: z.number(),
   prompt_tokens: z.number(),
   completion_tokens: z.number(),
-  startTime: z.string(),
-  endTime: z.string(),
-  model: z.string(),
-  user: z.string(),
-  metadata: z.record(z.string(), z.unknown()),
-  cache_hit: z.string(),
-  cache_key: z.string(),
-  request_tags: z.array(z.unknown()), // 可能是空陣列或字串陣列
-  team_id: z.string(),
-  end_user: z.string(),
-  api_base: z.string(),
-  custom_llm_provider: z.string(),
-  // 狀態欄位（LiteLLM 1.63.0+ 支援）
-  status: z.enum(['success', 'failure']).optional(),
+  total_tokens: z.number(),
+  api_requests: z.number(),
+  successful_requests: z.number(),
+  failed_requests: z.number(),
 });
-type LiteLLMSpendLog = z.infer<typeof LiteLLMSpendLogSchema>;
 
 /**
- * LiteLLM Spend Log 清單 Schema
+ * LiteLLM /user/daily/activity API 的 breakdown metrics Schema
+ *
+ * 注意：successful_requests 和 failed_requests 在某些版本的 LiteLLM 中可能不存在，
+ * 因此設為 optional，在轉換時使用預設值 0
  */
-const LiteLLMSpendLogListSchema = z.array(LiteLLMSpendLogSchema);
+const BreakdownMetricsSchema = z.object({
+  spend: z.number(),
+  prompt_tokens: z.number(),
+  completion_tokens: z.number(),
+  total_tokens: z.number(),
+  api_requests: z.number(),
+  successful_requests: z.number().optional(),
+  failed_requests: z.number().optional(),
+  // LiteLLM 可能返回的額外欄位
+  cache_read_input_tokens: z.number().optional(),
+  cache_creation_input_tokens: z.number().optional(),
+});
+
+/**
+ * LiteLLM /user/daily/activity API 的 breakdown 內每個項目的 Schema
+ *
+ * 業務背景：LiteLLM API 的 breakdown 數據是巢狀結構，
+ * 實際數據在 metrics 物件內，而非直接在頂層
+ */
+const BreakdownItemSchema = z.object({
+  metrics: BreakdownMetricsSchema,
+  metadata: z.record(z.string(), z.unknown()).optional(),
+  api_key_breakdown: z.record(z.string(), z.unknown()).optional(),
+});
+
+/**
+ * LiteLLM /user/daily/activity/aggregated API 的每日結果 Schema
+ */
+const DailyActivityResultSchema = z.object({
+  date: z.string(),
+  metrics: DailyActivityMetricsSchema,
+  breakdown: z.object({
+    models: z.record(z.string(), BreakdownItemSchema).optional(),
+    api_keys: z.record(z.string(), BreakdownItemSchema).optional(),
+    customers: z.record(z.string(), BreakdownItemSchema).optional(),
+    teams: z.record(z.string(), BreakdownItemSchema).optional(),
+    // LiteLLM aggregated API 額外欄位
+    mcp_servers: z.record(z.string(), z.unknown()).optional(),
+    model_groups: z.record(z.string(), BreakdownItemSchema).optional(),
+    providers: z.record(z.string(), BreakdownItemSchema).optional(),
+  }),
+});
+
+/**
+ * LiteLLM /user/daily/activity API 的完整回應 Schema
+ *
+ * 業務背景：此 API 直接返回聚合好的每日統計數據，
+ * 減少後端手動聚合的計算負擔，由 LiteLLM DB 層完成聚合。
+ */
+const LiteLLMDailyActivityResponseSchema = z.object({
+  results: z.array(DailyActivityResultSchema),
+  metadata: z.object({
+    total_spend: z.number(),
+    total_prompt_tokens: z.number(),
+    total_completion_tokens: z.number(),
+    total_tokens: z.number(),
+    total_api_requests: z.number(),
+    total_successful_requests: z.number(),
+    total_failed_requests: z.number(),
+    // LiteLLM 可能返回的額外欄位
+    total_cache_read_input_tokens: z.number().optional(),
+    total_cache_creation_input_tokens: z.number().optional(),
+    page: z.number().optional(),
+    total_pages: z.number().optional(),
+    has_more: z.boolean().optional(),
+  }),
+});
+type LiteLLMDailyActivityResponse = z.infer<
+  typeof LiteLLMDailyActivityResponseSchema
+>;
 
 // ============================================================
 // 類型定義（內部使用，不需 runtime 驗證）
@@ -183,6 +238,8 @@ type ModelUsageStats = {
   modelName: string;
   provider: string;
   requests: number;
+  successfulRequests: number;
+  failedRequests: number;
   successRate: number;
   inputTokens: number;
   outputTokens: number;
@@ -221,7 +278,11 @@ type DailyUsageStats = {
     string,
     {
       requests: number;
+      successfulRequests: number;
+      failedRequests: number;
       tokens: number;
+      inputTokens: number;
+      outputTokens: number;
       costUsd: number;
     }
   >;
@@ -238,6 +299,20 @@ type TokenUsageTrend = {
 };
 
 /**
+ * API 金鑰使用統計
+ *
+ * 業務背景：顯示各 API 金鑰的費用排名
+ * 數據來源：LiteLLM API 的 breakdown.api_keys
+ */
+type ApiKeyUsageStats = {
+  keyId: string;
+  keyAlias: string;
+  requests: number;
+  costUsd: number;
+  costTwd: number;
+};
+
+/**
  * 儀表板完整數據回應
  */
 type DashboardDataResponse = {
@@ -250,6 +325,7 @@ type DashboardDataResponse = {
   };
   kpiMetrics: KpiMetrics;
   providerStats: ProviderUsageStats[];
+  apiKeyStats: ApiKeyUsageStats[];
   dailyUsageStats: DailyUsageStats[];
   tokenUsageTrend: TokenUsageTrend[];
   dailyCostDetailed: DailyCostDetail[];
@@ -337,6 +413,24 @@ function convertToSubscriptionsWithTWD(
 const DATETIME_REGEX = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/;
 
 /**
+ * 訂閱輸入資料 Schema（不含 create_time/update_time）
+ * 用於 PUT /subscription 請求的輸入驗證
+ *
+ * 業務背景：前端提交訂閱資料時，create_time 和 update_time 由後端自動產生，
+ * 因此輸入驗證只需要驗證核心欄位。
+ */
+const SubscriptionInputSchema = z.object({
+  ai_name: z.string().min(1, '不可為空'),
+  price: z.number().min(0, '必須是非負數'),
+  duration: z.number().int().positive('必須是正整數'),
+  subscribe_time: z
+    .string()
+    .regex(DATETIME_REGEX, '格式必須為 YYYY-MM-DD hh:mm:ss'),
+  currency_code: z.enum(ALLOWED_CURRENCIES),
+});
+type SubscriptionInput = z.infer<typeof SubscriptionInputSchema>;
+
+/**
  * 取得當下時間字串 (YYYY-MM-DD hh:mm:ss)
  * @param now 目前時間
  * @returns 格式化時間字串
@@ -353,7 +447,31 @@ function getNowDatetimeString(now: Date = new Date()): string {
 }
 
 /**
+ * 可選時間欄位 Schema（用於驗證 create_time/update_time）
+ * 允許空字串或符合 DATETIME_REGEX 格式的字串
+ */
+const OptionalDatetimeSchema = z
+  .string()
+  .refine((val) => val === '' || DATETIME_REGEX.test(val), {
+    message: '格式必須為 YYYY-MM-DD hh:mm:ss',
+  })
+  .optional();
+
+/**
+ * 完整的訂閱輸入驗證 Schema（包含可選的時間欄位）
+ * 用於 PUT /subscription 請求的完整輸入驗證
+ */
+const SubscriptionInputWithOptionalTimesSchema = SubscriptionInputSchema.extend(
+  {
+    create_time: OptionalDatetimeSchema,
+    update_time: OptionalDatetimeSchema,
+  },
+);
+
+/**
  * 驗證單筆訂閱資料（用於 PUT 請求）
+ * 使用 Zod Schema 進行驗證，完全移除 as 類型斷言
+ *
  * @param item 待驗證的資料
  * @param index 資料索引（用於錯誤訊息）
  * @returns 錯誤訊息，若無錯誤則返回 null
@@ -363,67 +481,12 @@ function validateSubscriptionItem(item: unknown, index: number): string | null {
     return `第 ${index + 1} 筆資料必須是物件`;
   }
 
-  const data = item as Record<string, unknown>;
-
-  // ai_name: 文字，必填
-  if (typeof data.ai_name !== 'string' || data.ai_name.trim() === '') {
-    return `第 ${index + 1} 筆: ai_name 必須是非空字串`;
-  }
-
-  // price: 數值，小數點2位
-  if (
-    typeof data.price !== 'number' ||
-    Number.isNaN(data.price) ||
-    data.price < 0
-  ) {
-    return `第 ${index + 1} 筆: price 必須是非負數值`;
-  }
-
-  // duration: 正整數
-  if (
-    typeof data.duration !== 'number' ||
-    !Number.isInteger(data.duration) ||
-    data.duration <= 0
-  ) {
-    return `第 ${index + 1} 筆: duration 必須是正整數`;
-  }
-
-  // subscribe_time: YYYY-MM-DD hh:mm:ss
-  if (
-    typeof data.subscribe_time !== 'string' ||
-    !DATETIME_REGEX.test(data.subscribe_time)
-  ) {
-    return `第 ${index + 1} 筆: subscribe_time 格式必須為 YYYY-MM-DD hh:mm:ss`;
-  }
-
-  // currency_code: USD 或 TWD
-  if (
-    typeof data.currency_code !== 'string' ||
-    !ALLOWED_CURRENCIES.includes(
-      data.currency_code as (typeof ALLOWED_CURRENCIES)[number],
-    )
-  ) {
-    return `第 ${index + 1} 筆: currency_code 必須是 ${ALLOWED_CURRENCIES.join(' 或 ')}`;
-  }
-
-  // create_time: YYYY-MM-DD hh:mm:ss（可選，若提供需符合格式）
-  if (typeof data.create_time !== 'undefined') {
-    if (
-      typeof data.create_time !== 'string' ||
-      (data.create_time !== '' && !DATETIME_REGEX.test(data.create_time))
-    ) {
-      return `第 ${index + 1} 筆: create_time 格式必須為 YYYY-MM-DD hh:mm:ss`;
-    }
-  }
-
-  // update_time: YYYY-MM-DD hh:mm:ss（可選，若提供需符合格式）
-  if (typeof data.update_time !== 'undefined') {
-    if (
-      typeof data.update_time !== 'string' ||
-      (data.update_time !== '' && !DATETIME_REGEX.test(data.update_time))
-    ) {
-      return `第 ${index + 1} 筆: update_time 格式必須為 YYYY-MM-DD hh:mm:ss`;
-    }
+  // 使用 Zod safeParse 驗證所有欄位（包含可選的時間欄位）
+  const result = SubscriptionInputWithOptionalTimesSchema.safeParse(item);
+  if (!result.success) {
+    const firstIssue = result.error.issues[0];
+    const fieldName = firstIssue.path.join('.');
+    return `第 ${index + 1} 筆: ${fieldName} ${firstIssue.message}`;
   }
 
   return null;
@@ -447,297 +510,226 @@ function validateSubscriptionData(data: unknown[]): string | null {
 // ============================================================
 
 /**
- * LiteLLM /spend/logs/v2 分頁回應 Schema
+ * 從模型名稱解析 Provider
+ * 例如 "gemini/gemini-2.5-pro" -> "gemini"
+ * @param modelName 模型名稱
+ * @returns Provider 名稱
  */
-const LiteLLMSpendLogsV2ResponseSchema = z.object({
-  data: LiteLLMSpendLogListSchema,
-  total: z.number(),
-  page: z.number(),
-  page_size: z.number(),
-  total_pages: z.number(),
-});
+function getProviderFromModelName(modelName: string): string {
+  const parts = modelName.split('/');
+  if (parts.length > 1) {
+    return parts[0];
+  }
+  return modelName || 'unknown';
+}
 
 /**
- * 從 LiteLLM API 獲取花費日誌（使用 v2 分頁 API）
+ * 從 LiteLLM API 獲取每日活動統計（使用 /user/daily/activity/aggregated API）
  *
- * 注意：/spend/logs 已棄用，改用 /spend/logs/v2
+ * 業務背景：此 API 直接返回聚合好的每日統計數據，
+ * 由 LiteLLM DB 層完成聚合計算，減少後端計算負擔。
  *
- * @param startDate 開始日期
- * @param endDate 結束日期
- * @returns 花費日誌列表
+ * @param startDate 開始日期 (YYYY-MM-DD)
+ * @param endDate 結束日期 (YYYY-MM-DD)
+ * @returns LiteLLM 每日活動統計回應
  */
-async function fetchLiteLLMSpendLogs(
+async function fetchLiteLLMDailyActivity(
   startDate: string,
   endDate: string,
-): Promise<LiteLLMSpendLog[]> {
+): Promise<LiteLLMDailyActivityResponse | null> {
   const apiUrl = getLiteLLMApiUrl();
   const apiKey = getLiteLLMApiKey();
 
   if (!apiUrl || !apiKey) {
     console.warn('⚠️ LiteLLM API 未配置，返回空數據');
-    return [];
+    return null;
   }
 
-  const allLogs: LiteLLMSpendLog[] = [];
-  const pageSize = 100; // 最大值
-  let currentPage = 1;
-  let totalPages = 1;
-
   try {
-    // 分頁獲取所有數據
-    do {
-      const response = await axios.get(`${apiUrl}/spend/logs/v2`, {
+    const response = await axios.get(
+      `${apiUrl}/user/daily/activity/aggregated`,
+      {
         headers: {
           Authorization: `Bearer ${apiKey}`,
         },
         params: {
           start_date: startDate,
           end_date: endDate,
-          page: currentPage,
-          page_size: pageSize,
         },
         timeout: 30000,
-      });
+      },
+    );
 
-      // 使用 Zod 驗證 API 回應
-      const result = LiteLLMSpendLogsV2ResponseSchema.safeParse(response.data);
-      if (result.success) {
-        allLogs.push(...result.data.data);
-        totalPages = result.data.total_pages;
-        currentPage++;
-      } else {
-        console.warn(
-          `⚠️ LiteLLM API 回應格式異常 (頁 ${currentPage}):`,
-          result.error.message,
-        );
-        break;
-      }
-    } while (currentPage <= totalPages);
+    // 使用 Zod 驗證 API 回應
+    const result = LiteLLMDailyActivityResponseSchema.safeParse(response.data);
+    if (result.success) {
+      console.log(
+        `📊 LiteLLM: 獲取 ${result.data.results.length} 天的活動統計`,
+      );
+      return result.data;
+    }
 
-    console.log(`📊 LiteLLM: 共獲取 ${allLogs.length} 條花費日誌`);
-    return allLogs;
+    // 詳細記錄驗證失敗的原因
+    console.warn('⚠️ LiteLLM API 回應格式異常:');
+    console.warn('  錯誤詳情:', JSON.stringify(result.error.issues, null, 2));
+    console.warn(
+      '  實際回應:',
+      JSON.stringify(response.data, null, 2).slice(0, 1000),
+    );
+    return null;
   } catch (error) {
     console.error(
-      '❌ 獲取 LiteLLM 花費日誌失敗:',
+      '❌ 獲取 LiteLLM 每日活動統計失敗:',
       error instanceof Error ? error.message : String(error),
     );
-    return [];
+    return null;
   }
 }
 
 /**
- * 取得 Provider 名稱
- * 優先使用 LiteLLM 回傳的 custom_llm_provider，若為空則使用模型名稱
- * @param log LiteLLM 花費日誌
- * @returns Provider 名稱
+ * 將 LiteLLM Daily Activity API 回應轉換為儀表板統計數據格式
+ *
+ * 業務背景：LiteLLM API 返回的數據結構與前端期望的格式不同，
+ * 此函數負責進行格式轉換，保持前端組件的相容性。
+ *
+ * 資料來源：
+ * - Provider 統計：直接從 breakdown.providers 取得（API 已聚合好）
+ * - Model 統計：從 breakdown.models 取得，並根據 provider 分組
+ * - 每日統計：從 breakdown.providers 取得 provider breakdown
+ *
+ * @param activityData LiteLLM 每日活動統計回應
+ * @returns 轉換後的統計數據
  */
-function getProvider(log: LiteLLMSpendLog): string {
-  // 優先使用 LiteLLM 提供的 provider
-  if (log.custom_llm_provider) {
-    return log.custom_llm_provider;
-  }
-
-  // fallback：從模型名稱取第一段作為 provider
-  // 例如 "openai/gpt-4" -> "openai"
-  const parts = log.model.split('/');
-  if (parts.length > 1) {
-    return parts[0];
-  }
-
-  return log.model || 'Unknown';
-}
-
-/**
- * 處理 LiteLLM 花費日誌，生成統計數據
- * @param spendLogs LiteLLM 花費日誌
- * @returns 處理後的統計數據
- */
-function processSpendLogs(spendLogs: LiteLLMSpendLog[]): {
+function transformDailyActivityToResponse(
+  activityData: LiteLLMDailyActivityResponse,
+): {
   kpiMetrics: KpiMetrics;
   providerStats: ProviderUsageStats[];
+  apiKeyStats: ApiKeyUsageStats[];
   dailyUsageStats: DailyUsageStats[];
   tokenUsageTrend: TokenUsageTrend[];
 } {
-  // 初始化 KPI 指標
+  const { results, metadata } = activityData;
+
+  // 從 metadata 建立 KPI 指標
   const kpiMetrics: KpiMetrics = {
-    totalRequests: 0,
-    successfulRequests: 0,
-    failedRequests: 0,
-    totalTokens: 0,
-    totalInputTokens: 0,
-    totalOutputTokens: 0,
-    totalSpendUsd: 0,
-    totalSpendTwd: 0,
-    avgTokensPerRequest: 0,
-    avgCostPerRequest: 0,
+    totalRequests: metadata.total_api_requests,
+    successfulRequests: metadata.total_successful_requests,
+    failedRequests: metadata.total_failed_requests,
+    totalTokens: metadata.total_tokens,
+    totalInputTokens: metadata.total_prompt_tokens,
+    totalOutputTokens: metadata.total_completion_tokens,
+    totalSpendUsd: metadata.total_spend,
+    totalSpendTwd: metadata.total_spend * EXCHANGE_RATE,
+    avgTokensPerRequest:
+      metadata.total_successful_requests > 0
+        ? Math.round(metadata.total_tokens / metadata.total_successful_requests)
+        : 0,
+    avgCostPerRequest:
+      metadata.total_successful_requests > 0
+        ? metadata.total_spend / metadata.total_successful_requests
+        : 0,
   };
 
-  // Provider 統計 Map
+  // 從 breakdown.providers 聚合 Provider 統計（API 已提供聚合數據）
   const providerMap = new Map<
     string,
     {
       requests: number;
       successfulRequests: number;
       failedRequests: number;
+      inputTokens: number;
+      outputTokens: number;
       totalTokens: number;
       totalCostUsd: number;
       models: Map<string, ModelUsageStats>;
     }
   >();
 
-  // 每日統計 Map
-  const dailyMap = new Map<
-    string,
-    {
-      totalRequests: number;
-      successfulRequests: number;
-      failedRequests: number;
-      totalTokens: number;
-      totalCostUsd: number;
-      providerBreakdown: Record<
-        string,
-        { requests: number; tokens: number; costUsd: number }
-      >;
-    }
-  >();
+  // 第一輪：從 breakdown.providers 取得 provider 級別統計
+  for (const dayResult of results) {
+    const providersBreakdown = dayResult.breakdown.providers || {};
 
-  // Token 趨勢 Map
-  const tokenTrendMap = new Map<
-    string,
-    { inputTokens: number; outputTokens: number; totalTokens: number }
-  >();
+    for (const [providerName, providerItem] of Object.entries(
+      providersBreakdown,
+    )) {
+      const providerMetrics = providerItem.metrics;
 
-  // 處理每條日誌
-  for (const log of spendLogs) {
-    const provider = getProvider(log);
-    const date = log.startTime.split('T')[0];
-    // 判斷請求是否成功：
-    // - 優先使用 status 欄位（LiteLLM 1.63.0+ 支援）
-    // - 若 status 未定義（舊版 LiteLLM），fallback 到 total_tokens > 0
-    const isSuccess =
-      log.status === 'success' ||
-      (log.status === undefined && log.total_tokens > 0);
-
-    // 更新 KPI 指標
-    kpiMetrics.totalRequests++;
-    if (isSuccess) {
-      kpiMetrics.successfulRequests++;
-      kpiMetrics.totalTokens += log.total_tokens;
-      kpiMetrics.totalInputTokens += log.prompt_tokens;
-      kpiMetrics.totalOutputTokens += log.completion_tokens;
-    } else {
-      kpiMetrics.failedRequests++;
-    }
-    kpiMetrics.totalSpendUsd += log.spend;
-
-    // 更新 Provider 統計
-    if (!providerMap.has(provider)) {
-      providerMap.set(provider, {
-        requests: 0,
-        successfulRequests: 0,
-        failedRequests: 0,
-        totalTokens: 0,
-        totalCostUsd: 0,
-        models: new Map(),
-      });
-    }
-    const providerData = providerMap.get(provider);
-    if (providerData) {
-      providerData.requests++;
-      if (isSuccess) {
-        providerData.successfulRequests++;
-        providerData.totalTokens += log.total_tokens;
-      } else {
-        providerData.failedRequests++;
-      }
-      providerData.totalCostUsd += log.spend;
-
-      // 更新模型統計
-      if (!providerData.models.has(log.model)) {
-        providerData.models.set(log.model, {
-          modelName: log.model,
-          provider,
+      if (!providerMap.has(providerName)) {
+        providerMap.set(providerName, {
           requests: 0,
-          successRate: 0,
+          successfulRequests: 0,
+          failedRequests: 0,
           inputTokens: 0,
           outputTokens: 0,
           totalTokens: 0,
-          costUsd: 0,
-          costTwd: 0,
-          avgLatency: 0,
+          totalCostUsd: 0,
+          models: new Map(),
         });
       }
-      const modelData = providerData.models.get(log.model);
-      if (modelData) {
-        modelData.requests++;
-        if (isSuccess) {
-          modelData.inputTokens += log.prompt_tokens;
-          modelData.outputTokens += log.completion_tokens;
-          modelData.totalTokens += log.total_tokens;
+
+      const providerData = providerMap.get(providerName);
+      if (providerData) {
+        providerData.requests += providerMetrics.api_requests;
+        providerData.successfulRequests +=
+          providerMetrics.successful_requests ?? 0;
+        providerData.failedRequests += providerMetrics.failed_requests ?? 0;
+        providerData.inputTokens += providerMetrics.prompt_tokens;
+        providerData.outputTokens += providerMetrics.completion_tokens;
+        providerData.totalTokens += providerMetrics.total_tokens;
+        providerData.totalCostUsd += providerMetrics.spend;
+      }
+    }
+  }
+
+  // 第二輪：從 breakdown.models 取得每個 model 的統計，並分組到對應 provider
+  // 注意：只將 model 加入到第一輪已建立的 provider 中，不創建新的 provider
+  for (const dayResult of results) {
+    const modelsBreakdown = dayResult.breakdown.models || {};
+
+    for (const [modelName, modelItem] of Object.entries(modelsBreakdown)) {
+      const modelMetrics = modelItem.metrics;
+      const provider = getProviderFromModelName(modelName);
+
+      // 只處理已存在於 providerMap 中的 provider（由 breakdown.providers 建立）
+      // 跳過無法對應到正確 provider 的 model（避免 "gemini-2.5-pro" 被當作獨立 provider）
+      if (!providerMap.has(provider)) {
+        continue;
+      }
+
+      const providerData = providerMap.get(provider);
+      if (providerData) {
+        // 更新模型統計
+        if (!providerData.models.has(modelName)) {
+          providerData.models.set(modelName, {
+            modelName,
+            provider,
+            requests: 0,
+            successfulRequests: 0,
+            failedRequests: 0,
+            successRate: 0,
+            inputTokens: 0,
+            outputTokens: 0,
+            totalTokens: 0,
+            costUsd: 0,
+            costTwd: 0,
+            avgLatency: 0,
+          });
         }
-        modelData.costUsd += log.spend;
-      }
-    }
 
-    // 更新每日統計
-    if (!dailyMap.has(date)) {
-      dailyMap.set(date, {
-        totalRequests: 0,
-        successfulRequests: 0,
-        failedRequests: 0,
-        totalTokens: 0,
-        totalCostUsd: 0,
-        providerBreakdown: {},
-      });
-    }
-    const dailyData = dailyMap.get(date);
-    if (dailyData) {
-      dailyData.totalRequests++;
-      if (isSuccess) {
-        dailyData.successfulRequests++;
-        dailyData.totalTokens += log.total_tokens;
-      } else {
-        dailyData.failedRequests++;
+        const modelData = providerData.models.get(modelName);
+        if (modelData) {
+          modelData.requests += modelMetrics.api_requests;
+          modelData.successfulRequests += modelMetrics.successful_requests ?? 0;
+          modelData.failedRequests += modelMetrics.failed_requests ?? 0;
+          modelData.inputTokens += modelMetrics.prompt_tokens;
+          modelData.outputTokens += modelMetrics.completion_tokens;
+          modelData.totalTokens += modelMetrics.total_tokens;
+          modelData.costUsd += modelMetrics.spend;
+        }
       }
-      dailyData.totalCostUsd += log.spend;
-
-      if (!dailyData.providerBreakdown[provider]) {
-        dailyData.providerBreakdown[provider] = {
-          requests: 0,
-          tokens: 0,
-          costUsd: 0,
-        };
-      }
-      dailyData.providerBreakdown[provider].requests++;
-      dailyData.providerBreakdown[provider].tokens += log.total_tokens;
-      dailyData.providerBreakdown[provider].costUsd += log.spend;
-    }
-
-    // 更新 Token 趨勢
-    if (!tokenTrendMap.has(date)) {
-      tokenTrendMap.set(date, {
-        inputTokens: 0,
-        outputTokens: 0,
-        totalTokens: 0,
-      });
-    }
-    const tokenData = tokenTrendMap.get(date);
-    if (tokenData) {
-      tokenData.inputTokens += log.prompt_tokens;
-      tokenData.outputTokens += log.completion_tokens;
-      tokenData.totalTokens += log.total_tokens;
     }
   }
-
-  // 計算平均值
-  if (kpiMetrics.successfulRequests > 0) {
-    kpiMetrics.avgTokensPerRequest = Math.round(
-      kpiMetrics.totalTokens / kpiMetrics.successfulRequests,
-    );
-    kpiMetrics.avgCostPerRequest =
-      kpiMetrics.totalSpendUsd / kpiMetrics.successfulRequests;
-  }
-  kpiMetrics.totalSpendTwd = kpiMetrics.totalSpendUsd * EXCHANGE_RATE;
 
   // 轉換 Provider 統計
   const providerStats: ProviderUsageStats[] = Array.from(
@@ -747,10 +739,7 @@ function processSpendLogs(spendLogs: LiteLLMSpendLog[]): {
       ...model,
       successRate:
         model.requests > 0
-          ? ((model.requests -
-              (data.failedRequests / data.requests) * model.requests) /
-              model.requests) *
-            100
+          ? (model.successfulRequests / model.requests) * 100
           : 0,
       costTwd: model.costUsd * EXCHANGE_RATE,
     }));
@@ -767,33 +756,151 @@ function processSpendLogs(spendLogs: LiteLLMSpendLog[]): {
     };
   });
 
-  // 轉換每日統計並排序
-  const dailyUsageStats: DailyUsageStats[] = Array.from(dailyMap.entries())
-    .map(([date, data]) => ({
-      date,
-      totalRequests: data.totalRequests,
-      successfulRequests: data.successfulRequests,
-      failedRequests: data.failedRequests,
-      totalTokens: data.totalTokens,
-      totalCostUsd: data.totalCostUsd,
-      totalCostTwd: data.totalCostUsd * EXCHANGE_RATE,
-      providerBreakdown: data.providerBreakdown,
+  // 建立每日使用統計（直接從 breakdown.providers 取得）
+  const dailyUsageStats: DailyUsageStats[] = results
+    .map((dayResult) => {
+      // 直接從 breakdown.providers 建立 provider breakdown
+      const providerBreakdown: Record<
+        string,
+        {
+          requests: number;
+          successfulRequests: number;
+          failedRequests: number;
+          tokens: number;
+          inputTokens: number;
+          outputTokens: number;
+          costUsd: number;
+        }
+      > = {};
+
+      const providersBreakdown = dayResult.breakdown.providers || {};
+      for (const [providerName, providerItem] of Object.entries(
+        providersBreakdown,
+      )) {
+        const providerMetrics = providerItem.metrics;
+        providerBreakdown[providerName] = {
+          requests: providerMetrics.api_requests,
+          successfulRequests: providerMetrics.successful_requests ?? 0,
+          failedRequests: providerMetrics.failed_requests ?? 0,
+          tokens: providerMetrics.total_tokens,
+          inputTokens: providerMetrics.prompt_tokens,
+          outputTokens: providerMetrics.completion_tokens,
+          costUsd: providerMetrics.spend,
+        };
+      }
+
+      return {
+        date: dayResult.date,
+        totalRequests: dayResult.metrics.api_requests,
+        successfulRequests: dayResult.metrics.successful_requests,
+        failedRequests: dayResult.metrics.failed_requests,
+        totalTokens: dayResult.metrics.total_tokens,
+        totalCostUsd: dayResult.metrics.spend,
+        totalCostTwd: dayResult.metrics.spend * EXCHANGE_RATE,
+        providerBreakdown,
+      };
+    })
+    .sort((a, b) => a.date.localeCompare(b.date));
+
+  // 建立 Token 使用趨勢
+  const tokenUsageTrend: TokenUsageTrend[] = results
+    .map((dayResult) => ({
+      date: dayResult.date,
+      inputTokens: dayResult.metrics.prompt_tokens,
+      outputTokens: dayResult.metrics.completion_tokens,
+      totalTokens: dayResult.metrics.total_tokens,
     }))
     .sort((a, b) => a.date.localeCompare(b.date));
 
-  // 轉換 Token 趨勢並排序
-  const tokenUsageTrend: TokenUsageTrend[] = Array.from(tokenTrendMap.entries())
-    .map(([date, data]) => ({
-      date,
-      ...data,
+  // 從 breakdown.api_keys 聚合 API 金鑰統計
+  const apiKeyMap = new Map<
+    string,
+    {
+      alias: string;
+      requests: number;
+      costUsd: number;
+    }
+  >();
+
+  for (const dayResult of results) {
+    const apiKeysBreakdown = dayResult.breakdown.api_keys || {};
+
+    for (const [keyIdentifier, keyItem] of Object.entries(apiKeysBreakdown)) {
+      const keyMetrics = keyItem.metrics;
+      // 從 metadata 中提取 key_alias（如果有的話）
+      const keyAlias =
+        (keyItem.metadata?.key_alias as string) ||
+        (keyItem.metadata?.alias as string) ||
+        keyIdentifier;
+
+      if (!apiKeyMap.has(keyIdentifier)) {
+        apiKeyMap.set(keyIdentifier, {
+          alias: keyAlias,
+          requests: 0,
+          costUsd: 0,
+        });
+      }
+
+      const keyData = apiKeyMap.get(keyIdentifier);
+      if (keyData) {
+        keyData.requests += keyMetrics.api_requests;
+        keyData.costUsd += keyMetrics.spend;
+        // 更新 alias（以最新的為準）
+        if (keyAlias !== keyIdentifier) {
+          keyData.alias = keyAlias;
+        }
+      }
+    }
+  }
+
+  // 轉換 API 金鑰統計並按費用降序排序
+  const apiKeyStats: ApiKeyUsageStats[] = Array.from(apiKeyMap.entries())
+    .map(([keyIdentifier, data]) => ({
+      keyId: keyIdentifier,
+      keyAlias: data.alias,
+      requests: data.requests,
+      costUsd: data.costUsd,
+      costTwd: data.costUsd * EXCHANGE_RATE,
     }))
-    .sort((a, b) => a.date.localeCompare(b.date));
+    .sort((a, b) => b.costTwd - a.costTwd);
 
   return {
     kpiMetrics,
     providerStats,
+    apiKeyStats,
     dailyUsageStats,
     tokenUsageTrend,
+  };
+}
+
+/**
+ * 建立空的統計數據（當 LiteLLM API 未配置或返回錯誤時使用）
+ * @returns 空的統計數據
+ */
+function createEmptyStats(): {
+  kpiMetrics: KpiMetrics;
+  providerStats: ProviderUsageStats[];
+  apiKeyStats: ApiKeyUsageStats[];
+  dailyUsageStats: DailyUsageStats[];
+  tokenUsageTrend: TokenUsageTrend[];
+} {
+  return {
+    kpiMetrics: {
+      totalRequests: 0,
+      successfulRequests: 0,
+      failedRequests: 0,
+      totalTokens: 0,
+      totalInputTokens: 0,
+      totalOutputTokens: 0,
+      totalSpendUsd: 0,
+      totalSpendTwd: 0,
+      avgTokensPerRequest: 0,
+      avgCostPerRequest: 0,
+    },
+    providerStats: [],
+    apiKeyStats: [],
+    dailyUsageStats: [],
+    tokenUsageTrend: [],
   };
 }
 
@@ -895,7 +1002,7 @@ function parseDateRangeParams(query: {
  *
  * 預算上限（budgetTotal）的計算方式：
  * 1. 優先使用環境變數 GATEWAY_BUDGET_LIMIT（若有設定）
- * 2. 若未設定，fallback 到訂閱總額 × 1.2
+ * 2. 若未設定，fallback 到訂閱總額 × 1.2（TODO: 未來會移除此 fallback）
  *
  * @param subscriptions 訂閱服務
  * @param kpiMetrics KPI 指標
@@ -912,6 +1019,7 @@ function calculateBudget(
   const usageCost = kpiMetrics.totalSpendTwd;
 
   // 預算上限：優先使用環境變數，否則使用訂閱總額 × 1.2
+  // TODO: 移除 subscriptionTotal * 1.2 的 fallback 邏輯，改為強制要求設定 GATEWAY_BUDGET_LIMIT 環境變數
   const envBudgetLimit = getGatewayBudgetLimit();
   const budgetTotal =
     envBudgetLimit !== null
@@ -999,20 +1107,28 @@ function handleUpdateSubscription(
     }
 
     // ai_name 重複時視為更新，以最後一次出現為準
-    const requestDataByAiName = new Map<string, Record<string, unknown>>();
+    // 使用 Zod parse 確保類型安全，避免 as 斷言
+    const requestDataByAiName = new Map<string, SubscriptionInput>();
     const requestAiNameOrder: string[] = [];
     for (const item of requestBody) {
-      const data = item as Record<string, unknown>;
-      const aiName = data.ai_name as string;
-      if (!requestDataByAiName.has(aiName)) {
-        requestAiNameOrder.push(aiName);
+      // validateSubscriptionData 已驗證過，這裡可安全使用 parse
+      const data = SubscriptionInputSchema.parse(item);
+      if (!requestDataByAiName.has(data.ai_name)) {
+        requestAiNameOrder.push(data.ai_name);
       }
-      requestDataByAiName.set(aiName, data);
+      requestDataByAiName.set(data.ai_name, data);
     }
 
-    const normalizedRequestData = requestAiNameOrder.map(
-      (aiName) => requestDataByAiName.get(aiName) as Record<string, unknown>,
-    );
+    // 使用非空斷言函數取代 as 斷言
+    const getValidatedData = (aiName: string): SubscriptionInput => {
+      const data = requestDataByAiName.get(aiName);
+      if (!data) {
+        throw new Error(`內部錯誤：找不到 ai_name=${aiName} 的資料`);
+      }
+      return data;
+    };
+
+    const normalizedRequestData = requestAiNameOrder.map(getValidatedData);
 
     const now = getNowDatetimeString();
     const hasExistingUpdateTime = existingData.some((item) => {
@@ -1035,17 +1151,16 @@ function handleUpdateSubscription(
 
     const updatedData: BasicSubscription[] = normalizedRequestData.map(
       (data) => {
-        const aiName = typeof data.ai_name === 'string' ? data.ai_name : '';
         const createTime = !hasExistingUpdateTime
           ? now
-          : (createTimeByAiName.get(aiName) ?? now);
+          : (createTimeByAiName.get(data.ai_name) ?? now);
 
         return {
-          ai_name: data.ai_name as string,
-          price: data.price as number,
-          duration: data.duration as number,
-          subscribe_time: data.subscribe_time as string,
-          currency_code: data.currency_code as string,
+          ai_name: data.ai_name,
+          price: data.price,
+          duration: data.duration,
+          subscribe_time: data.subscribe_time,
+          currency_code: data.currency_code,
           create_time: createTime,
           update_time: now,
         };
@@ -1101,11 +1216,18 @@ async function handleGetDashboard(
         typeof req.query.endDate === 'string' ? req.query.endDate : undefined,
     };
 
+    console.log('📊 收到的查詢參數:', {
+      rawDays: req.query.days,
+      rawStartDate: req.query.startDate,
+      rawEndDate: req.query.endDate,
+      parsedParams: queryParams,
+    });
+
     const { startDateStr, endDateStr, actualDays } =
       parseDateRangeParams(queryParams);
 
     console.log(
-      `📊 獲取 AI Gateway 儀表板數據: ${startDateStr} 至 ${endDateStr}`,
+      `📊 獲取 AI Gateway 儀表板數據: ${startDateStr} 至 ${endDateStr} (${actualDays} 天)`,
     );
 
     // 1. 讀取訂閱數據
@@ -1115,16 +1237,28 @@ async function handleGetDashboard(
       subscriptions = convertToSubscriptionsWithTWD(basicSubscriptions);
     }
 
-    // 2. 從 LiteLLM 獲取花費日誌
-    const spendLogs = await fetchLiteLLMSpendLogs(startDateStr, endDateStr);
+    // 2. 從 LiteLLM 獲取每日活動統計
+    const activityData = await fetchLiteLLMDailyActivity(
+      startDateStr,
+      endDateStr,
+    );
 
-    // 3. 處理花費日誌生成統計數據
-    const { kpiMetrics, providerStats, dailyUsageStats, tokenUsageTrend } =
-      processSpendLogs(spendLogs);
+    // 3. 轉換為儀表板統計數據格式
+    const {
+      kpiMetrics,
+      providerStats,
+      apiKeyStats,
+      dailyUsageStats,
+      tokenUsageTrend,
+    } = activityData
+      ? transformDailyActivityToResponse(activityData)
+      : createEmptyStats();
 
-    // 4. 如果有 provider 過濾，過濾數據
+    // 4. 如果有 provider 過濾，過濾數據並重新計算 KPI
     let filteredProviderStats = providerStats;
     let filteredDailyUsageStats = dailyUsageStats;
+    let filteredKpiMetrics = kpiMetrics;
+
     if (providerFilter && providerFilter !== 'all') {
       filteredProviderStats = providerStats.filter(
         (p) => p.provider.toLowerCase() === providerFilter.toLowerCase(),
@@ -1138,6 +1272,59 @@ async function handleGetDashboard(
           ),
         ),
       }));
+
+      // 從過濾後的 providerStats 重新計算 KPI 指標
+      // 確保 kpiMetrics 與過濾後的數據一致
+      const filteredTotalRequests = filteredProviderStats.reduce(
+        (sum, p) => sum + p.totalRequests,
+        0,
+      );
+      const filteredSuccessfulRequests = filteredProviderStats.reduce(
+        (sum, p) => sum + p.successfulRequests,
+        0,
+      );
+      const filteredFailedRequests = filteredProviderStats.reduce(
+        (sum, p) => sum + p.failedRequests,
+        0,
+      );
+      const filteredTotalTokens = filteredProviderStats.reduce(
+        (sum, p) => sum + p.totalTokens,
+        0,
+      );
+      const filteredTotalSpendUsd = filteredProviderStats.reduce(
+        (sum, p) => sum + p.totalCostUsd,
+        0,
+      );
+
+      // 從過濾後的 models 計算 input/output tokens
+      const filteredTotalInputTokens = filteredProviderStats.reduce(
+        (sum, p) => sum + p.models.reduce((mSum, m) => mSum + m.inputTokens, 0),
+        0,
+      );
+      const filteredTotalOutputTokens = filteredProviderStats.reduce(
+        (sum, p) =>
+          sum + p.models.reduce((mSum, m) => mSum + m.outputTokens, 0),
+        0,
+      );
+
+      filteredKpiMetrics = {
+        totalRequests: filteredTotalRequests,
+        successfulRequests: filteredSuccessfulRequests,
+        failedRequests: filteredFailedRequests,
+        totalTokens: filteredTotalTokens,
+        totalInputTokens: filteredTotalInputTokens,
+        totalOutputTokens: filteredTotalOutputTokens,
+        totalSpendUsd: filteredTotalSpendUsd,
+        totalSpendTwd: filteredTotalSpendUsd * EXCHANGE_RATE,
+        avgTokensPerRequest:
+          filteredSuccessfulRequests > 0
+            ? Math.round(filteredTotalTokens / filteredSuccessfulRequests)
+            : 0,
+        avgCostPerRequest:
+          filteredSuccessfulRequests > 0
+            ? filteredTotalSpendUsd / filteredSuccessfulRequests
+            : 0,
+      };
     }
 
     // 5. 生成每日成本詳細數據
@@ -1147,15 +1334,16 @@ async function handleGetDashboard(
       actualDays,
     );
 
-    // 6. 計算預算信息
-    const budget = calculateBudget(subscriptions, kpiMetrics);
+    // 6. 計算預算信息（使用過濾後的 KPI 指標）
+    const budget = calculateBudget(subscriptions, filteredKpiMetrics);
 
-    // 7. 組裝回應
+    // 7. 組裝回應（使用過濾後的數據確保一致性）
     const response: DashboardDataResponse = {
       subscriptions,
       budget,
-      kpiMetrics,
+      kpiMetrics: filteredKpiMetrics,
       providerStats: filteredProviderStats,
+      apiKeyStats,
       dailyUsageStats: filteredDailyUsageStats,
       tokenUsageTrend,
       dailyCostDetailed,
@@ -1170,7 +1358,7 @@ async function handleGetDashboard(
     };
 
     console.log(
-      `✅ 儀表板數據生成完成: ${spendLogs.length} 條日誌, ${filteredProviderStats.length} 個 providers`,
+      `✅ 儀表板數據生成完成: ${filteredDailyUsageStats.length} 天數據, ${filteredProviderStats.length} 個 providers`,
     );
     res.json(response);
   } catch (error) {
