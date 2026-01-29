@@ -224,7 +224,6 @@ export type DashboardQueryParams = {
   days?: number;
   startDate?: string;
   endDate?: string;
-  provider?: string;
 };
 
 // ===== API 函數 =====

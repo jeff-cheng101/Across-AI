@@ -1203,9 +1203,6 @@ async function handleGetDashboard(
 ): Promise<void> {
   try {
     // 解析查詢參數（使用類型守衛確保類型安全）
-    const providerFilter =
-      typeof req.query.provider === 'string' ? req.query.provider : undefined;
-
     const queryParams = {
       days: typeof req.query.days === 'string' ? req.query.days : undefined,
       startDate:
@@ -1254,97 +1251,24 @@ async function handleGetDashboard(
       ? transformDailyActivityToResponse(activityData)
       : createEmptyStats();
 
-    // 4. 如果有 provider 過濾，過濾數據並重新計算 KPI
-    let filteredProviderStats = providerStats;
-    let filteredDailyUsageStats = dailyUsageStats;
-    let filteredKpiMetrics = kpiMetrics;
-
-    if (providerFilter && providerFilter !== 'all') {
-      filteredProviderStats = providerStats.filter(
-        (p) => p.provider.toLowerCase() === providerFilter.toLowerCase(),
-      );
-      filteredDailyUsageStats = dailyUsageStats.map((d) => ({
-        ...d,
-        providerBreakdown: Object.fromEntries(
-          Object.entries(d.providerBreakdown).filter(
-            ([provider]) =>
-              provider.toLowerCase() === providerFilter.toLowerCase(),
-          ),
-        ),
-      }));
-
-      // 從過濾後的 providerStats 重新計算 KPI 指標
-      // 確保 kpiMetrics 與過濾後的數據一致
-      const filteredTotalRequests = filteredProviderStats.reduce(
-        (sum, p) => sum + p.totalRequests,
-        0,
-      );
-      const filteredSuccessfulRequests = filteredProviderStats.reduce(
-        (sum, p) => sum + p.successfulRequests,
-        0,
-      );
-      const filteredFailedRequests = filteredProviderStats.reduce(
-        (sum, p) => sum + p.failedRequests,
-        0,
-      );
-      const filteredTotalTokens = filteredProviderStats.reduce(
-        (sum, p) => sum + p.totalTokens,
-        0,
-      );
-      const filteredTotalSpendUsd = filteredProviderStats.reduce(
-        (sum, p) => sum + p.totalCostUsd,
-        0,
-      );
-
-      // 從過濾後的 models 計算 input/output tokens
-      const filteredTotalInputTokens = filteredProviderStats.reduce(
-        (sum, p) => sum + p.models.reduce((mSum, m) => mSum + m.inputTokens, 0),
-        0,
-      );
-      const filteredTotalOutputTokens = filteredProviderStats.reduce(
-        (sum, p) =>
-          sum + p.models.reduce((mSum, m) => mSum + m.outputTokens, 0),
-        0,
-      );
-
-      filteredKpiMetrics = {
-        totalRequests: filteredTotalRequests,
-        successfulRequests: filteredSuccessfulRequests,
-        failedRequests: filteredFailedRequests,
-        totalTokens: filteredTotalTokens,
-        totalInputTokens: filteredTotalInputTokens,
-        totalOutputTokens: filteredTotalOutputTokens,
-        totalSpendUsd: filteredTotalSpendUsd,
-        totalSpendTwd: filteredTotalSpendUsd * EXCHANGE_RATE,
-        avgTokensPerRequest:
-          filteredSuccessfulRequests > 0
-            ? Math.round(filteredTotalTokens / filteredSuccessfulRequests)
-            : 0,
-        avgCostPerRequest:
-          filteredSuccessfulRequests > 0
-            ? filteredTotalSpendUsd / filteredSuccessfulRequests
-            : 0,
-      };
-    }
-
-    // 5. 生成每日成本詳細數據
+    // 4. 生成每日成本詳細數據
     const dailyCostDetailed = generateDailyCostDetailed(
       subscriptions,
-      filteredDailyUsageStats,
+      dailyUsageStats,
       actualDays,
     );
 
-    // 6. 計算預算信息（使用過濾後的 KPI 指標）
-    const budget = calculateBudget(subscriptions, filteredKpiMetrics);
+    // 5. 計算預算信息
+    const budget = calculateBudget(subscriptions, kpiMetrics);
 
-    // 7. 組裝回應（使用過濾後的數據確保一致性）
+    // 6. 組裝回應
     const response: DashboardDataResponse = {
       subscriptions,
       budget,
-      kpiMetrics: filteredKpiMetrics,
-      providerStats: filteredProviderStats,
+      kpiMetrics,
+      providerStats,
       apiKeyStats,
-      dailyUsageStats: filteredDailyUsageStats,
+      dailyUsageStats,
       tokenUsageTrend,
       dailyCostDetailed,
       metadata: {
@@ -1358,7 +1282,7 @@ async function handleGetDashboard(
     };
 
     console.log(
-      `✅ 儀表板數據生成完成: ${filteredDailyUsageStats.length} 天數據, ${filteredProviderStats.length} 個 providers`,
+      `✅ 儀表板數據生成完成: ${dailyUsageStats.length} 天數據, ${providerStats.length} 個 providers`,
     );
     res.json(response);
   } catch (error) {
