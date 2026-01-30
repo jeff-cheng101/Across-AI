@@ -56,9 +56,15 @@ export function TotalCostCard({
       const dateObj = new Date(item.date);
       const formattedDate = `${dateObj.getMonth() + 1}/${dateObj.getDate()}`;
 
-      // 如果選擇了特定 provider，過濾數據
+      // 判斷是否為 API 用量費用（model 包含「用量」字樣）
+      const isUsageCost = item.model.includes('用量');
+
+      // 如果選擇了特定 provider，只顯示該 provider 的 API 用量費用
+      // 排除訂閱費用，避免例如 "Gemini Advanced" 訂閱費被誤顯示在 gemini API 統計中
       if (selectedProvider !== 'all') {
+        // 必須是 API 用量費用且 provider 匹配
         if (
+          !isUsageCost ||
           !item.provider.toLowerCase().includes(selectedProvider.toLowerCase())
         ) {
           continue;
