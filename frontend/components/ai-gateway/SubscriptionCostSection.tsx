@@ -414,7 +414,9 @@ export function SubscriptionCostSection({
                       <span className="text-slate-400 text-xs sm:text-sm w-12 sm:w-16 text-right">
                         {displayTotalCost > 0
                           ? ((item.value / displayTotalCost) * 100).toFixed(1)
-                          : '0.0'}
+                          : chartData.length > 0
+                            ? (100 / chartData.length).toFixed(1)
+                            : '0.0'}
                         %
                       </span>
                     </div>

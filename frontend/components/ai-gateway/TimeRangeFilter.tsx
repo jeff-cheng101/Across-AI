@@ -26,10 +26,26 @@ type TimeRangeFilterProps = {
 };
 
 /**
+ * 比較兩個日期範圍是否相同
+ */
+function isSameDateRange(a: DateRange | undefined, b: DateRangeState): boolean {
+  if (!a?.from || !a?.to) return false;
+  if (!b.from || !b.to) return false;
+  return (
+    a.from.getTime() === b.from.getTime() && a.to.getTime() === b.to.getTime()
+  );
+}
+
+/**
  * 時間範圍篩選器組件
  *
  * 提供快速選擇（1/7/30 天）和自訂日期範圍功能
  * 用於控制儀表板數據的時間範圍
+ *
+ * 狀態分離設計：
+ * - pickerRange: datepicker 內部選擇狀態（不影響 data fetch）
+ * - dateRange (props): 實際用於 data fetch 的狀態
+ * - 只有選擇完成且日期不同時，才更新 dateRange
  */
 export function TimeRangeFilter({
   timeRange,
@@ -37,56 +53,74 @@ export function TimeRangeFilter({
   onTimeRangeChange,
   onDateRangeChange,
 }: TimeRangeFilterProps) {
-  // 內部狀態：用於追蹤選擇過程中的日期範圍
-  const [internalDateRange, setInternalDateRange] = useState<DateRangeState>({
-    from: dateRange.from,
-    to: dateRange.to,
-  });
+  // Datepicker 內部狀態：僅用於 UI 選擇過程，不影響 data fetch
+  const [pickerRange, setPickerRange] = useState<DateRange | undefined>(
+    undefined,
+  );
   const [isOpen, setIsOpen] = useState(false);
-  // 追蹤選擇步驟：0 = 未選擇，1 = 已選開始日期，2 = 已選結束日期
-  const [selectionStep, setSelectionStep] = useState(0);
+  // 追蹤是否已選擇開始日期（用於判斷選擇是否完成）
+  const [hasSelectedFrom, setHasSelectedFrom] = useState(false);
 
   const handlePresetClick = (days: number) => {
     onTimeRangeChange(days);
     onDateRangeChange({ from: undefined, to: undefined });
-    setInternalDateRange({ from: undefined, to: undefined });
-    setSelectionStep(0);
+    setPickerRange(undefined);
+    setHasSelectedFrom(false);
   };
 
   const handleDateSelect = (range: DateRange | undefined) => {
-    const newRange = {
-      from: range?.from,
-      to: range?.to,
-    };
+    if (!hasSelectedFrom) {
+      // 第一次點擊：找出用戶實際點擊的日期作為新的開始日期
+      let newFrom: Date | undefined;
 
-    if (selectionStep === 0) {
-      // 第一次點擊：設定開始日期
-      setInternalDateRange({ from: newRange.from, to: undefined });
-      setSelectionStep(1);
-    } else if (selectionStep === 1) {
-      // 第二次點擊：設定結束日期並完成選擇
-      setInternalDateRange(newRange);
-      setSelectionStep(2);
+      if (!pickerRange?.from || !pickerRange?.to) {
+        // 之前沒有完整範圍
+        newFrom = range?.from || range?.to;
+      } else {
+        // 之前有完整範圍，比較找出變化的日期
+        const fromChanged =
+          range?.from?.getTime() !== pickerRange.from.getTime();
+        const toChanged = range?.to?.getTime() !== pickerRange.to.getTime();
 
-      // 通知父組件並關閉 popover
-      if (newRange.from && newRange.to) {
-        onDateRangeChange(newRange);
-        onTimeRangeChange(0);
-        setIsOpen(false);
+        if (fromChanged && range?.from) {
+          newFrom = range.from;
+        } else if (toChanged && range?.to) {
+          newFrom = range.to;
+        } else {
+          // 點擊了相同的日期或範圍被清空
+          newFrom = range?.from || range?.to;
+        }
       }
+
+      setPickerRange({ from: newFrom, to: undefined });
+      setHasSelectedFrom(true);
+    } else if (range?.from && range?.to) {
+      // 第二次點擊且有完整範圍：更新並關閉
+      setPickerRange(range);
+      if (!isSameDateRange(range, dateRange)) {
+        onDateRangeChange({ from: range.from, to: range.to });
+        onTimeRangeChange(0);
+      }
+      setIsOpen(false);
+      setHasSelectedFrom(false);
+    } else {
+      // 其他情況：正常更新
+      setPickerRange(range);
     }
   };
 
   const handleOpenChange = (open: boolean) => {
-    setIsOpen(open);
-    // 當打開 popover 時，重置選擇步驟
     if (open) {
-      setInternalDateRange({
-        from: dateRange.from,
-        to: dateRange.to,
-      });
-      setSelectionStep(dateRange.from && dateRange.to ? 2 : 0);
+      // 打開時：顯示當前已選擇的日期（如果有），但總是從頭開始選擇流程
+      if (dateRange.from && dateRange.to) {
+        setPickerRange({ from: dateRange.from, to: dateRange.to });
+      } else {
+        setPickerRange(undefined);
+      }
+      // 總是重置選擇狀態，讓用戶重新選擇
+      setHasSelectedFrom(false);
     }
+    setIsOpen(open);
   };
 
   const presetButtonClass = (days: number) =>
@@ -138,30 +172,27 @@ export function TimeRangeFilter({
           align="end"
         >
           <div className="p-3 border-b border-white/10">
-            {selectionStep === 0 ? (
+            {!pickerRange?.from ? (
               <div className="text-sm text-slate-400">選擇開始日期</div>
-            ) : selectionStep === 1 && internalDateRange.from ? (
+            ) : !pickerRange?.to ? (
               <div className="text-sm text-white">
-                {format(internalDateRange.from, 'yyyy/MM/dd', { locale: zhTW })} - 選擇結束日期
-              </div>
-            ) : internalDateRange.from && internalDateRange.to ? (
-              <div className="text-sm text-white">
-                {format(internalDateRange.from, 'yyyy/MM/dd', { locale: zhTW })} -{' '}
-                {format(internalDateRange.to, 'yyyy/MM/dd', { locale: zhTW })}
+                {format(pickerRange.from, 'yyyy/MM/dd', { locale: zhTW })} -
+                選擇結束日期
               </div>
             ) : (
-              <div className="text-sm text-slate-400">選擇日期範圍</div>
+              <div className="text-sm text-white">
+                {format(pickerRange.from, 'yyyy/MM/dd', { locale: zhTW })} -{' '}
+                {format(pickerRange.to, 'yyyy/MM/dd', { locale: zhTW })}
+              </div>
             )}
           </div>
           <Calendar
             mode="range"
-            selected={{
-              from: internalDateRange.from,
-              to: internalDateRange.to,
-            }}
+            selected={pickerRange}
             onSelect={handleDateSelect}
             numberOfMonths={2}
             className="text-white"
+            disabled={{ after: new Date() }}
           />
         </PopoverContent>
       </Popover>
