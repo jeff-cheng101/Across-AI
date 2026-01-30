@@ -587,6 +587,63 @@ async function fetchLiteLLMDailyActivity(
 }
 
 /**
+ * 從 LiteLLM API 獲取模型資訊，建立模型名稱到 Provider 的映射表
+ *
+ * 業務背景：LiteLLM 的 breakdown.models 中，部分模型名稱不包含 provider 前綴
+ * （如 "gpt-oss:20b" 是 ollama、"rerank-multilingual-v3.0" 是 cohere），
+ * 需要透過 /v1/model/info API 取得 custom_llm_provider 來正確映射。
+ *
+ * 資料來源：LiteLLM /v1/model/info API
+ *
+ * @returns 模型名稱到 Provider 的映射表，API 失敗時返回空 Map
+ */
+async function fetchModelProviderMapping(): Promise<Map<string, string>> {
+  const mapping = new Map<string, string>();
+  const apiUrl = getLiteLLMApiUrl();
+  const apiKey = getLiteLLMApiKey();
+
+  if (!apiUrl || !apiKey) {
+    console.warn('⚠️ LiteLLM API 未配置，跳過模型映射');
+    return mapping;
+  }
+
+  try {
+    const response = await axios.get(`${apiUrl}/v1/model/info`, {
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+      },
+      timeout: 15000,
+    });
+
+    // 解析回應數據
+    const data = response.data?.data;
+    if (!Array.isArray(data)) {
+      console.warn('⚠️ /v1/model/info 回應格式異常：data 不是陣列');
+      return mapping;
+    }
+
+    // 建立映射表
+    for (const modelInfo of data) {
+      const modelName = modelInfo?.model_name;
+      const provider = modelInfo?.litellm_params?.custom_llm_provider;
+
+      if (typeof modelName === 'string' && typeof provider === 'string') {
+        mapping.set(modelName, provider);
+      }
+    }
+
+    console.log(`📊 LiteLLM: 建立 ${mapping.size} 個模型的 Provider 映射`);
+    return mapping;
+  } catch (error) {
+    console.error(
+      '❌ 獲取 LiteLLM 模型資訊失敗:',
+      error instanceof Error ? error.message : String(error),
+    );
+    return mapping;
+  }
+}
+
+/**
  * 將 LiteLLM Daily Activity API 回應轉換為儀表板統計數據格式
  *
  * 業務背景：LiteLLM API 返回的數據結構與前端期望的格式不同，
@@ -598,10 +655,12 @@ async function fetchLiteLLMDailyActivity(
  * - 每日統計：從 breakdown.providers 取得 provider breakdown
  *
  * @param activityData LiteLLM 每日活動統計回應
+ * @param modelProviderMapping 模型名稱到 Provider 的映射表（可選，用於解決模型名稱不含 provider 前綴的問題）
  * @returns 轉換後的統計數據
  */
 function transformDailyActivityToResponse(
   activityData: LiteLLMDailyActivityResponse,
+  modelProviderMapping?: Map<string, string>,
 ): {
   kpiMetrics: KpiMetrics;
   providerStats: ProviderUsageStats[];
@@ -689,7 +748,12 @@ function transformDailyActivityToResponse(
 
     for (const [modelName, modelItem] of Object.entries(modelsBreakdown)) {
       const modelMetrics = modelItem.metrics;
-      const provider = getProviderFromModelName(modelName);
+
+      // 優先使用 modelProviderMapping 取得 provider，fallback 到原有邏輯
+      // 這解決了 "gpt-oss:20b" -> "ollama"、"rerank-multilingual-v3.0" -> "cohere" 等映射問題
+      const provider =
+        modelProviderMapping?.get(modelName) ||
+        getProviderFromModelName(modelName);
 
       // 只處理已存在於 providerMap 中的 provider（由 breakdown.providers 建立）
       // 跳過無法對應到正確 provider 的 model（避免 "gemini-2.5-pro" 被當作獨立 provider）
@@ -1234,13 +1298,13 @@ async function handleGetDashboard(
       subscriptions = convertToSubscriptionsWithTWD(basicSubscriptions);
     }
 
-    // 2. 從 LiteLLM 獲取每日活動統計
-    const activityData = await fetchLiteLLMDailyActivity(
-      startDateStr,
-      endDateStr,
-    );
+    // 2. 並行獲取 LiteLLM 資料：每日活動統計 & 模型 Provider 映射
+    const [activityData, modelProviderMapping] = await Promise.all([
+      fetchLiteLLMDailyActivity(startDateStr, endDateStr),
+      fetchModelProviderMapping(),
+    ]);
 
-    // 3. 轉換為儀表板統計數據格式
+    // 3. 轉換為儀表板統計數據格式（傳入模型映射表以正確關聯 models 到 providers）
     const {
       kpiMetrics,
       providerStats,
@@ -1248,7 +1312,7 @@ async function handleGetDashboard(
       dailyUsageStats,
       tokenUsageTrend,
     } = activityData
-      ? transformDailyActivityToResponse(activityData)
+      ? transformDailyActivityToResponse(activityData, modelProviderMapping)
       : createEmptyStats();
 
     // 4. 生成每日成本詳細數據

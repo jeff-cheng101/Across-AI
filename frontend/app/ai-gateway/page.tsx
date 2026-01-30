@@ -435,6 +435,83 @@ export default function AIGatewayPage() {
             />
           </div>
 
+          {/* 模型詳細 Token 數據 - 選擇特定 Provider 時顯示 */}
+          {selectedProvider !== 'all' &&
+            (() => {
+              const providerData = dashboardData?.providerStats?.find(
+                (p) =>
+                  p.provider.toLowerCase() === selectedProvider.toLowerCase(),
+              );
+              const models = providerData?.models ?? [];
+
+              if (models.length === 0) return null;
+
+              return (
+                <Card className="bg-slate-900/40 border-white/10 rounded">
+                  <CardHeader>
+                    <CardTitle className="text-white text-sm">
+                      {selectedProvider} 模型詳細 Token 數據
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-sm">
+                        <thead>
+                          <tr className="border-b border-slate-700">
+                            <th className="text-left text-slate-400 pb-3 pr-4">
+                              模型名稱
+                            </th>
+                            <th className="text-right text-slate-400 pb-3 px-4">
+                              請求數
+                            </th>
+                            <th className="text-right text-slate-400 pb-3 px-4">
+                              Input Tokens
+                            </th>
+                            <th className="text-right text-slate-400 pb-3 px-4">
+                              Output Tokens
+                            </th>
+                            <th className="text-right text-slate-400 pb-3 px-4">
+                              Total Tokens
+                            </th>
+                            <th className="text-right text-slate-400 pb-3 pl-4">
+                              成本 (NT$)
+                            </th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {models.map((model) => (
+                            <tr
+                              key={model.modelName}
+                              className="border-b border-slate-800 hover:bg-slate-800/50 transition-colors"
+                            >
+                              <td className="py-3 pr-4 text-white">
+                                {model.modelName}
+                              </td>
+                              <td className="py-3 px-4 text-right text-slate-300">
+                                {formatNumber(model.requests)}
+                              </td>
+                              <td className="py-3 px-4 text-right text-cyan-400">
+                                {formatNumber(model.inputTokens)}
+                              </td>
+                              <td className="py-3 px-4 text-right text-purple-400">
+                                {formatNumber(model.outputTokens)}
+                              </td>
+                              <td className="py-3 px-4 text-right text-teal-400 font-medium">
+                                {formatNumber(model.totalTokens)}
+                              </td>
+                              <td className="py-3 pl-4 text-right text-orange-400 font-medium">
+                                {formatCurrencyTWD(model.costTwd)}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </CardContent>
+                </Card>
+              );
+            })()}
+
           {/* 空資料狀態 */}
           {!hasData && (
             <Card className="bg-slate-900/40 border-white/10 rounded p-12">
