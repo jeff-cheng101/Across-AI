@@ -302,7 +302,7 @@ type TokenUsageTrend = {
  * API 金鑰使用統計
  *
  * 業務背景：顯示各 API 金鑰的費用排名
- * 數據來源：LiteLLM API 的 breakdown.api_keys
+ * 數據來源：LiteLLM API 的 breakdown.providers[provider].api_key_breakdown
  */
 type ApiKeyUsageStats = {
   keyId: string;
@@ -310,6 +310,7 @@ type ApiKeyUsageStats = {
   requests: number;
   costUsd: number;
   costTwd: number;
+  providers: string[];
 };
 
 /**
@@ -876,42 +877,59 @@ function transformDailyActivityToResponse(
     }))
     .sort((a, b) => a.date.localeCompare(b.date));
 
-  // 從 breakdown.api_keys 聚合 API 金鑰統計
+  // 從 breakdown.providers[providerName].api_key_breakdown 聚合 API 金鑰統計
+  // 追蹤每個金鑰使用的 providers，以支援按 provider 過濾
   const apiKeyMap = new Map<
     string,
     {
       alias: string;
       requests: number;
       costUsd: number;
+      providers: Set<string>;
     }
   >();
 
   for (const dayResult of results) {
-    const apiKeysBreakdown = dayResult.breakdown.api_keys || {};
+    const providersBreakdown = dayResult.breakdown.providers || {};
 
-    for (const [keyIdentifier, keyItem] of Object.entries(apiKeysBreakdown)) {
-      const keyMetrics = keyItem.metrics;
-      // 從 metadata 中提取 key_alias（如果有的話）
-      const keyAlias =
-        (keyItem.metadata?.key_alias as string) ||
-        (keyItem.metadata?.alias as string) ||
-        keyIdentifier;
+    for (const [providerName, providerItem] of Object.entries(
+      providersBreakdown,
+    )) {
+      // 從每個 provider 的 api_key_breakdown 收集金鑰資料
+      const apiKeyBreakdown = (providerItem.api_key_breakdown || {}) as Record<
+        string,
+        {
+          metrics: { api_requests: number; spend: number };
+          metadata?: Record<string, unknown>;
+        }
+      >;
 
-      if (!apiKeyMap.has(keyIdentifier)) {
-        apiKeyMap.set(keyIdentifier, {
-          alias: keyAlias,
-          requests: 0,
-          costUsd: 0,
-        });
-      }
+      for (const [keyIdentifier, keyItem] of Object.entries(apiKeyBreakdown)) {
+        const keyMetrics = keyItem.metrics;
+        // 從 metadata 中提取 key_alias（如果有的話）
+        const keyAlias =
+          (keyItem.metadata?.key_alias as string) ||
+          (keyItem.metadata?.alias as string) ||
+          keyIdentifier;
 
-      const keyData = apiKeyMap.get(keyIdentifier);
-      if (keyData) {
-        keyData.requests += keyMetrics.api_requests;
-        keyData.costUsd += keyMetrics.spend;
-        // 更新 alias（以最新的為準）
-        if (keyAlias !== keyIdentifier) {
-          keyData.alias = keyAlias;
+        if (!apiKeyMap.has(keyIdentifier)) {
+          apiKeyMap.set(keyIdentifier, {
+            alias: keyAlias,
+            requests: 0,
+            costUsd: 0,
+            providers: new Set<string>(),
+          });
+        }
+
+        const keyData = apiKeyMap.get(keyIdentifier);
+        if (keyData) {
+          keyData.requests += keyMetrics.api_requests;
+          keyData.costUsd += keyMetrics.spend;
+          keyData.providers.add(providerName);
+          // 更新 alias（以最新的為準）
+          if (keyAlias !== keyIdentifier) {
+            keyData.alias = keyAlias;
+          }
         }
       }
     }
@@ -925,6 +943,7 @@ function transformDailyActivityToResponse(
       requests: data.requests,
       costUsd: data.costUsd,
       costTwd: data.costUsd * EXCHANGE_RATE,
+      providers: Array.from(data.providers).sort(),
     }))
     .sort((a, b) => b.costTwd - a.costTwd);
 
@@ -1066,7 +1085,7 @@ function parseDateRangeParams(query: {
  *
  * 預算上限（budgetTotal）的計算方式：
  * 1. 優先使用環境變數 GATEWAY_BUDGET_LIMIT（若有設定）
- * 2. 若未設定，fallback 到訂閱總額 × 1.2（TODO: 未來會移除此 fallback）
+ * 2. 若未設定，fallback 到訂閱總額 × 1.2（僅供展示用）
  *
  * @param subscriptions 訂閱服務
  * @param kpiMetrics KPI 指標
@@ -1195,12 +1214,6 @@ function handleUpdateSubscription(
     const normalizedRequestData = requestAiNameOrder.map(getValidatedData);
 
     const now = getNowDatetimeString();
-    const hasExistingUpdateTime = existingData.some((item) => {
-      return (
-        typeof item.update_time === 'string' &&
-        DATETIME_REGEX.test(item.update_time)
-      );
-    });
 
     // 以 ai_name 作為對應鍵，維持舊資料的 create_time
     const createTimeByAiName = new Map<string, string>();
@@ -1215,9 +1228,8 @@ function handleUpdateSubscription(
 
     const updatedData: BasicSubscription[] = normalizedRequestData.map(
       (data) => {
-        const createTime = !hasExistingUpdateTime
-          ? now
-          : (createTimeByAiName.get(data.ai_name) ?? now);
+        // 若現有資料中有該 ai_name 的有效 create_time，則保留原值；否則使用 now
+        const createTime = createTimeByAiName.get(data.ai_name) ?? now;
 
         return {
           ai_name: data.ai_name,

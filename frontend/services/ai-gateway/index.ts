@@ -177,7 +177,7 @@ export type Metadata = z.infer<typeof MetadataSchema>;
  * API 金鑰使用統計 Schema
  *
  * 業務背景：顯示各 API 金鑰的費用排名
- * 數據來源：LiteLLM API 的 breakdown.api_keys
+ * 數據來源：LiteLLM API 的 breakdown.providers[provider].api_key_breakdown
  */
 export const ApiKeyUsageStatsSchema = z.object({
   keyId: z.string(),
@@ -185,6 +185,7 @@ export const ApiKeyUsageStatsSchema = z.object({
   requests: z.number(),
   costUsd: z.number(),
   costTwd: z.number(),
+  providers: z.array(z.string()),
 });
 export type ApiKeyUsageStats = z.infer<typeof ApiKeyUsageStatsSchema>;
 

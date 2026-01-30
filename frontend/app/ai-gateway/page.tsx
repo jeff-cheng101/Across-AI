@@ -419,7 +419,10 @@ export default function AIGatewayPage() {
               providerStats={dashboardData?.providerStats ?? []}
               selectedProvider={selectedProvider}
             />
-            <ApiKeysCostCard apiKeyStats={dashboardData?.apiKeyStats ?? []} />
+            <ApiKeysCostCard
+              apiKeyStats={dashboardData?.apiKeyStats ?? []}
+              selectedProvider={selectedProvider}
+            />
           </div>
 
           {/* Token 使用趨勢 & 每日請求數 */}
