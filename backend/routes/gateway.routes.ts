@@ -989,25 +989,35 @@ function createEmptyStats(): {
 
 /**
  * 生成每日成本詳細數據
+ *
+ * 業務背景：將訂閱費用（平攤每日）與 LiteLLM 使用費用合併，
+ * 生成前端圖表需要的每日成本明細。
+ *
  * @param subscriptions 訂閱服務
  * @param dailyUsageStats 每日使用統計
- * @param days 天數
+ * @param startDateStr 開始日期 (YYYY-MM-DD)
+ * @param endDateStr 結束日期 (YYYY-MM-DD)
  * @returns 每日成本詳細數據
  */
 function generateDailyCostDetailed(
   subscriptions: SubscriptionWithTWD[],
   dailyUsageStats: DailyUsageStats[],
-  days: number,
+  startDateStr: string,
+  endDateStr: string,
 ): DailyCostDetail[] {
   const result: DailyCostDetail[] = [];
-  const today = new Date();
 
-  // 生成過去 N 天的日期列表
+  // 根據實際日期範圍生成日期列表（而非從今天往回算）
   const dates: string[] = [];
-  for (let i = days - 1; i >= 0; i--) {
-    const date = new Date(today);
-    date.setDate(date.getDate() - i);
-    dates.push(date.toISOString().split('T')[0]);
+  const startDate = new Date(startDateStr);
+  const endDate = new Date(endDateStr);
+
+  for (
+    let current = new Date(startDate);
+    current <= endDate;
+    current.setDate(current.getDate() + 1)
+  ) {
+    dates.push(current.toISOString().split('T')[0]);
   }
 
   // 建立每日使用統計的 Map
@@ -1327,11 +1337,12 @@ async function handleGetDashboard(
       ? transformDailyActivityToResponse(activityData, modelProviderMapping)
       : createEmptyStats();
 
-    // 4. 生成每日成本詳細數據
+    // 4. 生成每日成本詳細數據（使用實際日期範圍，確保與 LiteLLM API 查詢一致）
     const dailyCostDetailed = generateDailyCostDetailed(
       subscriptions,
       dailyUsageStats,
-      actualDays,
+      startDateStr,
+      endDateStr,
     );
 
     // 5. 計算預算信息
