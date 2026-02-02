@@ -35,8 +35,11 @@ function getLiteLLMApiKey(): string | null {
   return process.env.LITELLM_API_KEY || null;
 }
 
-// 注意：getExchangeRate() 已移除，匯率現在從 subscription.json 動態讀取
-// 使用 readExchangeRate() 函數取得匯率，支援 runtime 即時更新
+// 匯率讀取邏輯已重構：
+// - 主要來源：subscription.json 的 exchange_rate（支援 runtime 即時更新）
+// - 備用來源：環境變數 EXCHANGE_RATE（需重啟服務才生效）
+// - 預設值：32
+// 使用 readExchangeRate() 函數取得匯率，會依上述優先順序讀取
 
 /**
  * 取得 AI Gateway 預算上限（TWD）
@@ -451,18 +454,50 @@ function writeSubscriptionFileData(data: SubscriptionFileData): void {
 }
 
 /**
+ * 從環境變數讀取匯率（備用來源）
+ *
+ * 業務背景：作為 subscription.json 未設定 exchange_rate 時的備用來源。
+ * 主要用途是在系統初始化或 JSON 檔案未配置時提供匯率。
+ *
+ * @returns 匯率數值，未設定或無效時返回 null
+ */
+function getExchangeRateFromEnv(): number | null {
+  const rate = process.env.EXCHANGE_RATE;
+  if (rate) {
+    const parsed = parseFloat(rate);
+    if (!Number.isNaN(parsed) && parsed > 0) {
+      return parsed;
+    }
+  }
+  return null;
+}
+
+/**
  * 動態讀取匯率（USD 轉 TWD）
  *
  * 業務背景：每次 API 請求時重新讀取 JSON 檔案，實現 runtime 即時更新匯率，
  * 無需重啟服務即可生效。
  *
- * Fallback 策略：若 JSON 未設定 exchange_rate，使用預設值 32。
+ * 優先順序：
+ * 1. subscription.json 的 exchange_rate（支援 runtime 即時更新）
+ * 2. 環境變數 EXCHANGE_RATE（備用，需重啟服務才生效）
+ * 3. 預設值 32
  *
  * @returns 匯率數值
  */
 function readExchangeRate(): number {
   const fileData = readSubscriptionFileData();
-  return fileData.exchange_rate ?? 32;
+  // 優先使用 JSON 中的 exchange_rate
+  if (fileData.exchange_rate !== undefined) {
+    return fileData.exchange_rate;
+  }
+  // 備用：使用環境變數
+  const envRate = getExchangeRateFromEnv();
+  if (envRate !== null) {
+    return envRate;
+  }
+  // 最後：使用預設值
+  return 32;
 }
 
 /**
