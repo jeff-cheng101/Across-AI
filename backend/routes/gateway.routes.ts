@@ -137,6 +137,37 @@ const BreakdownMetricsSchema = z.object({
 });
 
 /**
+ * API Key Breakdown 內每個金鑰的 Metrics Schema
+ *
+ * 業務背景：LiteLLM API 的 api_key_breakdown 內每個金鑰包含 metrics 和 metadata
+ */
+const ApiKeyBreakdownMetricsSchema = z.object({
+  api_requests: z.number(),
+  spend: z.number(),
+});
+
+/**
+ * API Key Breakdown 內每個金鑰的 Metadata Schema
+ *
+ * 業務背景：metadata 可能包含 key_alias 或 alias 欄位，用於顯示金鑰別名
+ * 使用 .passthrough() 允許 LiteLLM 返回的額外欄位通過
+ */
+const ApiKeyBreakdownMetadataSchema = z
+  .object({
+    key_alias: z.string().optional(),
+    alias: z.string().optional(),
+  })
+  .passthrough();
+
+/**
+ * API Key Breakdown 內每個金鑰項目的完整 Schema
+ */
+const ApiKeyBreakdownItemSchema = z.object({
+  metrics: ApiKeyBreakdownMetricsSchema,
+  metadata: ApiKeyBreakdownMetadataSchema.optional(),
+});
+
+/**
  * LiteLLM /user/daily/activity API 的 breakdown 內每個項目的 Schema
  *
  * 業務背景：LiteLLM API 的 breakdown 數據是巢狀結構，
@@ -145,7 +176,9 @@ const BreakdownMetricsSchema = z.object({
 const BreakdownItemSchema = z.object({
   metrics: BreakdownMetricsSchema,
   metadata: z.record(z.string(), z.unknown()).optional(),
-  api_key_breakdown: z.record(z.string(), z.unknown()).optional(),
+  api_key_breakdown: z
+    .record(z.string(), ApiKeyBreakdownItemSchema)
+    .optional(),
 });
 
 /**
@@ -896,20 +929,16 @@ function transformDailyActivityToResponse(
       providersBreakdown,
     )) {
       // 從每個 provider 的 api_key_breakdown 收集金鑰資料
-      const apiKeyBreakdown = (providerItem.api_key_breakdown || {}) as Record<
-        string,
-        {
-          metrics: { api_requests: number; spend: number };
-          metadata?: Record<string, unknown>;
-        }
-      >;
+      // Schema 已在源頭定義完整（ApiKeyBreakdownItemSchema），無需額外驗證
+      const apiKeyBreakdown = providerItem.api_key_breakdown ?? {};
 
       for (const [keyIdentifier, keyItem] of Object.entries(apiKeyBreakdown)) {
         const keyMetrics = keyItem.metrics;
         // 從 metadata 中提取 key_alias（如果有的話）
+        // metadata 已由 ApiKeyBreakdownMetadataSchema 驗證過
         const keyAlias =
-          (keyItem.metadata?.key_alias as string) ||
-          (keyItem.metadata?.alias as string) ||
+          keyItem.metadata?.key_alias ||
+          keyItem.metadata?.alias ||
           keyIdentifier;
 
         if (!apiKeyMap.has(keyIdentifier)) {
