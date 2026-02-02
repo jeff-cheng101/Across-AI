@@ -151,11 +151,14 @@ const ApiKeyBreakdownMetricsSchema = z.object({
  *
  * 業務背景：metadata 可能包含 key_alias 或 alias 欄位，用於顯示金鑰別名
  * 使用 .passthrough() 允許 LiteLLM 返回的額外欄位通過
+ *
+ * 注意：LiteLLM API 可能返回 null（而非 undefined），因此使用 .nullish()
+ * 來接受 string | null | undefined
  */
 const ApiKeyBreakdownMetadataSchema = z
   .object({
-    key_alias: z.string().optional(),
-    alias: z.string().optional(),
+    key_alias: z.string().nullish(),
+    alias: z.string().nullish(),
   })
   .passthrough();
 
