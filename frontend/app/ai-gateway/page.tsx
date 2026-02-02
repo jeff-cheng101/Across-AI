@@ -20,6 +20,7 @@ import {
   type DashboardQueryParams,
   fetchAIGatewayDashboard,
   formatCurrencyTWD,
+  formatCurrencyTWDPrecise,
   formatNumber,
 } from '@/services/ai-gateway';
 
@@ -403,7 +404,7 @@ export default function AIGatewayPage() {
                 <div className="mt-2 pt-2 border-t border-slate-700">
                   <p className="text-xs text-slate-400">平均單次成功請求成本</p>
                   <p className="text-sm text-teal-400 font-medium">
-                    {formatCurrencyTWD(
+                    {formatCurrencyTWDPrecise(
                       kpiMetrics.avgCostPerRequest *
                         (dashboardData?.metadata?.exchangeRate ?? 32),
                     )}

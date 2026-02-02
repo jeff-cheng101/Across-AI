@@ -303,6 +303,14 @@ export function formatCurrencyTWD(amount: number): string {
 }
 
 /**
+ * 格式化貨幣顯示（TWD，精確到小數點後 4 位）
+ * 用於顯示小額費用，避免四捨五入後顯示為 0
+ */
+export function formatCurrencyTWDPrecise(amount: number): string {
+  return `NT$ ${amount.toFixed(4)}`;
+}
+
+/**
  * 格式化金額顯示（緊湊格式，數字最多 4 位）
  *
  * 業務背景：空間有限時避免數字過長導致版面重疊
