@@ -486,10 +486,13 @@ function getExchangeRateFromEnv(): number | null {
  * @returns 匯率數值
  */
 function readExchangeRate(): number {
-  const fileData = readSubscriptionFileData();
-  // 優先使用 JSON 中的 exchange_rate
-  if (fileData.exchange_rate !== undefined) {
-    return fileData.exchange_rate;
+  // 先檢查檔案是否存在，避免 fs.readFileSync 拋出 ENOENT 錯誤
+  if (fs.existsSync(subscriptionFilePath)) {
+    const fileData = readSubscriptionFileData();
+    // 優先使用 JSON 中的 exchange_rate
+    if (fileData.exchange_rate !== undefined) {
+      return fileData.exchange_rate;
+    }
   }
   // 備用：使用環境變數
   const envRate = getExchangeRateFromEnv();
