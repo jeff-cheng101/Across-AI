@@ -35,28 +35,8 @@ function getLiteLLMApiKey(): string | null {
   return process.env.LITELLM_API_KEY || null;
 }
 
-/**
- * 取得匯率（USD 轉 TWD）
- *
- * 目前從環境變數 EXCHANGE_RATE 取得，未設定時使用預設值 32
- *
- * TODO: 未來可能的擴展方式：
- * - 從外部 API 取得即時匯率（如 exchangerate-api.com、frankfurter.app）
- * - 從資料庫取得管理員設定的匯率
- * - 加入快取機制減少 API 呼叫次數
- *
- * @returns 匯率數值
- */
-function getExchangeRate(): number {
-  const rate = process.env.EXCHANGE_RATE;
-  if (rate) {
-    const parsed = parseFloat(rate);
-    if (!Number.isNaN(parsed) && parsed > 0) {
-      return parsed;
-    }
-  }
-  return 32;
-}
+// 注意：getExchangeRate() 已移除，匯率現在從 subscription.json 動態讀取
+// 使用 readExchangeRate() 函數取得匯率，支援 runtime 即時更新
 
 /**
  * 取得 AI Gateway 預算上限（TWD）
@@ -77,7 +57,7 @@ function getGatewayBudgetLimit(): number | null {
   return null;
 }
 
-const EXCHANGE_RATE = getExchangeRate();
+// 注意：匯率已移至 subscription.json，使用 readExchangeRate() 動態讀取
 
 // ============================================================
 // Zod Schema（外部輸入驗證用）
@@ -102,6 +82,18 @@ type BasicSubscription = z.infer<typeof BasicSubscriptionSchema>;
  * 訂閱清單 Schema
  */
 const SubscriptionListSchema = z.array(BasicSubscriptionSchema);
+
+/**
+ * 訂閱檔案完整結構 Schema（新格式）
+ *
+ * 業務背景：為了支援 runtime 即時更新匯率，將 exchange_rate 從環境變數移到 JSON 檔案。
+ * 向後相容：若 JSON 檔案仍為陣列格式，readSubscriptionFileData() 會自動轉換。
+ */
+const SubscriptionFileSchema = z.object({
+  exchange_rate: z.number().positive().optional(),
+  subscriptions: z.array(BasicSubscriptionSchema),
+});
+type SubscriptionFileData = z.infer<typeof SubscriptionFileSchema>;
 
 /**
  * LiteLLM /user/daily/activity API 的 metrics Schema
@@ -402,16 +394,32 @@ const ALLOWED_CURRENCIES = ['USD', 'TWD'] as const;
 // ============================================================
 
 /**
- * 讀取訂閱清單檔案並使用 Zod 驗證
- * @returns 驗證後的訂閱清單
+ * 讀取訂閱檔案完整結構（包含 exchange_rate 和 subscriptions）
+ *
+ * 業務背景：為了支援 runtime 即時更新匯率，將資料結構從純陣列改為物件格式。
+ * 向後相容：若 JSON 檔案仍為陣列格式，自動轉換為新格式。
+ *
+ * @returns 驗證後的訂閱檔案資料
  * @throws 檔案格式錯誤時拋出錯誤
  */
-function readSubscriptionData(): BasicSubscription[] {
+function readSubscriptionFileData(): SubscriptionFileData {
   const rawContent = fs.readFileSync(subscriptionFilePath, 'utf-8');
   const data: unknown = JSON.parse(rawContent);
 
-  // 使用 Zod safeParse 進行驗證
-  const result = SubscriptionListSchema.safeParse(data);
+  // 向後相容：若為陣列格式，自動轉換為新格式
+  if (Array.isArray(data)) {
+    const arrayResult = SubscriptionListSchema.safeParse(data);
+    if (!arrayResult.success) {
+      console.error('❌ subscription.json 驗證失敗:', arrayResult.error.issues);
+      throw new Error(`subscription.json 格式錯誤：${arrayResult.error.message}`);
+    }
+    return {
+      subscriptions: arrayResult.data,
+    };
+  }
+
+  // 新格式：使用 SubscriptionFileSchema 驗證
+  const result = SubscriptionFileSchema.safeParse(data);
 
   if (!result.success) {
     console.error('❌ subscription.json 驗證失敗:', result.error.issues);
@@ -422,25 +430,55 @@ function readSubscriptionData(): BasicSubscription[] {
 }
 
 /**
- * 將訂閱清單寫入檔案
- * @param data 訂閱清單資料
+ * 讀取訂閱清單（僅返回 subscriptions 陣列）
+ *
+ * 業務背景：保持向後相容，供只需要訂閱清單的地方使用。
+ *
+ * @returns 驗證後的訂閱清單
+ * @throws 檔案格式錯誤時拋出錯誤
  */
-function writeSubscriptionData(data: BasicSubscription[]): void {
+function readSubscriptionData(): BasicSubscription[] {
+  return readSubscriptionFileData().subscriptions;
+}
+
+/**
+ * 將訂閱檔案完整結構寫入檔案
+ * @param data 訂閱檔案資料（包含 exchange_rate 和 subscriptions）
+ */
+function writeSubscriptionFileData(data: SubscriptionFileData): void {
   const content = JSON.stringify(data, null, 2);
   fs.writeFileSync(subscriptionFilePath, `${content}\n`, 'utf-8');
 }
 
 /**
+ * 動態讀取匯率（USD 轉 TWD）
+ *
+ * 業務背景：每次 API 請求時重新讀取 JSON 檔案，實現 runtime 即時更新匯率，
+ * 無需重啟服務即可生效。
+ *
+ * Fallback 策略：若 JSON 未設定 exchange_rate，使用預設值 32。
+ *
+ * @returns 匯率數值
+ */
+function readExchangeRate(): number {
+  const fileData = readSubscriptionFileData();
+  return fileData.exchange_rate ?? 32;
+}
+
+/**
  * 將訂閱數據加上 TWD 轉換
+ *
  * @param subscriptions 基礎訂閱數據
+ * @param exchangeRate 匯率（USD 轉 TWD）
  * @returns 含 TWD 價格的訂閱數據
  */
 function convertToSubscriptionsWithTWD(
   subscriptions: BasicSubscription[],
+  exchangeRate: number,
 ): SubscriptionWithTWD[] {
   return subscriptions.map((sub) => ({
     ...sub,
-    priceTWD: sub.price * EXCHANGE_RATE,
+    priceTWD: sub.price * exchangeRate,
   }));
 }
 
@@ -693,11 +731,13 @@ async function fetchModelProviderMapping(): Promise<Map<string, string>> {
  *
  * @param activityData LiteLLM 每日活動統計回應
  * @param modelProviderMapping 模型名稱到 Provider 的映射表（可選，用於解決模型名稱不含 provider 前綴的問題）
+ * @param exchangeRate 匯率（USD 轉 TWD）
  * @returns 轉換後的統計數據
  */
 function transformDailyActivityToResponse(
   activityData: LiteLLMDailyActivityResponse,
-  modelProviderMapping?: Map<string, string>,
+  modelProviderMapping: Map<string, string> | undefined,
+  exchangeRate: number,
 ): {
   kpiMetrics: KpiMetrics;
   providerStats: ProviderUsageStats[];
@@ -716,7 +756,7 @@ function transformDailyActivityToResponse(
     totalInputTokens: metadata.total_prompt_tokens,
     totalOutputTokens: metadata.total_completion_tokens,
     totalSpendUsd: metadata.total_spend,
-    totalSpendTwd: metadata.total_spend * EXCHANGE_RATE,
+    totalSpendTwd: metadata.total_spend * exchangeRate,
     avgTokensPerRequest:
       metadata.total_successful_requests > 0
         ? Math.round(metadata.total_tokens / metadata.total_successful_requests)
@@ -842,7 +882,7 @@ function transformDailyActivityToResponse(
         model.requests > 0
           ? (model.successfulRequests / model.requests) * 100
           : 0,
-      costTwd: model.costUsd * EXCHANGE_RATE,
+      costTwd: model.costUsd * exchangeRate,
     }));
 
     return {
@@ -852,7 +892,7 @@ function transformDailyActivityToResponse(
       failedRequests: data.failedRequests,
       totalTokens: data.totalTokens,
       totalCostUsd: data.totalCostUsd,
-      totalCostTwd: data.totalCostUsd * EXCHANGE_RATE,
+      totalCostTwd: data.totalCostUsd * exchangeRate,
       models,
     };
   });
@@ -897,7 +937,7 @@ function transformDailyActivityToResponse(
         failedRequests: dayResult.metrics.failed_requests,
         totalTokens: dayResult.metrics.total_tokens,
         totalCostUsd: dayResult.metrics.spend,
-        totalCostTwd: dayResult.metrics.spend * EXCHANGE_RATE,
+        totalCostTwd: dayResult.metrics.spend * exchangeRate,
         providerBreakdown,
       };
     })
@@ -974,7 +1014,7 @@ function transformDailyActivityToResponse(
       keyAlias: data.alias,
       requests: data.requests,
       costUsd: data.costUsd,
-      costTwd: data.costUsd * EXCHANGE_RATE,
+      costTwd: data.costUsd * exchangeRate,
       providers: Array.from(data.providers).sort(),
     }))
     .sort((a, b) => b.costTwd - a.costTwd);
@@ -1029,6 +1069,7 @@ function createEmptyStats(): {
  * @param dailyUsageStats 每日使用統計
  * @param startDateStr 開始日期 (YYYY-MM-DD)
  * @param endDateStr 結束日期 (YYYY-MM-DD)
+ * @param exchangeRate 匯率（USD 轉 TWD）
  * @returns 每日成本詳細數據
  */
 function generateDailyCostDetailed(
@@ -1036,6 +1077,7 @@ function generateDailyCostDetailed(
   dailyUsageStats: DailyUsageStats[],
   startDateStr: string,
   endDateStr: string,
+  exchangeRate: number,
 ): DailyCostDetail[] {
   const result: DailyCostDetail[] = [];
 
@@ -1077,7 +1119,7 @@ function generateDailyCostDetailed(
           date,
           provider,
           model: `${provider} 用量`,
-          cost: breakdown.costUsd * EXCHANGE_RATE,
+          cost: breakdown.costUsd * exchangeRate,
         });
       }
     }
@@ -1198,11 +1240,16 @@ function handleGetSubscription(
 router.get('/subscription', handleGetSubscription);
 
 /**
- * 更新訂閱清單
+ * 更新訂閱與匯率設定
  * PUT /api/gateway/subscription
  *
- * Body: BasicSubscription[]
- * Response (成功): { success: true, data: BasicSubscription[] }
+ * 業務背景：支援兩種請求格式以保持向後相容：
+ * 1. 陣列格式：只更新訂閱清單（原有格式）
+ * 2. 物件格式：可同時更新 exchange_rate 和 subscriptions
+ *
+ * Body (陣列格式): BasicSubscription[]
+ * Body (物件格式): { exchange_rate?: number, subscriptions: BasicSubscription[] }
+ * Response (成功): { success: true, data: BasicSubscription[], exchange_rate?: number }
  * Response (失敗): { error: string, details?: string }
  */
 function handleUpdateSubscription(
@@ -1215,17 +1262,45 @@ function handleUpdateSubscription(
       return;
     }
 
-    const existingData = readSubscriptionData();
-
+    const existingFileData = readSubscriptionFileData();
     const requestBody: unknown = req.body;
 
-    if (!Array.isArray(requestBody)) {
-      res.status(400).json({ error: '請提供陣列格式的訂閱資料' });
+    // 解析請求：支援陣列或物件格式
+    let subscriptionsInput: unknown[];
+    let newExchangeRate: number | undefined;
+
+    if (Array.isArray(requestBody)) {
+      // 向後相容：陣列格式只更新訂閱
+      subscriptionsInput = requestBody;
+      newExchangeRate = existingFileData.exchange_rate;
+    } else if (typeof requestBody === 'object' && requestBody !== null) {
+      // 物件格式：可更新 exchange_rate 和/或 subscriptions
+      const bodyObj = requestBody as Record<string, unknown>;
+
+      // 驗證 exchange_rate（若有提供）
+      if (bodyObj.exchange_rate !== undefined) {
+        if (typeof bodyObj.exchange_rate !== 'number' || bodyObj.exchange_rate <= 0) {
+          res.status(400).json({ error: 'exchange_rate 必須是正數' });
+          return;
+        }
+        newExchangeRate = bodyObj.exchange_rate;
+      } else {
+        newExchangeRate = existingFileData.exchange_rate;
+      }
+
+      // 解析 subscriptions
+      if (!Array.isArray(bodyObj.subscriptions)) {
+        res.status(400).json({ error: '請提供 subscriptions 陣列' });
+        return;
+      }
+      subscriptionsInput = bodyObj.subscriptions;
+    } else {
+      res.status(400).json({ error: '請提供陣列或物件格式的資料' });
       return;
     }
 
-    // 驗證每筆資料格式
-    const validationError = validateSubscriptionData(requestBody);
+    // 驗證每筆訂閱資料格式
+    const validationError = validateSubscriptionData(subscriptionsInput);
     if (validationError) {
       res.status(400).json({ error: validationError });
       return;
@@ -1235,7 +1310,7 @@ function handleUpdateSubscription(
     // 使用 Zod parse 確保類型安全，避免 as 斷言
     const requestDataByAiName = new Map<string, SubscriptionInput>();
     const requestAiNameOrder: string[] = [];
-    for (const item of requestBody) {
+    for (const item of subscriptionsInput) {
       // validateSubscriptionData 已驗證過，這裡可安全使用 parse
       const data = SubscriptionInputSchema.parse(item);
       if (!requestDataByAiName.has(data.ai_name)) {
@@ -1259,7 +1334,7 @@ function handleUpdateSubscription(
 
     // 以 ai_name 作為對應鍵，維持舊資料的 create_time
     const createTimeByAiName = new Map<string, string>();
-    for (const item of existingData) {
+    for (const item of existingFileData.subscriptions) {
       if (
         typeof item.create_time !== 'string' ||
         !DATETIME_REGEX.test(item.create_time)
@@ -1268,7 +1343,7 @@ function handleUpdateSubscription(
       createTimeByAiName.set(item.ai_name, item.create_time);
     }
 
-    const updatedData: BasicSubscription[] = normalizedRequestData.map(
+    const updatedSubscriptions: BasicSubscription[] = normalizedRequestData.map(
       (data) => {
         // 若現有資料中有該 ai_name 的有效 create_time，則保留原值；否則使用 now
         const createTime = createTimeByAiName.get(data.ai_name) ?? now;
@@ -1285,9 +1360,13 @@ function handleUpdateSubscription(
       },
     );
 
-    writeSubscriptionData(updatedData);
+    // 寫入完整檔案結構（包含 exchange_rate）
+    writeSubscriptionFileData({
+      exchange_rate: newExchangeRate,
+      subscriptions: updatedSubscriptions,
+    });
 
-    res.json({ success: true, data: updatedData });
+    res.json({ success: true, data: updatedSubscriptions });
   } catch (error) {
     res.status(500).json({
       error: '更新 subscription.json 失敗',
@@ -1345,11 +1424,14 @@ async function handleGetDashboard(
       `📊 獲取 AI Gateway 儀表板數據: ${startDateStr} 至 ${endDateStr} (${actualDays} 天)`,
     );
 
+    // 0. 動態讀取匯率（每次 API 請求重新讀取，支援 runtime 即時更新）
+    const exchangeRate = readExchangeRate();
+
     // 1. 讀取訂閱數據
     let subscriptions: SubscriptionWithTWD[] = [];
     if (fs.existsSync(subscriptionFilePath)) {
       const basicSubscriptions = readSubscriptionData();
-      subscriptions = convertToSubscriptionsWithTWD(basicSubscriptions);
+      subscriptions = convertToSubscriptionsWithTWD(basicSubscriptions, exchangeRate);
     }
 
     // 2. 並行獲取 LiteLLM 資料：每日活動統計 & 模型 Provider 映射
@@ -1366,7 +1448,7 @@ async function handleGetDashboard(
       dailyUsageStats,
       tokenUsageTrend,
     } = activityData
-      ? transformDailyActivityToResponse(activityData, modelProviderMapping)
+      ? transformDailyActivityToResponse(activityData, modelProviderMapping, exchangeRate)
       : createEmptyStats();
 
     // 4. 生成每日成本詳細數據（使用實際日期範圍，確保與 LiteLLM API 查詢一致）
@@ -1375,6 +1457,7 @@ async function handleGetDashboard(
       dailyUsageStats,
       startDateStr,
       endDateStr,
+      exchangeRate,
     );
 
     // 5. 計算預算信息
@@ -1396,7 +1479,7 @@ async function handleGetDashboard(
           start: startDateStr,
           end: endDateStr,
         },
-        exchangeRate: EXCHANGE_RATE,
+        exchangeRate,
       },
     };
 
