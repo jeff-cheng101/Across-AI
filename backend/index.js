@@ -21,6 +21,7 @@ const commonRoutes = require('./routes/common.routes');
 const reportRoutes = require('./routes/report.routes');
 const workflowRoutes = require('./routes/workflow.routes.ts');
 const trendRoutes = require('./routes/trend.routes'); // 趨勢對比分析路由,only for cf
+const gatewayRoutes = require('./routes/gateway.routes');
 
 const app = express();
 
@@ -58,6 +59,7 @@ app.use('/api', commonRoutes);
 app.use('/api/reports', reportRoutes);
 app.use('/api/workflow', workflowRoutes);
 app.use('/api/cloudflare/trend', trendRoutes); // 趨勢對比分析路由,only for cf
+app.use('/api/gateway', gatewayRoutes);
 
 // --- 工具函數 ---
 

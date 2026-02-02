@@ -31,9 +31,13 @@ async function proxyRequest(request: NextRequest, path: string[]) {
   }
 
   const targetPath = path.join('/');
-  const targetUrl = `${BACKEND_SERVICE_URL}/${targetPath}`;
+  // 保留原始請求的 query string
+  const queryString = request.nextUrl.search;
+  const targetUrl = `${BACKEND_SERVICE_URL}/${targetPath}${queryString}`;
 
-  console.log(`🔄 Proxy: ${request.method} ${targetPath} -> ${targetUrl}`);
+  console.log(
+    `🔄 Proxy: ${request.method} ${targetPath}${queryString} -> ${targetUrl}`,
+  );
 
   // 複製原始請求的 headers，排除 host
   const headers = new Headers();

@@ -603,12 +603,12 @@ export default function Dashboard() {
               </div>
             </button>
 
-            {/* TODO: AI Gateway 功能尚未實作，目前為無效按鈕 */}
+            {/* AI Gateway */}
             <button
               type="button"
-              className="bg-[#08131d] rounded-[200px] border border-[#898d98] shadow-[1px_1px_10px_0px_rgba(137,141,152,0.6)] cursor-not-allowed opacity-50 p-0 w-full text-left"
-              disabled
-              aria-label="AI Gateway（尚未實作）"
+              className="bg-[#08131d] rounded-[200px] border border-[#898d98] shadow-[1px_1px_10px_0px_rgba(137,141,152,0.6)] cursor-pointer hover:border-[#6FF8FF] transition-colors p-0 w-full text-left"
+              onClick={() => router.push('/ai-gateway')}
+              aria-label="前往 AI Gateway"
             >
               <div className="flex items-center gap-[9px] px-[16px] py-[8px]">
                 <Network className="w-[18px] h-[18px] text-[#6FF8FF]" />
