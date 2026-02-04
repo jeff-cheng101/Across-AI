@@ -25,6 +25,11 @@ const sidebarItems = [
     href: "/dashboard/cloudflare/cdn-settings",
     icon: Globe,
   },
+  {
+    name: "DNS 設定",
+    href: "/dashboard/cloudflare/dns-settings",
+    icon: Globe,
+  },
 ]
 
 const otherBrands = [

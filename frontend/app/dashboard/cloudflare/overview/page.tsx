@@ -1,37 +1,84 @@
 "use client"
 
-import { motion, AnimatePresence } from "framer-motion"
-import { AlertTriangle, TrendingUp, X, Sparkles } from "lucide-react"
-import { useState, useEffect, useRef } from "react"
+import { motion } from "framer-motion"
+import { AlertTriangle, TrendingUp, TrendingDown, X, Calendar, Minus } from 'lucide-react'
+import { useState, useEffect, useRef, useMemo } from "react"
 import { useWAFData } from "../../waf-data-context"
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
+import { Button } from "@/components/ui/button"
+import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, LineChart, Line, BarChart, Bar, ReferenceLine } from "recharts"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import { useDashboardData } from "@/app/dashboard/dashboard-data-context"
+import { TimeRangeControls } from "@/components/date-time-controls"
+import { DateTimePicker } from "@/components/date-time-picker"
+import { CountUp } from "@/components/CountUp"
+import authenticator from "@/app/util/authenticator"
+import { getZonesByContractNo } from "@/app/routes/cloudflare"
 import {
-  AreaChart,
-  Area,
-  XAxis,
-  YAxis,
-  CartesianGrid,
-  Tooltip,
-  ResponsiveContainer,
-  PieChart,
-  Pie,
-  Cell,
-  LineChart,
-  Line,
-  BarChart,
-  Bar,
-} from "recharts"
+  useTrafficTrend,
+  useTrafficTrendBps,
+  getTrafficInterval,
+  useAttackGeoSources,
+  useAttackCitySources,
+  useWafEventTrend,
+  useCdnCacheStatus,
+  getWafEventsCount,
+  useOriginServerErrors,
+  useTopAttackedUrls,
+  useTopAttackedHosts,
+  useAttackPeak,
+  useCleanedTrafficCount,
+  useTopDDoSHosts,
+  useCleanedTrafficTrend,
+  useTopAttackIPs,
+  useCdnTotalTraffic,
+  useCdnTrafficTrend,
+  useTopCdnNodes,
+  useCdnCacheStatusChart,
+  useCdnHttpStatus,
+} from "./useCloudflareOverviewData"
+
 
 export default function CloudflareOverviewPage() {
   const [activeTab, setActiveTab] = useState("overview")
+  const { timeRange, setTimeRange, refreshTrigger } = useDashboardData() // 用 Context 来管理時間範圍
+  const [userZones, setUserZones] = useState<string[]>([])
+  const [selectedZone, setSelectedZone] = useState<string>('all')
+
+  useEffect(() => {
+    const subscription = authenticator.authObservable.subscribe(async (auth) => {
+      if (auth?.contract?.contractNo) {
+        try {
+          const resp = await getZonesByContractNo(auth.contract?.contractNo || null)
+          if (resp && resp.data && Array.isArray(resp.data)) {
+            const zoneNames = resp.data.map((z: any) => z.name)
+            setUserZones(zoneNames)
+          } else {
+            setUserZones([])
+          }
+        } catch (error) {
+          console.error("Failed to load user zones:", error)
+          setUserZones([])
+        }
+      } else if (auth && auth.loginState === false) {
+        // 只有在明確知道未登錄或 authReady 且無合約時才清空
+        setUserZones([])
+      }
+    })
+
+    return () => subscription.unsubscribe()
+  }, [])
+
+  const filteredZones = useMemo(() => {
+    return selectedZone === 'all' ? userZones : [selectedZone]
+  }, [selectedZone, userZones])
+  console.log('filteredZones', filteredZones)
+
   const [aiSuggestion, setAiSuggestion] = useState<{
     show: boolean
     title: string
     content: string
-  }>({
-    show: false,
-    title: "",
-    content: "",
-  })
+  }>({ show: false, title: "", content: "" })
 
   const mapContainerRef = useRef<HTMLDivElement>(null)
   const mapRef = useRef<any>(null)
@@ -39,33 +86,446 @@ export default function CloudflareOverviewPage() {
   const cdnMapRef = useRef<any>(null)
 
   const tabs = [
-    { id: "overview", label: "總覽", sublabel: "Overview" },
+    { id: "overview", label: "總覽" },
     { id: "ddos", label: "DDoS 防護" },
     { id: "waf", label: "WAF 分析" },
     { id: "cdn", label: "CDN 性能" },
   ]
 
-  const trafficData = [
-    { time: "0", attack: 0.5, clean: 2.1 },
-    { time: "5", attack: 0.8, clean: 2.3 },
-    { time: "10", attack: 1.2, clean: 2.5 },
-    { time: "15", attack: 2.5, clean: 2.8 },
-    { time: "20", attack: 4.2, clean: 3.1 },
-    { time: "25", attack: 5.8, clean: 2.9 },
-    { time: "30", attack: 7.5, clean: 2.7 },
-    { time: "35", attack: 8.2, clean: 2.5 },
-    { time: "40", attack: 6.8, clean: 2.6 },
-    { time: "45", attack: 5.2, clean: 2.8 },
-    { time: "50", attack: 4.1, clean: 3.0 },
-    { time: "55", attack: 3.5, clean: 3.2 },
-    { time: "60", attack: 2.8, clean: 3.5 },
-  ]
+  // ==================== Elasticsearch 数据查询 ====================
+  // ====================      tabs = 總覽      ====================
 
-  const attackSources = [
-    { country: "俄羅斯", percentage: 45, color: "#ef4444", x: "65%", y: "28%", lng: 105.3188, lat: 61.524 },
-    { country: "巴西", percentage: 20, color: "#f97316", x: "28%", y: "62%", lng: -47.9292, lat: -15.7801 },
-    { country: "越南", percentage: 12, color: "#eab308", x: "72%", y: "48%", lng: 108.2772, lat: 14.0583 },
-  ]
+  // WAF 已阻擋威脅
+  const wafEventsResp = getWafEventsCount(filteredZones)
+  const { total: wafEventsTotal, blocks: wafEventsBlocks, monitors: wafEventsMonitors, changes: wafEventsChanges } = wafEventsResp || { total: 0, blocks: 0, monitors: 0, changes: { total: 0, blocks: 0, monitors: 0 } }
+  // console.log('wafEventsResp', wafEventsResp)
+  // CDN 快取命中率 (Cache Hit)
+  const cacheHitRateResp = useCdnCacheStatus(filteredZones)
+  const { rate: cacheHitRate, hits: cacheHitCount, total: cacheHitTotal, changes: cacheHitChanges } = cacheHitRateResp || { rate: 0, hits: 0, total: 0, changes: { total: 0, hits: 0, rate: 0 } }
+  // console.log('cacheHitRate', cacheHitRate)
+  const formatRate = (val: number) => {
+    const absVal = Math.abs(val)
+    if (absVal === 0) return "0.00"
+    if (absVal < 0.01) return val.toFixed(3) // 如果小於 0.01，顯示 3 位
+    return val.toFixed(2) // 否則顯示 2 位
+  }
+
+  // 源伺服器錯誤率 (5xx error rate)
+  const originErrorRateResp = useOriginServerErrors(filteredZones)
+  const { rate: originErrorRate, errors: originErrorCount, total: originErrorTotal, changes: originErrorChanges } = originErrorRateResp || { rate: 0, errors: 0, total: 0, changes: { total: 0, errors: 0, rate: 0 } }
+  // console.log('originErrorRate', originErrorRate)
+
+  // 攻擊峰值 (Attack Peak RPS)
+  const { peakRps, peakUnit, previous: peakPrevious, changes: peakChanges } = useAttackPeak(filteredZones)
+  // console.log('peakRps', peakRps)
+
+  // 已清洗流量
+  const cleanedTrafficData = useCleanedTrafficCount(filteredZones)
+  const { count: cleanedTrafficCount, bytes: cleanedTrafficBytes, changes: cleanedTrafficChanges } = cleanedTrafficData
+  // console.log('cleanedTrafficData', cleanedTrafficData)
+
+  // TOP 5 被DDoS的網域
+  const topDDoSHostsData = useTopDDoSHosts(filteredZones)
+  // console.log('topDDoSHostsData', topDDoSHostsData)
+
+  // Top 10 攻擊來源 IP
+  const topAttackIPsData = useTopAttackIPs(filteredZones)
+  // console.log('topAttackIPsData', topAttackIPsData)
+
+  // CDN 總傳輸流量
+  const cdnTotalTrafficData = useCdnTotalTraffic(filteredZones)
+  const { 
+    value: cdnTotalTrafficValue,
+    unit: cdnTotalTrafficUnit,
+    cached_rate: cdnCacheRate,
+    average_response_time: cdnAverageResponseTime,
+    previous: cdnTotalTrafficPrevious, 
+    changes: cdnTotalTrafficChanges 
+  } = cdnTotalTrafficData
+  // console.log('cdnTotalTrafficData', cdnTotalTrafficData)
+
+  // TOP 5 CDN 節點
+  const topCdnNodesData = useTopCdnNodes(filteredZones)
+  // console.log('topCdnNodesData', topCdnNodesData)
+
+  const topCacheStatusData = useCdnCacheStatusChart(filteredZones)
+  // console.log('topCacheStatusData', topCacheStatusData)
+
+  // TOP 10 HTTP Status
+  const topHttpStatusData = useCdnHttpStatus(filteredZones)
+  // console.log('topHttpStatusData', topHttpStatusData)
+
+  // 攻击来源地理分布
+  const attackSources = useAttackGeoSources(filteredZones)
+  // console.log('attackGeoSourcesData', attackSources)
+  const attackCitySources = useAttackCitySources(filteredZones)
+  // console.log('attackCitySources', attackCitySources)
+
+  // 即時流量分析 - 根據時間範圍動態調整間隔
+  const { trafficIntervalConfig, actualTrafficTimeRange } = useMemo(() => {
+    // 如果是相對時間模式，計算實際的時間範圍
+    let actualFrom: Date
+    let actualTo: Date
+    
+    if (timeRange.mode === 'relative') {
+      const now = new Date()
+      const duration = new Date(timeRange.to).getTime() - new Date(timeRange.from).getTime()
+      actualTo = now
+      actualFrom = new Date(now.getTime() - duration)
+    } else {
+      actualFrom = new Date(timeRange.from)
+      actualTo = new Date(timeRange.to)
+    }
+    
+    return {
+      trafficIntervalConfig: getTrafficInterval(actualFrom, actualTo),
+      actualTrafficTimeRange: { from: actualFrom, to: actualTo }
+    }
+  }, [timeRange])
+  
+  const trafficData = useTrafficTrend(
+    trafficIntervalConfig.interval, 
+    trafficIntervalConfig.seconds, 
+    actualTrafficTimeRange,
+    filteredZones
+  )
+  // console.log('trafficData:', trafficData, 'interval:', trafficIntervalConfig.interval)
+
+  const trafficBpsData = useTrafficTrendBps(
+    trafficIntervalConfig.interval,
+    trafficIntervalConfig.seconds,
+    actualTrafficTimeRange,
+    filteredZones
+  )
+  // console.log('trafficBpsData:', trafficBpsData)
+
+  const cleanedTrafficTrendData = useCleanedTrafficTrend(
+    trafficIntervalConfig.interval,
+    trafficIntervalConfig.seconds,
+    actualTrafficTimeRange,
+    filteredZones
+  )
+  // console.log('cleanedTrafficTrendData:', cleanedTrafficTrendData)
+
+  // 快取狀態趨勢分析
+  const cdnTrafficResp = useCdnTrafficTrend(
+    trafficIntervalConfig.interval,
+    trafficIntervalConfig.seconds,
+    actualTrafficTimeRange,
+    filteredZones
+  )
+  const cdnTrafficChartData = cdnTrafficResp.data || []
+  const cdnStatuses = cdnTrafficResp.statuses || []
+
+  // 快取狀態顏色與標籤對照
+  const CACHE_STATUS_COLORS: Record<string, string> = {
+    hit: "#10b981",      // 綠色
+    miss: "#ef4444",     // 紅色
+    dynamic: "#3b82f6",  // 藍色
+    expired: "#f59e0b",  // 橘色
+    stale: "#8b5cf6",    // 紫色
+    unknown: "#94a3b8",  // 灰色
+    revalidated: "#06b6d4", // 青色
+    bypass: "#f472b6"    // 粉色
+  };
+
+  const CACHE_STATUS_LABELS: Record<string, string> = {
+    hit: "命中 (Hit)",
+    miss: "遺漏 (Miss)",
+    dynamic: "動態 (Dynamic)",
+    expired: "已過期 (Expired)",
+    stale: "過時 (Stale)",
+    unknown: "未知 (Unknown)",
+    revalidated: "已重新驗證 (Revalidated)",
+    bypass: "略過 (Bypass)"
+  };
+
+  // 計算 Y 軸 domain 與 Ticks (快取狀態圖表)
+  const { cdnTrafficYDomain, cdnTrafficYTicks } = useMemo(() => {
+    if (!cdnTrafficChartData || cdnTrafficChartData.length === 0) {
+      return { cdnTrafficYDomain: [0, 10] as [number, number], cdnTrafficYTicks: [0, 2, 4, 6, 8, 10] }
+    }
+    const maxValue = Math.max(...cdnTrafficChartData.map((d: any) => {
+      let max = 0;
+      cdnStatuses.forEach((status: string) => { 
+        const val = d[status] || 0;
+        if (val > max) max = val;
+      });
+      return max;
+    })) || 10;
+    
+    const magnitude = Math.pow(10, Math.floor(Math.log10(maxValue || 1)))
+    const ratio = (maxValue || 0) / magnitude
+    const step = ratio < 5 ? 0.5 : 1
+    const niceMax = Math.ceil(ratio / step) * step * magnitude || 10
+    
+    const ticks = []
+    const tickStep = niceMax / 5
+    for (let i = 0; i <= 5; i++) ticks.push(Math.round(tickStep * i))
+    
+    return { 
+      cdnTrafficYDomain: [0, niceMax] as [number, number], 
+      cdnTrafficYTicks: ticks 
+    }
+  }, [cdnTrafficChartData, cdnStatuses])
+  
+  // 計算 Y 軸 domain 與 Ticks (原本的請求數圖表)
+  const { trafficYDomain, trafficYTicks } = useMemo(() => {
+    if (!trafficData || trafficData.length === 0) {
+      return { trafficYDomain: [0, 10] as [number, number], trafficYTicks: [0, 2, 4, 6, 8, 10] }
+    }
+    
+    // 改為計算所有類別中的最大值，而非堆疊總和，因為圖表並未堆疊
+    const maxValue = Math.max(...trafficData.map((d: any) => Math.max(
+      d.block || 0,
+      d.log || 0,
+      d.skip || 0,
+      d.managedChallenge || 0,
+      d.jschallenge || 0
+    ))) || 10;
+    
+    // 取得數量級
+    const magnitude = Math.pow(10, Math.floor(Math.log10(maxValue || 1)))
+    const ratio = (maxValue || 0) / magnitude
+    
+    // 縮小步長讓圖表更緊湊：如果比例小於 2 使用 0.2，小於 5 使用 0.5，否則使用 1
+    let step = ratio < 2 ? 0.2 : (ratio < 5 ? 0.5 : 1)
+    const niceMax = Math.ceil(ratio / step) * step * magnitude
+    
+    const ticks = []
+    const tickStep = niceMax / 5
+    for (let i = 0; i <= 5; i++) {
+      ticks.push(Math.round(tickStep * i))
+    }
+    
+    return { 
+      trafficYDomain: [0, niceMax] as [number, number], 
+      trafficYTicks: ticks 
+    }
+  }, [trafficData])
+
+  // 計算 Y 軸 domain 與 Ticks (即時流量分析圖表 - Mbps)
+  const { trafficAnalysisYDomain, trafficAnalysisYTicks, trafficAnalysisUnit, trafficAnalysisChartData } = useMemo(() => {
+    if (!trafficBpsData || trafficBpsData.length === 0) {
+      return { 
+        trafficAnalysisYDomain: [0, 10] as [number, number], 
+        trafficAnalysisYTicks: [0, 2, 4, 6, 8, 10], 
+        trafficAnalysisUnit: 'Mbps',
+        trafficAnalysisChartData: [] 
+      }
+    }
+
+    // 計算最大 bps (取歸類後的 attack 和 clean 中的最大值)
+    const maxBps = Math.max(...trafficBpsData.map((d: any) => Math.max(d.attack || 0, d.clean || 0)));
+    
+    // 固定使用 Mbps 單位
+    const unit = 'Mbps'
+    const divisor = 1000000
+    const maxValue = maxBps / divisor
+
+    // 如果數值都是 0，顯示 [-1, 0, 1] 的區間，讓線在中間
+    if (maxBps === 0) {
+      const chartData = trafficBpsData.map((d: any) => ({
+        ...d,
+        attackVal: 0,
+        cleanVal: 0,
+      }))
+      return {
+        trafficAnalysisYDomain: [-1, 1] as [number, number],
+        trafficAnalysisYTicks: [-1, 0, 1],
+        trafficAnalysisUnit: unit,
+        trafficAnalysisChartData: chartData
+      }
+    }
+
+    // 1. 取得數量級 (例如 0.0008 -> 0.0001)
+    const magnitude = Math.pow(10, Math.floor(Math.log10(maxValue || 1)));
+    const fraction = maxValue / magnitude;
+    
+    // 2. 找一個漂亮的最高倍數，確保刻度是等比例且漂亮的
+    const niceFractions = [1, 1.2, 1.5, 2, 2.5, 3, 4, 5, 6, 7.5, 8, 10];
+    let selectedFraction = niceFractions.find(f => f >= fraction * 1.1) || 10;
+    
+    let niceMax = selectedFraction * magnitude;
+    if (niceMax === 0) niceMax = 1;
+
+    // 3. 生成 5 個等間距刻度 (6 個點，包含 0)
+    const ticks = []
+    const tickStep = niceMax / 5
+    for (let i = 0; i <= 5; i++) {
+      // 解決浮點數精度問題，確保刻度數值準確
+      ticks.push(Number((tickStep * i).toFixed(12)))
+    }
+    
+    const chartData = trafficBpsData.map((d: any) => ({
+      ...d,
+      attackVal: (d.attack || 0) / divisor,
+      cleanVal: (d.clean || 0) / divisor,
+    }))
+
+    return { 
+      trafficAnalysisYDomain: [0, niceMax] as [number, number], 
+      trafficAnalysisYTicks: ticks,
+      trafficAnalysisUnit: unit,
+      trafficAnalysisChartData: chartData
+    }
+  }, [trafficBpsData])
+
+  // 計算 Y 軸 domain 與 Ticks (已清洗流量圖表)
+  const { cleanedTrafficYDomain, cleanedTrafficYTicks, cleanedTrafficUnit, cleanedTrafficChartData } = useMemo(() => {
+    if (!cleanedTrafficTrendData || cleanedTrafficTrendData.length === 0) {
+      return { cleanedTrafficYDomain: [0, 10] as [number, number], cleanedTrafficYTicks: [0, 2, 4, 6, 8, 10], cleanedTrafficUnit: 'KB', cleanedTrafficChartData: [] }
+    }
+    const maxBytes = Math.max(...cleanedTrafficTrendData.map((d: any) => d.bytes || 0))
+    
+    let unit = 'KB'
+    let divisor = 1000
+    if (maxBytes >= 1000000000000) { unit = 'TB'; divisor = 1000000000000; }
+    else if (maxBytes >= 1000000000) { unit = 'GB'; divisor = 1000000000; }
+    else if (maxBytes >= 1000000) { unit = 'MB'; divisor = 1000000; }
+
+    const value = maxBytes / divisor
+    if (value === 0 && maxBytes === 0) {
+      return { 
+        cleanedTrafficYDomain: [-1, 1] as [number, number], 
+        cleanedTrafficYTicks: [-1, 0, 1], 
+        cleanedTrafficUnit: unit, 
+        cleanedTrafficChartData: cleanedTrafficTrendData.map((d: any) => ({ ...d, value: 0 })) 
+      }
+    }
+
+    const magnitude = Math.pow(10, Math.floor(Math.log10(value || 1)))
+    const ratio = (value || 0) / magnitude
+    const step = ratio < 5 ? 0.5 : 1
+    const niceMax = Math.ceil(ratio / step) * step * magnitude || 10
+    
+    const ticks = []
+    const tickStep = niceMax / 5
+    for (let i = 0; i <= 5; i++) ticks.push(Number((tickStep * i).toFixed(2)))
+    
+    const chartData = cleanedTrafficTrendData.map((d: any) => ({
+      ...d,
+      value: d.bytes / divisor
+    }))
+
+    return { 
+      cleanedTrafficYDomain: [0, niceMax] as [number, number], 
+      cleanedTrafficYTicks: ticks,
+      cleanedTrafficUnit: unit,
+      cleanedTrafficChartData: chartData
+    }
+  }, [cleanedTrafficTrendData])
+
+  // WAF 事件趨勢
+  // 計算 WAF 事件趨勢的時間間隔和實際時間範圍
+  const { wafTrendInterval, actualTimeRange } = useMemo(() => {
+    // 如果是相對時間模式，需要計算實際的時間範圍
+    let actualFrom: Date
+    let actualTo: Date
+    
+    if (timeRange.mode === 'relative') {
+      const now = new Date()
+      const duration = new Date(timeRange.to).getTime() - new Date(timeRange.from).getTime()
+      actualTo = now
+      actualFrom = new Date(now.getTime() - duration)
+    } else {
+      actualFrom = new Date(timeRange.from)
+      actualTo = new Date(timeRange.to)
+    }
+
+    const duration = actualTo.getTime() - actualFrom.getTime()
+    const minutes = duration / (1000 * 60)
+    const hours = duration / (1000 * 60 * 60)
+    const days = duration / (1000 * 60 * 60 * 24)
+    
+    let interval = '12h'
+    if (minutes <= 30) interval = '30s'   // 前30分鐘：每30秒
+    else if (hours <= 1) interval = '1m'      // 前1小時：每1分鐘
+    else if (hours <= 4) interval = '5m'      // 前4小時：每5分鐘
+    else if (hours <= 24) interval = '30m'    // 前24小時：每30分鐘
+    else if (days <= 7) interval = '3h'       // 前7天：每3小時
+    
+    return {
+      wafTrendInterval: interval,
+      actualTimeRange: { from: actualFrom, to: actualTo }
+    }
+  }, [timeRange, refreshTrigger])
+  
+  const { data: wafTrendData } = useWafEventTrend(wafTrendInterval, actualTimeRange, filteredZones)
+  const wafEventTrendData = useMemo(() => {
+    if (!wafTrendData?.waf_events_over_time?.buckets || wafTrendData.waf_events_over_time.buckets.length === 0) {
+      return []
+    }
+    return wafTrendData.waf_events_over_time.buckets.map((bucket: any) => {
+      const timestamp = new Date(bucket.key)
+      // 根據時間間隔格式化顯示
+      let timeLabel = ''
+      if (wafTrendInterval === '30s') {
+        // 30秒间隔：显示 HH:mm:ss
+        timeLabel = timestamp.toLocaleTimeString('zh-TW', { 
+          second: '2-digit',
+          hour: '2-digit', 
+          minute: '2-digit',
+          hour12: false 
+        })
+      } else if (wafTrendInterval === '1m') {
+        // 1分钟间隔：显示 HH:mm
+        timeLabel = timestamp.toLocaleTimeString('zh-TW', { 
+          hour: '2-digit', 
+          minute: '2-digit',
+          hour12: false 
+        })
+      } else if (wafTrendInterval === '5m') {
+        // 5分钟间隔：显示 HH:00
+        timeLabel = timestamp.toLocaleTimeString('zh-TW', { 
+          hour: '2-digit', 
+          minute: '2-digit',
+          hour12: false 
+        })
+      } else if (wafTrendInterval === '30m') {
+        // 30分钟间隔：显示月日 HH:00
+        timeLabel = timestamp.toLocaleTimeString('zh-TW', { 
+          month: '2-digit', 
+          day: '2-digit',
+          hour: '2-digit', 
+          minute: '2-digit',
+          hour12: false 
+        })
+      } else if (wafTrendInterval === '3h') {
+        // 1天间隔：显示月日 HH:00
+        timeLabel = timestamp.toLocaleDateString('zh-TW', { 
+          month: '2-digit', 
+          day: '2-digit',
+          hour: '2-digit', 
+          minute: '2-digit',
+          hour12: false
+        })
+      } else {
+        // 1天间隔：显示月日 HH:00
+        timeLabel = timestamp.toLocaleDateString('zh-TW', { 
+          month: '2-digit', 
+          day: '2-digit',
+          hour: '2-digit', 
+          minute: '2-digit',
+          hour12: false
+        })
+      }
+      
+      const filteredBucket = bucket.filtered_events || bucket;
+
+      return {
+        hour: timeLabel,
+        timestamp: bucket.key,
+        blocked: filteredBucket.blocked?.doc_count || 0,
+        monitored: filteredBucket.monitored?.doc_count || 0
+      }
+    })
+  }, [wafTrendData, wafTrendInterval])
+  // console.log('wafEventTrendData', wafEventTrendData)
+
+  // TOP 10 被攻擊的 URL
+  const topAttackedUrlsData: any = useTopAttackedUrls(filteredZones)
+  // console.log('topAttackedUrlsData', topAttackedUrlsData)
 
   const attackTypeData = [
     { name: "UDP Flood", value: 72, color: "#ef4444" },
@@ -95,49 +555,9 @@ export default function CloudflareOverviewPage() {
     { time: "55", rate: 2.5 },
     { time: "60", rate: 1.8 },
   ])
-
-  useEffect(() => {
-    const interval = setInterval(() => {
-      setPacketRateData((prevData) => {
-        const newData = prevData.slice(1)
-        const lastTime = Number.parseInt(newData[newData.length - 1].time)
-        const newTime = lastTime + 5
-        const newRate = Math.max(0.5, Math.min(9, Math.random() * 8 + 1))
-        return [...newData, { time: newTime.toString(), rate: Number.parseFloat(newRate.toFixed(1)) }]
-      })
-    }, 10000)
-
-    return () => clearInterval(interval)
-  }, [])
-
-  const topAttackIPs = [
-    { ip: "195.191.171.12", country: "俄羅斯", flag: "🇷🇺", traffic: "1.2 Gbps" },
-    { ip: "200.221.12.45", country: "巴西", flag: "🇧🇷", traffic: "850 Mbps" },
-  ]
-
-  const wafEventTrendData = [
-    { hour: "0", blocked: 120, monitored: 15 },
-    { hour: "2", blocked: 180, monitored: 22 },
-    { hour: "4", blocked: 150, monitored: 18 },
-    { hour: "6", blocked: 220, monitored: 28 },
-    { hour: "8", blocked: 380, monitored: 45 },
-    { hour: "10", blocked: 520, monitored: 62 },
-    { hour: "12", blocked: 680, monitored: 78 },
-    { hour: "14", blocked: 750, monitored: 85 },
-    { hour: "16", blocked: 620, monitored: 70 },
-    { hour: "18", blocked: 480, monitored: 55 },
-    { hour: "20", blocked: 350, monitored: 42 },
-    { hour: "22", blocked: 280, monitored: 35 },
-    { hour: "24", blocked: 200, monitored: 25 },
-  ]
-
-  const topWafRules = [
-    { name: "SQL 注入防護", count: 3120, color: "#3b82f6" },
-    { name: "惡意機器人防護", count: 2541, color: "#3b82f6" },
-    { name: "跨站腳本 (XSS) 防護", count: 1890, color: "#3b82f6" },
-    { name: "路徑遍歷防護", count: 1456, color: "#3b82f6" },
-    { name: "命令注入防護", count: 982, color: "#3b82f6" },
-  ]
+  
+  const topWafHosts: any = useTopAttackedHosts(filteredZones)
+  // console.log('topWafHosts', topWafHosts)
 
   const topAttackedUrls = [
     { url: "/login.php", attackType: "SQL Injection", count: 2876, color: "#f97316" },
@@ -150,7 +570,6 @@ export default function CloudflareOverviewPage() {
     { url: "/checkout.php", attackType: "XSS", count: 512, color: "#ef4444" },
   ]
 
-  // ADDED CODE START
   const httpStatusData = [
     { name: "2xx (成功)", value: 98.9, color: "#06b6d4" },
     { name: "3xx (重定向)", value: 1.0, color: "#3b82f6" },
@@ -182,7 +601,6 @@ export default function CloudflareOverviewPage() {
     { region: "非洲", x: "52%", y: "55%", latency: 160, color: "#ef4444", lng: 17.8739, lat: -4.0383 },
     { region: "大洋洲", x: "82%", y: "70%", latency: 95, color: "#f97316", lng: 133.7751, lat: -25.2744 },
   ]
-  // ADDED CODE END
 
   const { setWafRisks, setSelectedBrand } = useWAFData()
 
@@ -208,7 +626,7 @@ export default function CloudflareOverviewPage() {
         cveId: "CVE-2025-1234",
         recommendations: [
           {
-            title: "���用 WAF SQL 注入防護規則",
+            title: "啟用 WAF SQL 注入防護規則",
             description: "立即啟用並更新 SQL 注入防護規則至最新版本，阻擋惡意 SQL 查詢",
             priority: "high",
           },
@@ -367,6 +785,7 @@ export default function CloudflareOverviewPage() {
     ])
   }, [setWafRisks, setSelectedBrand])
 
+  // 在「總覽 (Overview)」分頁中建立地圖實例
   useEffect(() => {
     if (activeTab !== "overview" || !mapContainerRef.current) return
 
@@ -413,7 +832,7 @@ export default function CloudflareOverviewPage() {
           type: "geojson",
           data: {
             type: "FeatureCollection",
-            features: attackSources.map((source) => ({
+            features: attackSources.map((source: { country: string; percentage: number; lng: number; lat: number }) => ({
               type: "Feature",
               geometry: {
                 type: "Point",
@@ -445,13 +864,21 @@ export default function CloudflareOverviewPage() {
         })
 
         // Add pulsing dot for each attack source
-        attackSources.forEach((source, index) => {
+        attackSources.forEach((source: { color: string; lng: number; lat: number; country: string; percentage: number }, index: number) => {
           const size = 100
 
-          const pulsingDot = {
+          const pulsingDot: {
+            width: number
+            height: number
+            data: Uint8Array | Uint8ClampedArray
+            context: CanvasRenderingContext2D | null
+            onAdd: () => void
+            render: () => boolean
+          } = {
             width: size,
             height: size,
             data: new Uint8Array(size * size * 4),
+            context: null,
 
             onAdd: function () {
               const canvas = document.createElement("canvas")
@@ -467,6 +894,8 @@ export default function CloudflareOverviewPage() {
               const radius = (size / 2) * 0.3
               const outerRadius = (size / 2) * 0.7 * t + radius
               const context = this.context
+
+              if (!context) return true
 
               // Clear canvas
               context.clearRect(0, 0, this.width, this.height)
@@ -529,25 +958,33 @@ export default function CloudflareOverviewPage() {
             },
           })
 
-          // Add popup on click
-          map.on("click", `attack-layer-${index}`, (e: any) => {
+          // Add popup on hover
+          let popup: any = null
+          map.on("mouseenter", `attack-layer-${index}`, (e: any) => {
+            map.getCanvas().style.cursor = "pointer"
             const coordinates = e.features[0].geometry.coordinates.slice()
             const { country, percentage } = e.features[0].properties
 
-            new maplibregl.Popup()
-              .setLngLat(coordinates)
-              .setHTML(
-                `<div style="color: #000; padding: 4px;"><strong>${country}</strong><br/>攻擊比例: ${percentage}%</div>`,
-              )
-              .addTo(map)
-          })
-
-          map.on("mouseenter", `attack-layer-${index}`, () => {
-            map.getCanvas().style.cursor = "pointer"
+            if (!popup) {
+              popup = new maplibregl.Popup({
+                closeButton: false,
+                closeOnClick: false,
+                offset: 10,
+              })
+                .setLngLat(coordinates)
+                .setHTML(
+                  `<div style="color: #000; padding: 4px;"><strong>${country}</strong><br/>攻擊比例: ${percentage}%</div>`,
+                )
+                .addTo(map)
+            }
           })
 
           map.on("mouseleave", `attack-layer-${index}`, () => {
             map.getCanvas().style.cursor = ""
+            if (popup) {
+              popup.remove()
+              popup = null
+            }
           })
         })
       })
@@ -562,6 +999,187 @@ export default function CloudflareOverviewPage() {
       }
     }
   }, [activeTab])
+
+  useEffect(() => {
+    if (!mapRef.current || activeTab !== "overview" || attackSources.length === 0) return
+
+    const map = mapRef.current
+    const maplibregl = (window as any).maplibregl
+
+    // 等待地图加载完成
+    if (!map.loaded()) {
+      map.once('load', () => updateMapData())
+      return
+    }
+
+    updateMapData()
+
+    function updateMapData() {
+      try {
+        // 更新标签数据源
+        if (map.getSource('attack-labels')) {
+          (map.getSource('attack-labels') as any).setData({
+            type: "FeatureCollection",
+            features: attackSources.map((source: { country: string; percentage: number; lng: number; lat: number }) => ({
+              type: "Feature",
+              geometry: {
+                type: "Point",
+                coordinates: [source.lng, source.lat],
+              },
+              properties: {
+                label: `${source.country} ${source.percentage}%`,
+              },
+            })),
+          })
+        }
+
+        // 移除旧的图层和数据源
+        for (let i = 0; i < 20; i++) {
+          if (map.getLayer(`attack-layer-${i}`)) {
+            map.off('click', `attack-layer-${i}`)
+            map.off('mouseenter', `attack-layer-${i}`)
+            map.off('mouseleave', `attack-layer-${i}`)
+            map.removeLayer(`attack-layer-${i}`)
+          }
+          if (map.getSource(`attack-source-${i}`)) {
+            map.removeSource(`attack-source-${i}`)
+          }
+          if (map.hasImage(`pulsing-dot-${i}`)) {
+            map.removeImage(`pulsing-dot-${i}`)
+          }
+        }
+
+        // 重新添加每个攻击源
+        attackSources.forEach((source: { color: string; lng: number; lat: number; country: string; percentage: number }, index: number) => {
+          const size = 100
+
+          const pulsingDot: {
+            width: number
+            height: number
+            data: Uint8Array | Uint8ClampedArray
+            context: CanvasRenderingContext2D | null
+            onAdd: () => void
+            render: () => boolean
+          } = {
+            width: size,
+            height: size,
+            data: new Uint8Array(size * size * 4),
+            context: null,
+
+            onAdd: function () {
+              const canvas = document.createElement("canvas")
+              canvas.width = this.width
+              canvas.height = this.height
+              this.context = canvas.getContext("2d")
+            },
+
+            render: function () {
+              const duration = 2000
+              const t = (performance.now() % duration) / duration
+
+              const radius = (size / 2) * 0.3
+              const outerRadius = (size / 2) * 0.7 * t + radius
+              const context = this.context
+
+              if (!context) return true
+
+              // Clear canvas
+              context.clearRect(0, 0, this.width, this.height)
+
+              // Outer pulsing circle
+              context.beginPath()
+              context.arc(this.width / 2, this.height / 2, outerRadius, 0, Math.PI * 2)
+              context.fillStyle = `rgba(239, 68, 68, ${1 - t})`
+              context.fill()
+
+              // Inner circle
+              context.beginPath()
+              context.arc(this.width / 2, this.height / 2, radius, 0, Math.PI * 2)
+              context.fillStyle = source.color
+              context.strokeStyle = "white"
+              context.lineWidth = 2
+              context.fill()
+              context.stroke()
+
+              // Update this image's data
+              this.data = context.getImageData(0, 0, this.width, this.height).data
+
+              // Continuously repaint the map
+              map.triggerRepaint()
+
+              return true
+            },
+          }
+
+          map.addImage(`pulsing-dot-${index}`, pulsingDot as any, { pixelRatio: 2 })
+
+          map.addSource(`attack-source-${index}`, {
+            type: "geojson",
+            data: {
+              type: "FeatureCollection",
+              features: [
+                {
+                  type: "Feature",
+                  geometry: {
+                    type: "Point",
+                    coordinates: [source.lng, source.lat],
+                  },
+                  properties: {
+                    country: source.country,
+                    percentage: source.percentage,
+                  },
+                },
+              ],
+            },
+          })
+
+          map.addLayer({
+            id: `attack-layer-${index}`,
+            type: "symbol",
+            source: `attack-source-${index}`,
+            layout: {
+              "icon-image": `pulsing-dot-${index}`,
+              "icon-size": 0.5,
+              "icon-allow-overlap": true,
+            },
+          })
+
+          // Add popup on hover
+          let popup: any = null
+          map.on("mouseenter", `attack-layer-${index}`, (e: any) => {
+            map.getCanvas().style.cursor = "pointer"
+            const coordinates = e.features[0].geometry.coordinates.slice()
+            const { country, percentage } = e.features[0].properties
+
+            if (!popup) {
+              popup = new maplibregl.Popup({
+                closeButton: false,
+                closeOnClick: false,
+                offset: 10,
+              })
+                .setLngLat(coordinates)
+                .setHTML(
+                  `<div style="color: #000; padding: 4px;"><strong>${country}</strong><br/>攻擊比例: ${percentage}%</div>`,
+                )
+                .addTo(map)
+            }
+          })
+
+          map.on("mouseleave", `attack-layer-${index}`, () => {
+            map.getCanvas().style.cursor = ""
+            if (popup) {
+              popup.remove()
+              popup = null
+            }
+          })
+        })
+
+        console.log('✅ Map data updated with', attackSources.length, 'sources')
+      } catch (error) {
+        console.error('❌ Error updating map data:', error)
+      }
+    }
+  }, [attackSources, activeTab])
 
   useEffect(() => {
     if (activeTab !== "cdn" || !cdnMapContainerRef.current) return
@@ -641,13 +1259,21 @@ export default function CloudflareOverviewPage() {
         })
 
         // Add pulsing dot for each latency region
-        latencyRegions.forEach((region, index) => {
+        latencyRegions.forEach((region: { region: string; x: string; y: string; latency: number; color: string; lng: number; lat: number }, index: number) => {
           const size = 100
 
-          const pulsingDot = {
+          const pulsingDot: {
+            width: number
+            height: number
+            data: Uint8Array | Uint8ClampedArray
+            context: CanvasRenderingContext2D | null
+            onAdd: () => void
+            render: () => boolean
+          } = {
             width: size,
             height: size,
             data: new Uint8Array(size * size * 4),
+            context: null,
 
             onAdd: function () {
               const canvas = document.createElement("canvas")
@@ -663,6 +1289,8 @@ export default function CloudflareOverviewPage() {
               const radius = (size / 2) * 0.3
               const outerRadius = (size / 2) * 0.7 * t + radius
               const context = this.context
+
+              if (!context) return true
 
               // Clear canvas
               context.clearRect(0, 0, this.width, this.height)
@@ -734,25 +1362,33 @@ export default function CloudflareOverviewPage() {
             },
           })
 
-          // Add popup on click
-          map.on("click", `latency-layer-${index}`, (e: any) => {
+          // Add popup on hover
+          let popup: any = null
+          map.on("mouseenter", `latency-layer-${index}`, (e: any) => {
+            map.getCanvas().style.cursor = "pointer"
             const coordinates = e.features[0].geometry.coordinates.slice()
             const { region, latency } = e.features[0].properties
 
-            new maplibregl.Popup()
-              .setLngLat(coordinates)
-              .setHTML(
-                `<div style="color: #000; padding: 4px;"><strong>${region}</strong><br/>延遲: ${latency}ms</div>`,
-              )
-              .addTo(map)
-          })
-
-          map.on("mouseenter", `latency-layer-${index}`, () => {
-            map.getCanvas().style.cursor = "pointer"
+            if (!popup) {
+              popup = new maplibregl.Popup({
+                closeButton: false,
+                closeOnClick: false,
+                offset: 10,
+              })
+                .setLngLat(coordinates)
+                .setHTML(
+                  `<div style="color: #000; padding: 4px;"><strong>${region}</strong><br/>延遲: ${latency}ms</div>`,
+                )
+                .addTo(map)
+            }
           })
 
           map.on("mouseleave", `latency-layer-${index}`, () => {
             map.getCanvas().style.cursor = ""
+            if (popup) {
+              popup.remove()
+              popup = null
+            }
           })
         })
       })
@@ -768,280 +1404,6 @@ export default function CloudflareOverviewPage() {
     }
   }, [activeTab])
 
-  const generateAISuggestion = (actionType: string) => {
-    let title = ""
-    let content = ""
-
-    switch (actionType) {
-      case "產生摘要":
-        title = "DDoS 攻擊摘要報告"
-        content = `
-📊 **當前攻擊狀態分析**
-
-🔴 **攻擊概況**
--當前狀態：攻擊緩解中
-- 攻擊峰值：8.2 Gbps (近1小時)
-- 已清洗流量：1.5 TB
-- 攔截率：99.8%
-
-🎯 **攻擊��型分佈**
-- UDP Flood：72% (主要攻擊類型)
-- SYN Flood：18%
-- HTTP Flood：8%
-- 其他：2%
-
-🌍 **主要攻擊來源**
-1. 俄羅斯 (45%) - 1.2 Gbps
-2. 巴西 (20%) - 850 Mbps
-3. 越南 (12%)
-
-✅ **系統狀態**
-- 源伺服器運行正常
-- CDN 快取命中率：98.5%
-- 自動緩解機制已啟動並有效運作
-        `
-        break
-
-      case "產生報告":
-      case "產生建議":
-        title = "AI 智能分析與建議"
-        content = `
-🤖 **AI 深度分析報告**
-
-📈 **攻擊趨勢分析**
-根據過去60分鐘的數據分析，攻擊流量在35分鐘前達到峰值 8.2 Gbps，目前呈現下降趨勢。主要攻擊類型為 UDP Flood (72%)，這是典型的容量耗盡型攻擊。
-
-🎯 **建議措施**
-1. **立即行動**：
-   - 封鎖 TOP 3 攻擊來源 IP (俄羅斯、巴西、越南)
-   - 啟用更嚴格的 Rate Limiting 規則
-
-2. **短期優化**：
-   - 調整 UDP 流量過濾規則
-   - 增加 SYN Cookie 保護
-   - 啟用地理位置封鎖 (針對高風險地區)
-
-3. **長期防護**：
-   - 部署 AI 驅動的異常流量檢測
-   - 建立攻擊模式學習機制
-   - 定期更新 WAF 規則庫
-
-⚠️ **風險評估**
-當前風險等級：中等
-預計攻擊持續時間：1-2 小時
-建議保持高度警戒狀態
-        `
-        break
-
-      case "建立保護任務":
-      case "建立修復任務":
-        title = "自動化保護任務建議"
-        content = `
-🛡️ **智能保護任務配置**
-
-**任務 1：IP 封鎖清單更新**
-- 目標：封鎖 TOP 10 攻擊來源 IP
-- 優先級：高
-- 預計效果：減少 60% 攻擊流量
-- 執行時間：立即
-
-**任務 2：UDP Flood 防護強化**
-- 啟用 UDP 流量限速
-- 設定閾值：1000 pps per IP
-- 超時封鎖時間：30 分鐘
-- 預計效果：阻擋 72% 的主要攻擊
-
-**任務 3：地理位置過濾**
-- 臨時封鎖高風險地區 (俄羅斯、巴西)
-- 允許白名單 IP 通過
-- 持續時間：2 小時
-- 預計效果：減少 65% 攻擊來源
-
-**任務 4：Rate Limiting 規則**
-- 全域 Rate Limit：10000 req/min
-- 單 IP Rate Limit：100 req/min
-- 自動封鎖超限 IP：15 分鐘
-
-✅ 點擊「執行全部任務」開始自動化防護
-        `
-        break
-
-      case "查詢 WAF 規則":
-        title = "WAF 規則檢查與建議"
-        content = `
-🔍 **WAF 規則狀態檢查**
-
-**當前 WAF 配置**
-- 已啟用規則：156 條
-- 自定義規則：23 條
-- 最後更新：2 天前
-
-**建議更新的規則**
-1. **UDP Flood 防護規則**
-   - 當前版本：v2.1
-   - 最新版本：v2.3
-   - 更新內容：增強 UDP 流量識別能力
-   - 建議：立即更新
-
-2. **SYN Flood 防護規則**
-   - 狀態：已啟用
-   - 建議：調整觸發閾值從 5000 降至 3000
-
-3. **HTTP Flood 防護規則**
-   - 狀態：已啟用
-   - 建議：添加 User-Agent 黑名單規則
-
-**新增規則建議**
-- 地理位置封鎖規則 (針對高風險地區)
-- IP 信譽評分規則
-- 異常流量模式檢測規則
-
-🔄 建議執行完整的 WAF 規則庫更新
-        `
-        break
-
-      case "封鎖來源 IP":
-        title = "攻擊來源 IP 封鎖建議"
-        content = `
-🚫 **IP 封鎖策略建議**
-
-**TOP 10 攻擊來源 IP**
-1. 195.191.171.12 (俄羅斯) - 1.2 Gbps
-   ⚠️ 建議：永久封鎖
-   
-2. 200.221.12.45 (巴西) - 850 Mbps
-   ⚠️ 建議：永久封鎖
-
-3. 103.45.67.89 (越南) - 620 Mbps
-   ⚠️ 建議：臨時封鎖 24 小時
-
-4. 185.220.101.23 (俄羅斯) - 580 Mbps
-   ⚠️ 建議：永久封鎖
-
-5. 177.54.32.11 (巴西) - 450 Mbps
-   ⚠️ 建議：臨時封鎖 12 小時
-
-**封鎖策略**
-- 永久封鎖：針對重複攻擊者
-- 臨時封鎖：針對可疑流量
-- 自動解封：24 小時後重新評估
-
-**預計效果**
-- 封鎖後預計減少 85% 攻擊流量
-- 降低伺服器負載 70%
-- 提升正常用戶體驗
-
-✅ 建議立即執行批量封鎖操作
-        `
-        break
-
-      case "啟用 Rate Limit":
-        title = "Rate Limiting 配置建議"
-        content = `
-⚡ **智能 Rate Limiting 配置**
-
-**當前流量分析**
-- 正常流量：3.5 Gbps
-- 攻擊流量：2.8 Gbps (持續下降中)
-- 峰值封包速率：8.5 Mpps
-
-**建議的 Rate Limit 配置**
-
-**1. 全域限制**
-- 總請求數：10,000 req/min
-- 總帶寬：5 Gbps
-- 超限動作：臨時封鎖 15 分鐘
-
-**2. 單 IP 限制**
-- 請求數：100 req/min
-- 帶寬：50 Mbps
-- 連接數：50 concurrent
-- 超限動作：封鎖 30 分鐘
-
-**3. 地理位置限制**
-- 高風險地區：50 req/min per IP
-- 一般地區：100 req/min per IP
-- 白名單地區：無限制
-
-**4. 協議限制**
-- UDP：1000 pps per IP
-- TCP SYN：500 pps per IP
-- ICMP：100 pps per IP
-
-**預期效果**
-- 阻擋 90% 的異常流量
-- 保護正常用戶訪問
-- 降低伺服器負載 80%
-
-⚙️ 建議立即啟用智能 Rate Limiting
-        `
-        break
-
-      default:
-        title = "AI 助手"
-        content = "正在分析中..."
-    }
-
-    setAiSuggestion({
-      show: true,
-      title,
-      content,
-    })
-  }
-
-  const renderAISuggestionSection = () => (
-    <AnimatePresence>
-      {aiSuggestion.show && (
-        <motion.div
-          initial={{ height: 0, opacity: 0 }}
-          animate={{ height: "auto", opacity: 1 }}
-          exit={{ height: 0, opacity: 0 }}
-          transition={{ duration: 0.3 }}
-          className="overflow-hidden mt-4"
-        >
-          <div className="bg-slate-800/50 border border-slate-700 rounded-lg overflow-hidden">
-            {/* Header */}
-            <div className="flex items-center justify-between p-4 border-b border-slate-700 bg-slate-800/80">
-              <div className="flex items-center gap-3">
-                <div className="w-8 h-8 rounded-lg bg-blue-500/20 flex items-center justify-center">
-                  <Sparkles className="w-5 h-5 text-blue-400" />
-                </div>
-                <h3 className="text-lg font-semibold text-white">{aiSuggestion.title}</h3>
-              </div>
-              <button
-                onClick={() => setAiSuggestion({ show: false, title: "", content: "" })}
-                className="text-slate-400 hover:text-white transition-colors"
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-
-            {/* Content */}
-            <div className="p-4 max-h-96 overflow-y-auto">
-              <div className="prose prose-invert max-w-none">
-                <pre className="whitespace-pre-wrap text-sm text-slate-300 leading-relaxed font-sans">
-                  {aiSuggestion.content}
-                </pre>
-              </div>
-            </div>
-
-            {/* Footer */}
-            <div className="p-4 border-t border-slate-700 bg-slate-800/80 flex justify-end gap-3">
-              <button
-                onClick={() => setAiSuggestion({ show: false, title: "", content: "" })}
-                className="px-4 py-2 bg-slate-700 hover:bg-slate-600 text-white text-sm rounded-lg transition-colors"
-              >
-                關閉
-              </button>
-              <button className="px-4 py-2 bg-blue-500 hover:bg-blue-600 text-white text-sm rounded-lg transition-colors">
-                執行建議
-              </button>
-            </div>
-          </div>
-        </motion.div>
-      )}
-    </AnimatePresence>
-  )
 
   const renderContent = () => {
     if (activeTab === "waf") {
@@ -1055,8 +1417,28 @@ export default function CloudflareOverviewPage() {
               transition={{ delay: 0.2, duration: 0.5 }}
               className="bg-slate-900/40 backdrop-blur-md border border-white/10 p-6 rounded-md"
             >
-              <div className="mb-2 text-xs font-normal text-slate-300">總安全事件</div>
-              <div className="text-white font-medium text-2xl">8,452</div>
+              <div className="mb-2 text-xs font-normal text-slate-300">總安全事件</div>              
+              <div className="flex items-baseline gap-2 mb-1">
+                <div className="text-white font-medium text-2xl">
+                  <CountUp end={wafEventsTotal || 0} delay={0.4} duration={1500} />
+                </div>
+                <div className="flex items-center gap-1 relative">
+                  {wafEventsChanges?.total !== 0 ? (
+                    <div className={`flex items-center gap-0.5 ${wafEventsChanges?.total > 0 ? 'text-red-400' : 'text-green-400'}`}>
+                      {wafEventsChanges?.total > 0 ? <TrendingUp className="w-3 h-3" /> : <TrendingDown className="w-3 h-3" />}
+                      <span className="text-sm font-medium">{Math.abs(wafEventsChanges?.total || 0).toFixed(1)}%</span>
+                    </div>
+                  ) : (
+                    <div className="flex items-center gap-0.5 text-slate-500">
+                      <Minus className="w-3 h-3" />
+                      <span className="text-sm font-medium">0.0%</span>
+                    </div>
+                  )}
+                </div>
+              </div>
+              <div className="text-[10px] text-slate-400">
+                Previous: {(wafEventsResp?.previous?.total || 0).toLocaleString()}
+              </div>
             </motion.div>
 
             <motion.div
@@ -1066,7 +1448,30 @@ export default function CloudflareOverviewPage() {
               className="bg-slate-900/40 backdrop-blur-md border border-white/10 p-6 rounded-md"
             >
               <div className="mb-2 text-xs text-slate-300">已阻擋 (Blocked)</div>
-              <div className="text-white font-medium text-2xl">7,980</div>
+              <div className="flex items-baseline gap-2 mb-1">
+                <div className="text-white font-medium text-2xl">
+                  <CountUp end={wafEventsBlocks || 0} delay={0.45} duration={1500} />
+                </div>
+                {/* <div className="flex items-center gap-1 relative">
+                  {wafEventsChanges?.blocks !== 0 ? (
+                    <div className={`flex items-center gap-0.5 ${wafEventsChanges?.blocks > 0 ? 'text-red-400' : 'text-green-400'}`}>
+                      {wafEventsChanges?.blocks > 0 ? <TrendingUp className="w-3 h-3" /> : <TrendingDown className="w-3 h-3" />}
+                      <span className="text-sm font-medium">
+                        {wafEventsBlocks - (wafEventsResp?.previous?.blocks || 0) > 0 ? "+" : ""}
+                        {(wafEventsBlocks - (wafEventsResp?.previous?.blocks || 0)).toLocaleString()}
+                      </span>
+                    </div>
+                  ) : (
+                    <div className="flex items-center gap-0.5 text-slate-500">
+                      <Minus className="w-3 h-3" />
+                      <span className="text-sm font-medium">0</span>
+                    </div>
+                  )}
+                </div> */}
+              </div>
+              <div className="text-[10px] text-slate-400">
+                Previous: {(wafEventsResp?.previous?.blocks || 0).toLocaleString()}
+              </div>
             </motion.div>
 
             <motion.div
@@ -1076,7 +1481,30 @@ export default function CloudflareOverviewPage() {
               className="bg-slate-900/40 backdrop-blur-md border border-white/10 p-6 rounded-md"
             >
               <div className="mb-2 text-xs text-slate-300">僅監控 (Monitored)</div>
-              <div className="text-green-400 font-medium text-2xl">472</div>
+              <div className="flex items-baseline gap-2 mb-1">
+                <div className="text-green-400 font-medium text-2xl">
+                  <CountUp end={wafEventsMonitors || 0} delay={0.5} duration={1500} />
+                </div>
+                {/* <div className="flex items-center gap-1 relative">
+                  {wafEventsChanges?.monitors !== 0 ? (
+                    <div className={`flex items-center gap-0.5 ${wafEventsChanges?.monitors > 0 ? 'text-red-400' : 'text-green-400'}`}>
+                      {wafEventsChanges?.monitors > 0 ? <TrendingUp className="w-3 h-3" /> : <TrendingDown className="w-3 h-3" />}
+                      <span className="text-sm font-medium">
+                        {wafEventsMonitors - (wafEventsResp?.previous?.monitors || 0) > 0 ? "+" : ""}
+                        {(wafEventsMonitors - (wafEventsResp?.previous?.monitors || 0)).toLocaleString()}
+                      </span>
+                    </div>
+                  ) : (
+                    <div className="flex items-center gap-0.5 text-slate-500">
+                      <Minus className="w-3 h-3" />
+                      <span className="text-sm font-medium">0</span>
+                    </div>
+                  )}
+                </div> */}
+              </div>
+              <div className="text-[10px] text-slate-400">
+                Previous: {(wafEventsResp?.previous?.monitors || 0).toLocaleString()}
+              </div>
             </motion.div>
 
             <motion.div
@@ -1086,7 +1514,18 @@ export default function CloudflareOverviewPage() {
               className="bg-slate-900/40 backdrop-blur-md border border-white/10 p-6 rounded-md"
             >
               <div className="mb-2 text-xs text-slate-300">阻擋率</div>
-              <div className="text-green-400 font-medium text-2xl">94.4%</div>
+              <div className="text-green-400 font-medium text-2xl">
+                <CountUp 
+                  end={((wafEventsBlocks || 0) / (wafEventsTotal || 1) * 100)} 
+                  decimals={((wafEventsBlocks || 0) / (wafEventsTotal || 1) * 100) === 0 ? 0 : 2} 
+                  suffix="%" 
+                  delay={0.55} 
+                  duration={1500} 
+                />
+              </div>
+              <div className="text-[10px] text-slate-400">
+                Previous: {((wafEventsResp?.previous?.blocks || 0) / (wafEventsResp?.previous?.total || 0) * 100).toFixed(2)}%
+              </div>
             </motion.div>
           </div>
 
@@ -1099,32 +1538,49 @@ export default function CloudflareOverviewPage() {
               transition={{ delay: 0.4, duration: 0.5 }}
               className="bg-slate-900/40 backdrop-blur-md border border-white/10 p-6 rounded-md"
             >
-              <h3 className="text-white mb-4 font-normal">事件趨勢 (近24小時)</h3>
+              <h3 className="text-white mb-4 font-normal">事件趨勢</h3>
 
               <div className="text-xs text-slate-400 mb-4">
                 Y軸: 事件數量
                 <br />
-                X軸: 小時
+                X軸: 時間
               </div>
 
               <div className="h-64">
-                <ResponsiveContainer width="100%" height="100%">
-                  <BarChart data={wafEventTrendData}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="#334155" opacity={0.3} />
-                    <XAxis dataKey="hour" stroke="#94a3b8" tick={{ fill: "#94a3b8", fontSize: 10 }} />
-                    <YAxis stroke="#94a3b8" tick={{ fill: "#94a3b8", fontSize: 10 }} />
-                    <Tooltip
-                      contentStyle={{
-                        backgroundColor: "#1e293b",
-                        border: "1px solid #334155",
-                        borderRadius: "8px",
-                        color: "#f1f5f9",
-                      }}
-                    />
-                    <Bar dataKey="blocked" stackId="a" fill="#ef4444" name="已阻擋" />
-                    <Bar dataKey="monitored" stackId="a" fill="#f97316" name="僅監控" />
-                  </BarChart>
-                </ResponsiveContainer>
+                {wafEventTrendData.length === 0 ? (
+                  <div className="flex items-center justify-center h-full">
+                    <div className="text-slate-400 text-center">
+                      <p className="text-lg mb-2">暫無數據</p>
+                      <p className="text-sm">請調整時間範圍或檢查數據源</p>
+                    </div>
+                  </div>
+                ) : (
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart data={wafEventTrendData}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="#334155" opacity={0.3} />
+                      <XAxis 
+                        dataKey="hour" 
+                        stroke="#94a3b8" 
+                        tick={{ fill: "#94a3b8", fontSize: 10 }}
+                        angle={-45}
+                        textAnchor="end"
+                        height={70}
+                        interval={Math.ceil(wafEventTrendData.length / 10)}
+                      />
+                      <YAxis stroke="#94a3b8" tick={{ fill: "#94a3b8", fontSize: 10 }} allowDecimals={false} />
+                      <Tooltip
+                        contentStyle={{
+                          backgroundColor: "#1e293b",
+                          border: "1px solid #334155",
+                          borderRadius: "8px",
+                          color: "#f1f5f9",
+                        }}
+                      />
+                      <Bar dataKey="blocked" stackId="a" fill="#ef4444" name="已阻擋" />
+                      <Bar dataKey="monitored" stackId="a" fill="#f97316" name="僅監控" />
+                    </BarChart>
+                  </ResponsiveContainer>
+                )}
               </div>
 
               {/* Legend */}
@@ -1144,78 +1600,333 @@ export default function CloudflareOverviewPage() {
             <motion.div
               initial={{ y: 20, opacity: 0 }}
               animate={{ y: 0, opacity: 1 }}
-              transition={{ delay: 0.45, duration: 0.5 }}
+              transition={{ delay: 0, duration: 0.5 }}
               className="bg-slate-900/40 backdrop-blur-md border border-white/10 p-6 rounded-md"
             >
-              <h3 className="text-white mb-6 font-normal">TOP 5 觸發規則</h3>
+              <h3 className="text-white mb-6 font-normal">TOP 5 被攻擊的網域</h3>
 
-              <div className="space-y-6">
-                {topWafRules.map((rule, index) => {
-                  const maxCount = topWafRules[0].count
-                  const percentage = (rule.count / maxCount) * 100
+              <div className="space-y-6" key={topWafHosts.length}>
+                {topWafHosts.length === 0 ? (
+                  <div className="flex items-center justify-center h-full" style={{ width: "100%", height: "240px" }}>
+                    <div className="text-slate-400 text-center">
+                      <p className="text-base mb-1">暫無數據</p>
+                    </div>
+                  </div>
+                ) : (
+                  topWafHosts.map((item: any, index: number) => {
+                    const maxCount = topWafHosts[0]?.count || 1
+                    const percentage = ((item.count || 0) / maxCount) * 100
 
-                  return (
-                    <div key={index}>
-                      <div className="flex items-center justify-between mb-2">
-                        <span className="text-sm text-slate-300">{rule.name}</span>
-                        <span className="text-sm text-white font-semibold">{rule.count.toLocaleString()}</span>
+                    return (
+                      <div key={index}>
+                        <div className="flex items-center justify-between mb-2">
+                          <span className="text-sm text-slate-300">{item.name}</span>
+                          <div className="text-sm text-white font-semibold">
+                            <CountUp 
+                              end={item.count} 
+                              delay={0.4 + (index * 0.1)} 
+                              duration={1000} 
+                            />
+                          </div>
+                        </div>
+                        <div className="w-full bg-slate-800 rounded-full h-2 overflow-hidden">
+                          <motion.div
+                            key={item.name}
+                            initial={{ width: "0%" }}
+                            animate={{ width: `${percentage}%` }}
+                            transition={{ 
+                              delay: 0.1 + (index * 0.1), 
+                              duration: 1, 
+                              ease: "easeOut" 
+                            }}
+                            className="h-2 rounded-full"
+                            style={{
+                              backgroundColor: item.color,
+                            }}
+                          />
+                        </div>
                       </div>
-                      <div className="w-full bg-slate-800 rounded-full h-2">
-                        <div
-                          className="h-2 rounded-full transition-all duration-500"
-                          style={{
-                            width: `${percentage}%`,
-                            backgroundColor: rule.color,
-                          }}
-                        />
+                    )
+                  })
+                )}
+              </div>
+            </motion.div>
+
+            {/* TOP 10 Countries */}
+            <motion.div
+              initial={{ y: 20, opacity: 0 }}
+              animate={{ y: 0, opacity: 1 }}
+              transition={{ delay: 0, duration: 0.5 }}
+              className="bg-slate-900/40 backdrop-blur-md border border-white/10 p-6 rounded-md"
+            >
+              <h3 className="text-white mb-6 font-normal">TOP 10 攻擊來源國家</h3>
+
+              <div style={{ width: "100%", height: "240px" }}>
+                {attackSources.length === 0 ? (
+                  <div className="flex items-center justify-center h-full">
+                    <div className="text-slate-400 text-center">
+                      <p className="text-base mb-1">暫無數據</p>
+                    </div>
+                  </div>
+                ) : (
+                  <ResponsiveContainer>
+                    <PieChart>
+                      <Pie
+                        data={attackSources.slice(0, 10)}
+                        cx="50%"
+                        cy="50%"
+                        innerRadius={60}
+                        outerRadius={90}
+                        paddingAngle={5}
+                        dataKey="count"
+                        nameKey="country"
+                        stroke="none"
+                      >
+                        {attackSources.slice(0, 10).map((entry: any, index: number) => (
+                          <Cell key={`cell-${index}`} fill={entry.color} />
+                        ))}
+                      </Pie>
+                      <Tooltip
+                        contentStyle={{
+                          backgroundColor: "#1e293b",
+                          border: "1px solid #334155",
+                          borderRadius: "8px",
+                          color: "#ffffff",
+                        }}
+                        itemStyle={{ color: "#ffffff" }}
+                        formatter={(value: number, name: string) => [
+                          `${value.toLocaleString()} 次攻擊`,
+                          name
+                        ]}
+                      />
+                    </PieChart>
+                  </ResponsiveContainer>
+                )}
+              </div>
+
+              <div className="mt-6 flex flex-wrap items-center justify-center gap-x-4 gap-y-2">
+                {attackSources.slice(0, 10).map((item: any, index: number) => (
+                  <div key={index} className="flex items-center gap-2 text-xs">
+                    <div className="w-2.5 h-2.5 rounded-sm shrink-0" style={{ backgroundColor: item.color }} />
+                    <span className="text-slate-300 truncate max-w-[80px]">{item.country}</span>
+                    <span className="text-white font-medium">{item.count.toLocaleString()}</span>
+                  </div>
+                ))}
+              </div>
+            </motion.div>
+
+            {/* TOP 10 Cities */}
+            <motion.div
+              initial={{ y: 20, opacity: 0 }}
+              animate={{ y: 0, opacity: 1 }}
+              transition={{ delay: 0, duration: 0.5 }}
+              className="bg-slate-900/40 backdrop-blur-md border border-white/10 p-6 rounded-md"
+            >
+              <h3 className="text-white mb-6 font-normal">TOP 10 攻擊來源城市</h3>
+
+              <div style={{ width: "100%", height: "240px" }}>
+                {
+                  attackCitySources.length === 0 ? (
+                    <div className="flex items-center justify-center h-full">
+                      <div className="text-slate-400 text-center">
+                        <p className="text-base mb-1">暫無數據</p>
                       </div>
                     </div>
+                  ) : (
+                    <ResponsiveContainer>
+                      <PieChart>
+                        <Pie
+                          data={attackCitySources.slice(0, 10)}
+                          cx="50%"
+                          cy="50%"
+                          innerRadius={60}
+                          outerRadius={90}
+                          paddingAngle={5}
+                          dataKey="count"
+                          nameKey="city"
+                          stroke="none"
+                        >
+                          {attackCitySources.slice(0, 10).map((entry: any, index: number) => (
+                            <Cell key={`cell-${index}`} fill={entry.color} />
+                          ))}
+                        </Pie>
+                        <Tooltip
+                          contentStyle={{
+                            backgroundColor: "#1e293b",
+                            border: "1px solid #334155",
+                            borderRadius: "8px",
+                            color: "#ffffff",
+                          }}
+                          itemStyle={{ color: "#ffffff" }}
+                          formatter={(value: number, name: string) => [
+                            `${value.toLocaleString()} 次攻擊`,
+                            name
+                          ]}
+                        />
+                      </PieChart>
+                    </ResponsiveContainer>
                   )
-                })}
+                }
               </div>
+
+              <div className="mt-6 flex flex-wrap items-center justify-center gap-x-4 gap-y-2">
+                {attackCitySources.slice(0, 10).map((item: any, index: number) => (
+                  <div key={index} className="flex items-center gap-2 text-xs">
+                    <div className="w-2.5 h-2.5 rounded-sm shrink-0" style={{ backgroundColor: item.color }} />
+                    <span className="text-slate-300 truncate max-w-[80px]">{item.city}</span>
+                    <span className="text-white font-medium">{item.count.toLocaleString()}</span>
+                  </div>
+                ))}
+              </div>
+            </motion.div>
+          </div>
+
+          <div className="grid grid-cols-1 gap-12 mb-6">
+            <motion.div
+              initial={{ y: 20, opacity: 0 }}
+              animate={{ y: 0, opacity: 1 }}
+              transition={{ delay: 0.4, duration: 0.5 }}
+              className="bg-slate-900/40 backdrop-blur-md border border-white/10 p-6 rounded-md"
+            >
+              <h3 className="text-white mb-4 font-normal">攻擊活動分析</h3>
+              <div className="h-80">
+                <ResponsiveContainer width="100%" height="100%">
+                  <LineChart data={trafficData}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#334155" opacity={0.3} />
+                    <XAxis
+                      dataKey="timestamp"
+                      stroke="#94a3b8"
+                      tick={{ fill: "#94a3b8", fontSize: 10 }}
+                      tickFormatter={(val) => {
+                        const item = trafficData.find((d: any) => d.timestamp === val);
+                        return item ? item.time : "";
+                      }}
+                      angle={-45}
+                      textAnchor="end"
+                      height={70}
+                      interval="preserveStartEnd"
+                      minTickGap={30} // 增加間距，防止標籤重疊
+                    />
+                    <YAxis
+                      stroke="#94a3b8"
+                      tick={{ fill: "#94a3b8", fontSize: 10 }}
+                      tickFormatter={(value) => value.toLocaleString()}
+                      label={{ value: "請求數", angle: -90, position: "insideLeft", fill: "#94a3b8" }}
+                      domain={trafficYDomain}
+                      ticks={trafficYTicks}
+                      allowDataOverflow={false}
+                    />
+                    <Tooltip
+                      contentStyle={{
+                        backgroundColor: "#1e293b",
+                        border: "1px solid #334155",
+                        borderRadius: "8px",
+                        color: "#f1f5f9",
+                      }}
+                      formatter={(value: number, name: string) => {
+                        const labels: Record<string, string> = {
+                          block: "阻擋 (Block)",
+                          log: "記錄 (Log)",
+                          skip: "跳過 (Skip)",
+                          managedChallenge: "受控的查問",
+                          jschallenge: "JS 查問",
+                          attack: "攻擊總計",
+                          clean: "正常總計"
+                        };
+                        return [value.toLocaleString(), labels[name] || name];
+                      }}
+                      labelFormatter={(label, payload) => {
+                        const fullTime = payload?.[0]?.payload?.fullTime
+                        return `時間: ${fullTime || label}`
+                      }}
+                    />
+                    <Line type="monotone" dataKey="block" stroke="#ef4444" strokeWidth={2} dot={false} animationDuration={1500} animationBegin={100} />
+                    <Line type="monotone" dataKey="log" stroke="#3b82f6" strokeWidth={2} dot={false} animationDuration={1500} animationBegin={100} />
+                    <Line type="monotone" dataKey="skip" stroke="#10b981" strokeWidth={2} dot={false} animationDuration={1500} animationBegin={100} />
+                    <Line type="monotone" dataKey="managedChallenge" stroke="#f59e0b" strokeWidth={2} dot={false} animationDuration={1500} animationBegin={100} />
+                    <Line type="monotone" dataKey="jschallenge" stroke="#8b5cf6" strokeWidth={2} dot={false} animationDuration={1500} animationBegin={100} />
+                    {/* 將參考線放在最後面，確保在最上層 */}
+                    <ReferenceLine y={0} stroke="#475569" strokeWidth={1} />
+                  </LineChart>
+                </ResponsiveContainer>
+              </div>
+
+              {/* Legend */}
+              <div className="flex flex-wrap items-center justify-center gap-4 mt-4">
+                <div className="flex items-center gap-2">
+                  <div className="w-3 h-3 rounded-full bg-red-500" />
+                  <span className="text-xs text-slate-300">阻擋 (Block)</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <div className="w-3 h-3 rounded-full bg-blue-500" />
+                  <span className="text-xs text-slate-300">記錄 (Log)</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <div className="w-3 h-3 rounded-full bg-green-500" />
+                  <span className="text-xs text-slate-300">跳過 (Skip)</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <div className="w-3 h-3 rounded-full bg-amber-500" />
+                  <span className="text-xs text-slate-300">受控的查問</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <div className="w-3 h-3 rounded-full bg-purple-500" />
+                  <span className="text-xs text-slate-300">JS 查問</span>
+                </div>
+              </div>
+
             </motion.div>
           </div>
 
           {/* TOP 10 Attacked URLs */}
           <motion.div
-            initial={{ y: 20, opacity: 0 }}
-            animate={{ y: 0, opacity: 1 }}
-            transition={{ delay: 0.5, duration: 0.5 }}
-            className="bg-slate-900/40 backdrop-blur-md border border-white/10 p-6 rounded-md"
-          >
-            <h3 className="text-white mb-4 font-normal">TOP 10 被攻擊的 URL</h3>
+              initial={{ y: 20, opacity: 0 }}
+              animate={{ y: 0, opacity: 1 }}
+              transition={{ delay: 0.5, duration: 0.5 }}
+              className="bg-slate-900/40 backdrop-blur-md border border-white/10 p-6 rounded-md"
+            >
+              <h3 className="text-white mb-4 font-normal">TOP 10 被攻擊的路徑</h3>
 
-            <div className="overflow-x-auto">
-              <table className="w-full">
-                <thead>
-                  <tr className="border-b border-slate-700">
-                    <th className="text-left py-3 px-4 text-sm font-medium text-slate-400">URL 路徑</th>
-                    <th className="text-left py-3 px-4 text-sm font-medium text-slate-400">攻擊類型</th>
-                    <th className="text-left py-3 px-4 text-sm font-medium text-slate-400">事件數</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {topAttackedUrls.map((item, index) => (
-                    <tr key={index} className="border-b border-slate-800 hover:bg-slate-800/30">
-                      <td className="py-3 px-4 text-sm text-slate-300 font-mono">{item.url}</td>
-                      <td className="py-3 px-4">
-                        <span
-                          className="px-2 py-1 text-xs font-medium rounded"
-                          style={{
-                            backgroundColor: `${item.color}20`,
-                            color: item.color,
-                          }}
-                        >
-                          {item.attackType}
-                        </span>
-                      </td>
-                      <td className="py-3 px-4 text-sm text-slate-300 font-semibold">{item.count.toLocaleString()}</td>
+              <div className="overflow-x-auto">
+                <table className="w-full">
+                  <thead>
+                    <tr className="border-b border-slate-700">
+                      <th className="text-left py-3 px-4 text-sm font-medium text-slate-400">URL 路徑</th>
+                      <th className="text-left py-3 px-4 text-sm font-medium text-slate-400">網域</th>
+                      <th className="text-left py-3 px-4 text-sm font-medium text-slate-400">事件數</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </motion.div>
+                  </thead>
+                  <tbody>
+                    {topAttackedUrlsData.length === 0 ? (
+                      <tr>
+                        <td colSpan={3} className="py-10 text-center text-slate-400">
+                          暫無數據
+                        </td>
+                      </tr>
+                    ) : (
+                      topAttackedUrlsData.map((item: any, index: number) => (
+                        <tr key={index} className="border-b border-slate-800 hover:bg-slate-800/30">
+                          <td className="py-3 px-4 text-sm text-slate-300 font-mono">{item.url}</td>
+                          <td className="py-3 px-4">
+                            <span
+                              className="px-2 py-1 text-xs font-medium rounded"
+                              style={{
+                                backgroundColor: `${item.color}20`,
+                                color: item.color,
+                              }}
+                            >
+                              {item.host}
+                            </span>
+                          </td>
+                          <td className="py-3 px-4 text-sm text-slate-300 font-semibold">{item.count.toLocaleString()}</td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </motion.div>
+
         </>
       )
     }
@@ -1225,16 +1936,35 @@ export default function CloudflareOverviewPage() {
         <>
           {/* DDoS Stats Cards */}
           <div className="grid grid-cols-4 gap-4 mb-6">
+
             <motion.div
               initial={{ y: 20, opacity: 0 }}
               animate={{ y: 0, opacity: 1 }}
-              transition={{ delay: 0.2, duration: 0.5 }}
-              className="bg-slate-900/40 backdrop-blur-md border border-white/10 p-6 rounded-md px-5 py-5"
+              transition={{ delay: 0.25, duration: 0.5 }}
+              className="bg-slate-900/40 backdrop-blur-md border border-white/10 p-6 rounded-md group relative"
             >
-              <div className="mb-2 text-xs font-normal text-slate-300">當前狀態</div>
-              <div className="flex items-center gap-2 mb-2">
-                <AlertTriangle className="w-6 h-6 text-red-400" />
-                <div className="text-red-400 font-medium text-xl">攻擊緩解中</div>
+              <div className="mb-2 text-xs text-slate-300">攻擊峰值</div>
+              <div className="flex items-baseline gap-2 mb-1">
+                <div className="text-2xl text-white font-medium">
+                  <CountUp end={peakRps} decimals={peakRps === 0 ? 0 : 2} delay={0.4} duration={1500} />
+                </div>
+                <div className="text-lg text-white">{peakUnit}</div>
+                {/* <div className="flex items-center gap-1 relative">
+                  {peakChanges?.value !== 0 ? (
+                    <div className={`flex items-center gap-0.5 ${peakChanges?.value > 0 ? 'text-red-400' : 'text-green-400'}`}>
+                      {peakChanges?.value > 0 ? <TrendingUp className="w-3 h-3" /> : <TrendingDown className="w-3 h-3" />}
+                      <span className="text-sm font-medium">{Math.abs(peakChanges?.value || 0).toFixed(1)}%</span>
+                    </div>
+                  ) : (
+                    <div className="flex items-center gap-0.5 text-slate-500">
+                      <Minus className="w-3 h-3" />
+                      <span className="text-sm font-medium">0.0%</span>
+                    </div>
+                  )}
+                </div> */}
+              </div>
+              <div className="text-[10px] text-slate-400">
+                Previous: {peakPrevious?.value.toLocaleString(undefined, { maximumFractionDigits: 2 })} {peakPrevious?.unit}
               </div>
             </motion.div>
 
@@ -1242,27 +1972,61 @@ export default function CloudflareOverviewPage() {
               initial={{ y: 20, opacity: 0 }}
               animate={{ y: 0, opacity: 1 }}
               transition={{ delay: 0.25, duration: 0.5 }}
-              className="bg-slate-900/40 backdrop-blur-md border border-white/10 p-6 rounded-md px-5 py-5"
+              className="bg-slate-900/40 backdrop-blur-md border border-white/10 p-6 rounded-md group relative"
             >
-              <div className="mb-2 text-xs text-slate-300">攻擊峰值 (近1小時)</div>
-              <div className="flex items-baseline gap-2 mb-2">
-                <div className="text-white font-medium text-2xl">8.2</div>
-                <div className="text-lg text-white">Gbps</div>
+              <div className="mb-2 text-xs text-slate-300">L7 已清洗流量</div>
+              <div className="flex items-baseline gap-2 mb-1">
+                <div className="text-2xl text-red-400 font-medium">
+                  <CountUp end={cleanedTrafficData.bytes} decimals={cleanedTrafficData.bytes === 0 ? 0 : 2} delay={0.4} duration={1500} />
+                </div>
+                <div className="text-lg text-red-400">{cleanedTrafficData.unit}</div>
+                <div className="flex items-center gap-1 relative">
+                  {cleanedTrafficChanges?.bytes !== 0 ? (
+                    <div className={`flex items-center gap-0.5 ${cleanedTrafficChanges?.bytes > 0 ? 'text-red-400' : 'text-green-400'}`}>
+                      {cleanedTrafficChanges?.bytes > 0 ? <TrendingUp className="w-3 h-3" /> : <TrendingDown className="w-3 h-3" />}
+                      <span className="text-sm font-medium">{Math.abs(cleanedTrafficChanges?.bytes || 0).toFixed(1)}%</span>
+                    </div>
+                  ) : (
+                    <div className="flex items-center gap-0.5 text-slate-500">
+                      <Minus className="w-3 h-3" />
+                      <span className="text-sm font-medium">0.0%</span>
+                    </div>
+                  )}
+                </div>
+              </div>
+              <div className="text-[10px] text-slate-400">
+                Previous: {cleanedTrafficData.previous?.bytes.toLocaleString(undefined, { maximumFractionDigits: 2 })} {cleanedTrafficData.previous?.unit}
               </div>
             </motion.div>
 
             <motion.div
               initial={{ y: 20, opacity: 0 }}
               animate={{ y: 0, opacity: 1 }}
-              transition={{ delay: 0.3, duration: 0.5 }}
-              className="bg-slate-900/40 backdrop-blur-md border border-white/10 p-6 rounded-md px-5 py-5"
+              transition={{ delay: 0.25, duration: 0.5 }}
+              className="bg-slate-900/40 backdrop-blur-md border border-white/10 p-6 rounded-md group relative"
             >
-              <div className="mb-2 text-xs text-slate-300">已清洗流量</div>
-              <div className="flex items-baseline gap-2 mb-2 font-extralight">
-                <div className="text-3xl text-red-400 font-medium">6.5</div>
-                <div className="text-lg text-red-400">Gbps</div>
+              <div className="mb-2 text-xs text-slate-300">L7 已清洗請求數</div>
+              <div className="flex items-baseline gap-2 mb-1">
+                <div className="text-2xl text-red-400 font-medium">
+                  <CountUp end={cleanedTrafficData.count} delay={0.45} duration={1500} />
+                </div>
+                {/* <div className="flex items-center gap-1 relative">
+                  {cleanedTrafficChanges?.count !== 0 ? (
+                    <div className={`flex items-center gap-0.5 ${cleanedTrafficChanges?.count > 0 ? 'text-red-400' : 'text-green-400'}`}>
+                      {cleanedTrafficChanges?.count > 0 ? <TrendingUp className="w-3 h-3" /> : <TrendingDown className="w-3 h-3" />}
+                      <span className="text-sm font-medium">{Math.abs(cleanedTrafficChanges?.count || 0).toFixed(1)}%</span>
+                    </div>
+                  ) : (
+                    <div className="flex items-center gap-0.5 text-slate-500">
+                      <Minus className="w-3 h-3" />
+                      <span className="text-sm font-medium">0.0%</span>
+                    </div>
+                  )}
+                </div> */}
               </div>
-              <div className="text-xs text-red-400">狀態: 繼續中</div>
+              <div className="text-[10px] text-slate-400">
+                Previous: {cleanedTrafficData.previous?.count.toLocaleString()}
+              </div>
             </motion.div>
 
             <motion.div
@@ -1273,159 +2037,200 @@ export default function CloudflareOverviewPage() {
             >
               <div className="mb-2 text-xs text-slate-300">攔截率</div>
               <div className="flex items-baseline gap-2 mb-2">
-                <div className="text-green-400 font-medium text-2xl">99.8%</div>
+                <div className="text-green-400 font-medium text-2xl">
+                  <CountUp end={cleanedTrafficData?.rate} decimals={cleanedTrafficData?.rate === 0 ? 0 : 2} suffix="%" delay={0.5} duration={1500} />
+                </div>
+                <div className="flex items-center gap-1 relative">
+                  {cleanedTrafficChanges?.rate !== 0 ? (
+                    <div className={`flex items-center gap-0.5 ${cleanedTrafficChanges?.rate > 0 ? 'text-green-400' : 'text-red-400'}`}>
+                      {cleanedTrafficChanges?.rate > 0 ? <TrendingUp className="w-3 h-3" /> : <TrendingDown className="w-3 h-3" />}
+                      <span className="text-sm font-medium">{Math.abs(cleanedTrafficChanges?.rate || 0).toFixed(1)}%</span>
+                    </div>
+                  ) : (
+                    <div className="flex items-center gap-0.5 text-slate-500">
+                      <Minus className="w-3 h-3" />
+                      <span className="text-sm font-medium">0.0%</span>
+                    </div>
+                  )}
+                </div>
               </div>
-              <div className="text-xs text-green-400">狀態: 極佳</div>
+              <div className="text-[10px] text-slate-400">
+                Previous: {cleanedTrafficData?.previous?.rate.toFixed(2)}%
+              </div>
             </motion.div>
           </div>
 
           {/* Analysis Section */}
           <div className="grid grid-cols-2 gap-6 mb-6">
-            {/* Attack Type & Protocol Analysis */}
             <motion.div
               initial={{ y: 20, opacity: 0 }}
               animate={{ y: 0, opacity: 1 }}
               transition={{ delay: 0.4, duration: 0.5 }}
               className="bg-slate-900/40 backdrop-blur-md border border-white/10 p-6 rounded-md"
             >
-              <h3 className="text-white mb-6 font-normal">攻擊類型與協議分佈</h3>
+              <h3 className="text-white mb-4 font-normal">L7 清洗流量即時趨勢</h3>
 
-              <div className="grid grid-cols-2 gap-8">
-                {/* Attack Type Pie Chart */}
-                <div>
-                  <div className="text-sm text-slate-400 mb-4 text-center">攻擊類型圓餅圖</div>
-                  <div style={{ width: "100%", height: "192px" }}>
-                    <ResponsiveContainer>
-                      <PieChart>
-                        <Pie
-                          data={attackTypeData}
-                          cx="50%"
-                          cy="50%"
-                          innerRadius={40}
-                          outerRadius={70}
-                          paddingAngle={2}
-                          dataKey="value"
-                          stroke="none"
-                        >
-                          {attackTypeData.map((entry, index) => (
-                            <Cell key={`attack-${index}`} fill={entry.color} />
-                          ))}
-                        </Pie>
-                        <Tooltip
-                          contentStyle={{
-                            backgroundColor: "#1e293b",
-                            border: "0px solid #334155",
-                            borderRadius: "8px",
-                          }}
-                          formatter={(value: number) => `${value}%`}
-                        />
-                      </PieChart>
-                    </ResponsiveContainer>
-                  </div>
-                  <div className="space-y-2 mt-4">
-                    {attackTypeData.map((item) => (
-                      <div key={item.name} className="flex items-center justify-between text-sm">
-                        <div className="flex items-center gap-2">
-                          <div className="w-3 h-3 rounded" style={{ backgroundColor: item.color }} />
-                          <span className="text-slate-300">{item.name}</span>
-                        </div>
-                        <span className="font-semibold" style={{ color: item.color }}>
-                          {item.value}%
-                        </span>
-                      </div>
-                    ))}
-                  </div>
-                </div>
+              <div className="text-xs text-slate-400 mb-4">
+                Y軸: 流量 ({cleanedTrafficUnit})
+                <br />
+                X軸: 時間
+              </div>
 
-                {/* Protocol Pie Chart */}
-                <div>
-                  <div className="text-sm text-slate-400 mb-4 text-center">流量協議圓餅圖</div>
-                  <div style={{ width: "100%", height: "192px" }}>
-                    <ResponsiveContainer>
-                      <PieChart>
-                        <Pie
-                          data={protocolData}
-                          cx="50%"
-                          cy="50%"
-                          innerRadius={40}
-                          outerRadius={70}
-                          paddingAngle={2}
-                          dataKey="value"
-                          stroke="none"
-                        >
-                          {protocolData.map((entry, index) => (
-                            <Cell key={`protocol-${index}`} fill={entry.color} />
-                          ))}
-                        </Pie>
-                        <Tooltip
-                          contentStyle={{
-                            backgroundColor: "#1e293b",
-                            border: "1px solid #334155",
-                            borderRadius: "8px",
-                          }}
-                          formatter={(value: number) => `${value}%`}
-                        />
-                      </PieChart>
-                    </ResponsiveContainer>
+              <div className="h-64">
+                {cleanedTrafficChartData.length === 0 ? (
+                  <div className="flex items-center justify-center h-full">
+                    <div className="text-slate-400 text-center">
+                      <p className="text-lg mb-2">暫無數據</p>
+                      <p className="text-sm">請調整時間範圍或檢查數據源</p>
+                    </div>
                   </div>
-                  <div className="space-y-2 mt-4">
-                    {protocolData.map((item) => (
-                      <div key={item.name} className="flex items-center justify-between text-sm">
-                        <div className="flex items-center gap-2">
-                          <div className="w-3 h-3 rounded" style={{ backgroundColor: item.color }} />
-                          <span className="text-slate-300">{item.name}</span>
-                        </div>
-                        <span className="font-semibold" style={{ color: item.color }}>
-                          {item.value}%
-                        </span>
-                      </div>
-                    ))}
-                  </div>
+                ) : (
+                  <ResponsiveContainer width="100%" height="100%">
+                    <AreaChart data={cleanedTrafficChartData}>
+                      <defs>
+                        <linearGradient id="colorCleaned" x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="5%" stopColor="#10b981" stopOpacity={0.8} />
+                          <stop offset="95%" stopColor="#10b981" stopOpacity={0.1} />
+                        </linearGradient>
+                      </defs>
+                      <CartesianGrid strokeDasharray="3 3" stroke="#334155" opacity={0.3} />
+                      <XAxis 
+                        dataKey="timestamp" 
+                        stroke="#94a3b8" 
+                        tick={{ fill: "#94a3b8", fontSize: 10 }}
+                        tickFormatter={(val) => {
+                          const item = cleanedTrafficChartData.find((d: any) => d.timestamp === val);
+                          return item ? item.time : "";
+                        }}
+                        angle={-45}
+                        textAnchor="end"
+                        height={70}
+                        interval="preserveStartEnd"
+                        minTickGap={30}
+                      />
+                      <YAxis 
+                        stroke="#94a3b8" 
+                        tick={{ fill: "#94a3b8", fontSize: 10 }} 
+                        tickFormatter={(value) => {
+                          if (value === 0) return "0";
+                          const absValue = Math.abs(value);
+                          const prefix = value < 0 ? "-" : "";
+                          if (Number.isInteger(value)) return value.toString();
+                          if (absValue >= 0.01) return prefix + absValue.toFixed(2);
+                          let i = 3;
+                          while (i < 6) {
+                            if (Math.floor(absValue * Math.pow(10, i) + 0.0000000001) > 0) break;
+                            i++;
+                          }
+                          return prefix + absValue.toFixed(Math.min(i + 1, 6));
+                        }}
+                        label={{ value: `流量 (${cleanedTrafficUnit})`, angle: -90, position: "insideLeft", fill: "#94a3b8" }}
+                        domain={cleanedTrafficYDomain}
+                        ticks={cleanedTrafficYTicks}
+                      />
+                      <Tooltip
+                        contentStyle={{
+                          backgroundColor: "#1e293b",
+                          border: "1px solid #334155",
+                          borderRadius: "8px",
+                          color: "#ffffff",
+                        }}
+                        itemStyle={{ color: "#ffffff" }}
+                        formatter={(value: number) => [`${value.toFixed(2)} ${cleanedTrafficUnit}`, "已清洗流量"]}
+                        labelFormatter={(label, payload) => {
+                          const fullTime = payload?.[0]?.payload?.fullTime
+                          return `時間: ${fullTime || label}`
+                        }}
+                      />
+                      <Area
+                        type="monotone"
+                        dataKey="value"
+                        stroke="#10b981"
+                        fill="url(#colorCleaned)"
+                        strokeWidth={2}
+                        dot={false}
+                        animationDuration={1500}
+                        animationBegin={100}
+                      />
+                    </AreaChart>
+                  </ResponsiveContainer>
+                )}
+              </div>
+
+              {/* Legend */}
+              <div className="flex items-center gap-6 mt-4">
+                <div className="flex items-center gap-2">
+                  <div className="w-3 h-3 bg-green-500 rounded-full" />
+                  <span className="text-sm text-slate-300">已清洗流量 (Cleaned Traffic)</span>
                 </div>
               </div>
             </motion.div>
 
-            {/* Packet Rate Trend */}
             <motion.div
               initial={{ y: 20, opacity: 0 }}
               animate={{ y: 0, opacity: 1 }}
-              transition={{ delay: 0.45, duration: 0.5 }}
+              transition={{ delay: 0, duration: 0.5 }}
               className="bg-slate-900/40 backdrop-blur-md border border-white/10 p-6 rounded-md"
             >
-              <h3 className="text-white mb-4 font-normal">封包速率趨勢 (近1小時)</h3>
+              <h3 className="text-white mb-6 font-normal">TOP 5 攻擊網域</h3>
 
-              <div className="text-xs text-slate-400 mb-4">Y軸: Mpps (百萬封包/秒)</div>
-
-              <div className="h-48">
-                <ResponsiveContainer width="100%" height="100%">
-                  <LineChart data={packetRateData}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="#334155" opacity={0.3} />
-                    <XAxis dataKey="time" stroke="#94a3b8" tick={{ fill: "#94a3b8", fontSize: 10 }} />
-                    <YAxis stroke="#94a3b8" tick={{ fill: "#94a3b8", fontSize: 10 }} />
-                    <Tooltip
-                      contentStyle={{
-                        backgroundColor: "#1e293b",
-                        border: "1px solid #334155",
-                        borderRadius: "8px",
-                        color: "#f1f5f9",
-                      }}
-                      formatter={(value: number) => [`${value} Mpps`, ""]}
-                      labelFormatter={(label) => `時間: ${label} 分鐘`}
-                    />
-                    <Line type="monotone" dataKey="rate" stroke="#3b82f6" strokeWidth={2} dot={false} />
-                  </LineChart>
-                </ResponsiveContainer>
+              <div className="space-y-6" key={topDDoSHostsData.length}>
+                {
+                  topDDoSHostsData.length === 0 ? (
+                    <div className="flex items-center justify-center h-full">
+                      <div className="text-slate-400 text-center">
+                        <p className="text-base mb-1">暫無數據</p>
+                      </div>
+                    </div>
+                  ) : (
+                    topDDoSHostsData.map((item: any, index: number) => {
+                      const maxCount = topDDoSHostsData[0]?.count || 1
+                      const percentage = ((item.count || 0) / maxCount) * 100
+    
+                      return (
+                        <div key={index}>
+                          <div className="flex items-center justify-between mb-2">
+                            <span className="text-sm text-slate-300">{item.name}</span>
+                            <div className="text-sm text-white font-semibold">
+                              <CountUp 
+                                end={item.value} 
+                                suffix={` ${item.unit}`} 
+                                delay={0.4 + (index * 0.1)} 
+                                duration={1000} 
+                              />
+                            </div>
+                          </div>
+                          <div className="w-full bg-slate-800 rounded-full h-2 overflow-hidden">
+                            <motion.div
+                              key={item.name}
+                              initial={{ width: "0%" }}
+                              animate={{ width: `${percentage}%` }}
+                              transition={{ 
+                                delay: 0.1 + (index * 0.1), 
+                                duration: 1, 
+                                ease: "easeOut" 
+                              }}
+                              className="h-2 rounded-full"
+                              style={{
+                                backgroundColor: item.color,
+                              }}
+                            />
+                          </div>
+                        </div>
+                      )
+                    })
+                  )
+                }
               </div>
-
-              <div className="mt-4 text-xs text-slate-400">顯示傳入的惡意封包速率，對於分析非流量型攻擊至關重要。</div>
             </motion.div>
+
           </div>
 
           {/* TOP 10 Attack Source IPs */}
           <motion.div
             initial={{ y: 20, opacity: 0 }}
             animate={{ y: 0, opacity: 1 }}
-            transition={{ delay: 0.5, duration: 0.5 }}
+            transition={{ delay: 0, duration: 0.5 }}
             className="bg-slate-900/40 backdrop-blur-md border border-white/10 p-6 rounded-md mb-6"
           >
             <h3 className="text-white mb-4 font-normal">TOP 10 攻擊來源 IP</h3>
@@ -1437,30 +2242,30 @@ export default function CloudflareOverviewPage() {
                     <th className="text-left py-3 px-4 text-sm font-medium text-slate-400">IP 位址</th>
                     <th className="text-left py-3 px-4 text-sm font-medium text-slate-400">地理位置</th>
                     <th className="text-left py-3 px-4 text-sm font-medium text-slate-400">攻擊流量</th>
-                    <th className="text-left py-3 px-4 text-sm font-medium text-slate-400">操作</th>
+                    <th className="text-left py-3 px-4 text-sm font-medium text-slate-400">次數</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {topAttackIPs.map((item, index) => (
-                    <tr key={index} className="border-b border-slate-800 hover:bg-slate-800/30">
-                      <td className="py-3 px-4 text-sm text-slate-300">{item.ip}</td>
-                      <td className="py-3 px-4 text-sm text-slate-300">
-                        <span className="mr-2">{item.flag}</span>
-                        {item.country}
-                      </td>
-                      <td className="py-3 px-4 text-sm text-red-400 font-semibold">{item.traffic}</td>
-                      <td className="py-3 px-4">
-                        <div className="flex gap-2">
-                          <button className="px-3 py-1 bg-red-500 hover:bg-red-600 text-white text-xs font-medium rounded transition-colors">
-                            永久封鎖
-                          </button>
-                          <button className="px-3 py-1 bg-slate-600 hover:bg-slate-700 text-white text-xs font-medium rounded transition-colors">
-                            解除
-                          </button>
-                        </div>
+                  {topAttackIPsData.length === 0 ? (
+                    <tr>
+                      <td colSpan={4} className="py-10 text-center text-slate-400">
+                        暫無數據
                       </td>
                     </tr>
-                  ))}
+                  ) : (
+                    topAttackIPsData.map((item: any, index: number) => (
+                        <tr key={index} className="border-b border-slate-800 hover:bg-slate-800/30">
+                          <td className="py-3 px-4 text-sm text-slate-300">{item.ip}</td>
+                          <td className="py-3 px-4 text-sm text-slate-300">
+                            <span className="mr-2">{item.flag}</span>
+                            {item.country}
+                          </td>
+                          <td className="py-3 px-4 text-sm text-red-400 font-semibold">{item.total_traffic}</td>
+                          <td className="py-3 px-4 text-sm text-white font-semibold">{item.count}</td>
+                        </tr>
+                      ))
+                    )
+                  }
                 </tbody>
               </table>
             </div>
@@ -1471,7 +2276,6 @@ export default function CloudflareOverviewPage() {
       )
     }
 
-    // ADDED CODE START
     if (activeTab === "cdn") {
       return (
         <>
@@ -1485,8 +2289,26 @@ export default function CloudflareOverviewPage() {
             >
               <div className="mb-2 text-xs font-normal text-slate-300">總傳輸流量</div>
               <div className="flex items-baseline gap-2 mb-2">
-                <div className="text-white font-medium text-2xl">25.8</div>
-                <div className="text-lg text-white">TB</div>
+                <div className="text-white font-medium text-2xl">
+                  <CountUp end={cdnTotalTrafficValue} decimals={cdnTotalTrafficValue === 0 ? 0 : 2} delay={0.4} duration={1500} />
+                </div>
+                <div className="text-lg text-white">{cdnTotalTrafficUnit}</div>
+                <div className="flex items-center gap-1 relative">
+                  {cdnTotalTrafficChanges?.value !== 0 ? (
+                    <div className={`flex items-center gap-0.5 ${cdnTotalTrafficChanges?.value > 0 ? 'text-red-400' : 'text-green-400'}`}>
+                      {cdnTotalTrafficChanges?.value > 0 ? <TrendingUp className="w-3 h-3" /> : <TrendingDown className="w-3 h-3" />}
+                      <span className="text-sm font-medium">{Math.abs(cdnTotalTrafficChanges?.value || 0).toFixed(1)}%</span>
+                    </div>
+                  ) : (
+                    <div className="flex items-center gap-0.5 text-slate-500">
+                      <Minus className="w-3 h-3" />
+                      <span className="text-sm font-medium">0.0%</span>
+                    </div>
+                  )}
+                </div>
+              </div>
+              <div className="text-[10px] text-slate-400">
+                Previous: {cdnTotalTrafficPrevious?.value.toLocaleString(undefined, { maximumFractionDigits: 2 })} {cdnTotalTrafficPrevious?.unit}
               </div>
             </motion.div>
 
@@ -1496,10 +2318,14 @@ export default function CloudflareOverviewPage() {
               transition={{ delay: 0.25, duration: 0.5 }}
               className="bg-slate-900/40 backdrop-blur-md border border-white/10 p-6 rounded-md"
             >
-              <div className="mb-2 text-xs text-slate-300">總請求數</div>
+              <div className="mb-2 text-xs text-slate-300">快取節省率</div>
               <div className="flex items-baseline gap-2 mb-2">
-                <div className="text-white font-medium text-2xl">1.2</div>
-                <div className="text-lg text-white">億</div>
+                <div className="text-white font-medium text-2xl">
+                  <CountUp end={cdnCacheRate} decimals={cdnCacheRate === 0 ? 0 : 2} suffix=" %" delay={0.45} duration={1500} />
+                </div>
+              </div>
+              <div className="text-[10px] text-slate-400">
+                Previous: {cdnTotalTrafficPrevious?.cached_rate.toLocaleString(undefined, { maximumFractionDigits: 2 })} %
               </div>
             </motion.div>
 
@@ -1509,57 +2335,187 @@ export default function CloudflareOverviewPage() {
               transition={{ delay: 0.3, duration: 0.5 }}
               className="bg-slate-900/40 backdrop-blur-md border border-white/10 p-6 rounded-md"
             >
-              <div className="mb-2 text-xs text-slate-300">快取命中率 (流量)</div>
+              <div className="mb-2 text-xs text-slate-300">快取命中率 (Cache Hit)</div>
               <div className="flex items-baseline gap-2 mb-2">
-                <div className="text-white font-medium text-2xl">98.5%</div>
+                <div className="text-green-400 font-medium text-2xl">
+                  <CountUp end={cacheHitRate || 0} decimals={(cacheHitRate || 0) === 0 ? 0 : 2} suffix="%" delay={0.5} duration={1500} />
+                </div>
+                <div className="flex items-center gap-1 relative">
+                  {cacheHitChanges?.rate !== 0 ? (
+                    <div className={`flex items-center gap-0.5 ${cacheHitChanges?.rate > 0 ? 'text-red-400' : 'text-green-400'}`}>
+                      {cacheHitChanges?.rate > 0 ? <TrendingUp className="w-3 h-3" /> : <TrendingDown className="w-3 h-3" />}
+                      <span className="text-sm font-medium">{formatRate(Math.abs(cacheHitChanges?.rate || 0))}%</span>
+                    </div>
+                  ) : (
+                    <div className="flex items-center gap-0.5 text-slate-500">
+                      <Minus className="w-3 h-3" />
+                      <span className="text-sm font-medium">0.00%</span>
+                    </div>
+                  )}
+                </div>
+              </div>
+              <div className="text-[10px] text-slate-400 mb-1">
+               快取次數: Current: {cacheHitCount.toLocaleString()} / Previous: {cacheHitRateResp?.previous?.hits.toLocaleString()}
               </div>
             </motion.div>
 
             <motion.div
               initial={{ y: 20, opacity: 0 }}
               animate={{ y: 0, opacity: 1 }}
-              transition={{ delay: 0.35, duration: 0.5 }}
+              transition={{ delay: 0.2, duration: 0.5 }}
               className="bg-slate-900/40 backdrop-blur-md border border-white/10 p-6 rounded-md"
             >
-              <div className="mb-2 text-xs text-slate-300">節省頻寬</div>
+              <div className="mb-2 text-xs font-normal text-slate-300">平均原站回應時間 (ms)</div>
               <div className="flex items-baseline gap-2 mb-2">
-                <div className="text-green-400 font-medium text-2xl">25.4</div>
-                <div className="text-lg text-green-400">TB</div>
+                <div className="text-white font-medium text-2xl">
+                  <CountUp end={cdnAverageResponseTime} decimals={cdnAverageResponseTime === 0 ? 0 : 2} delay={0.55} duration={1500} />
+                </div>
+              </div>
+              <div className="text-[10px] text-slate-400">
+                Previous: {cdnTotalTrafficPrevious?.average_response_time.toLocaleString(undefined, { maximumFractionDigits: 0 })} ms
               </div>
             </motion.div>
           </div>
 
-          {/* Latency Map & HTTP Status */}
-          <div className="grid grid-cols-2 gap-6 mb-6">
-            {/* Global Latency Map */}
+          <div className="grid grid-cols-1 gap-12 mb-6">
             <motion.div
               initial={{ y: 20, opacity: 0 }}
               animate={{ y: 0, opacity: 1 }}
               transition={{ delay: 0.4, duration: 0.5 }}
               className="bg-slate-900/40 backdrop-blur-md border border-white/10 p-6 rounded-md"
             >
-              <h3 className="text-white mb-4 font-normal">全球平均延遲 (P95 Latency)</h3>
-
-              <div ref={cdnMapContainerRef} className="h-64 bg-slate-950/50 rounded-lg overflow-hidden mb-4" />
-
-              <div className="text-xs text-slate-400 mb-3">
-                地圖上用不同顏色標示各區域的連線延遲，例如綠色(快)、黃色(中)、紅色(慢)。
+              <h3 className="text-white mb-4 font-normal">快取狀態分析</h3>
+              <div className="h-80">
+                <ResponsiveContainer width="100%" height="100%">
+                  <LineChart data={cdnTrafficChartData}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#334155" opacity={0.3} />
+                    <XAxis
+                      dataKey="timestamp"
+                      stroke="#94a3b8"
+                      tick={{ fill: "#94a3b8", fontSize: 10 }}
+                      tickFormatter={(val) => {
+                        const item = cdnTrafficChartData.find((d: any) => d.timestamp === val);
+                        return item ? item.time : "";
+                      }}
+                      angle={-45}
+                      textAnchor="end"
+                      height={70}
+                      interval="preserveStartEnd"
+                      minTickGap={30}
+                    />
+                    <YAxis
+                      stroke="#94a3b8"
+                      tick={{ fill: "#94a3b8", fontSize: 10 }}
+                      tickFormatter={(value) => value.toLocaleString()}
+                      label={{ value: "請求數", angle: -90, position: "insideLeft", fill: "#94a3b8" }}
+                      domain={cdnTrafficYDomain}
+                      ticks={cdnTrafficYTicks}
+                      allowDataOverflow={false}
+                    />
+                    <Tooltip
+                      contentStyle={{
+                        backgroundColor: "#1e293b",
+                        border: "1px solid #334155",
+                        borderRadius: "8px",
+                        color: "#f1f5f9",
+                      }}
+                      formatter={(value: number, name: string) => {
+                        return [value.toLocaleString(), CACHE_STATUS_LABELS[name] || name];
+                      }}
+                      labelFormatter={(label, payload) => {
+                        const fullTime = payload?.[0]?.payload?.fullTime
+                        return `時間: ${fullTime || label}`
+                      }}
+                    />
+                    {cdnStatuses.map((status: string, idx: number) => (
+                      <Line 
+                        key={status}
+                        type="monotone" 
+                        dataKey={status} 
+                        stroke={CACHE_STATUS_COLORS[status] || "#" + Math.floor(Math.random()*16777215).toString(16)} 
+                        strokeWidth={2} 
+                        dot={false} 
+                        animationDuration={1500}
+                        animationBegin={100}
+                      />
+                    ))}
+                    <ReferenceLine y={0} stroke="#475569" strokeWidth={1} />
+                  </LineChart>
+                </ResponsiveContainer>
               </div>
 
               {/* Legend */}
-              <div className="flex items-center gap-6">
-                <div className="flex items-center gap-2">
-                  <div className="w-3 h-3 rounded-full bg-green-500" />
-                  <span className="text-sm text-slate-300">{"< 50ms"}</span>
-                </div>
-                <div className="flex items-center gap-2">
-                  <div className="w-3 h-3 rounded-full bg-orange-500" />
-                  <span className="text-sm text-slate-300">50-150ms</span>
-                </div>
-                <div className="flex items-center gap-2">
-                  <div className="w-3 h-3 rounded-full bg-red-500" />
-                  <span className="text-sm text-slate-300">{"> 150ms"}</span>
-                </div>
+              <div className="flex flex-wrap items-center justify-center gap-4 mt-4">
+                {cdnStatuses.map((status: string) => (
+                  <div key={status} className="flex items-center gap-2">
+                    <div className="w-3 h-3 rounded-full" style={{ backgroundColor: CACHE_STATUS_COLORS[status] || "#ccc" }} />
+                    <span className="text-xs text-slate-300">{CACHE_STATUS_LABELS[status] || status}</span>
+                  </div>
+                ))}
+              </div>
+            </motion.div>
+          </div>
+
+          {/* CDN 節點 & HTTP Status */}
+          <div className="grid grid-cols-2 gap-6 mb-6">
+            <motion.div
+              initial={{ y: 20, opacity: 0 }}
+              animate={{ y: 0, opacity: 1 }}
+              transition={{ delay: 0, duration: 0.5 }}
+              className="bg-slate-900/40 backdrop-blur-md border border-white/10 p-6 rounded-md"
+            >
+              <h3 className="text-white mb-6 font-normal">快取狀態統計</h3>
+              <div style={{ width: "100%", height: "240px" }}>
+                {topCacheStatusData.length === 0 ? (
+                  <div className="flex items-center justify-center h-full">
+                    <div className="text-slate-400 text-center">
+                      <p className="text-base mb-1">暫無數據</p>
+                    </div>
+                  </div>
+                ) : (
+                  <ResponsiveContainer>
+                    <PieChart>
+                      <Pie
+                        data={topCacheStatusData.slice(0, 10)}
+                        cx="50%"
+                        cy="50%"
+                        innerRadius={60}
+                        outerRadius={90}
+                        paddingAngle={5}
+                        dataKey="count"
+                        nameKey="cache_status"
+                        stroke="none"
+                      >
+                        {topCacheStatusData.slice(0, 10).map((entry: any, index: number) => (
+                          <Cell key={`cell-${index}`} fill={entry.color} />
+                        ))}
+                      </Pie>
+                      <Tooltip
+                        contentStyle={{
+                          backgroundColor: "#1e293b",
+                          border: "1px solid #334155",
+                          borderRadius: "8px",
+                          color: "#ffffff",
+                        }}
+                        itemStyle={{ color: "#ffffff" }}
+                        formatter={(value: number, name: string) => [
+                          `${value.toLocaleString()} 次`,
+                          name
+                        ]}
+                      />
+                    </PieChart>
+                  </ResponsiveContainer>
+                )}
+              </div>
+
+              <div className="mt-6 flex flex-wrap items-center justify-center gap-x-4 gap-y-2">
+                {topCacheStatusData.slice(0, 10).map((item: any, index: number) => (
+                  <div key={index} className="flex items-center gap-2 text-xs">
+                    <div className="w-2.5 h-2.5 rounded-sm shrink-0" style={{ backgroundColor: item.color }} />
+                    <span className="text-slate-300 truncate max-w-[80px]">{item.cache_status}</span>
+                    <span className="text-white font-medium">{item.percentage.toLocaleString()} %</span>
+                  </div>
+                ))}
               </div>
             </motion.div>
 
@@ -1567,50 +2523,60 @@ export default function CloudflareOverviewPage() {
             <motion.div
               initial={{ y: 20, opacity: 0 }}
               animate={{ y: 0, opacity: 1 }}
-              transition={{ delay: 0.45, duration: 0.5 }}
+              transition={{ delay: 0, duration: 0.5 }}
               className="bg-slate-900/40 backdrop-blur-md border border-white/10 p-6 rounded-md"
             >
-              <h3 className="text-white mb-4 font-normal">HTTP 狀態碼分佈</h3>
+              <h3 className="text-white mb-6 font-normal">TOP 10 HTTP 狀態碼</h3>
 
-              <div style={{ width: "100%", height: "192px" }}>
-                <ResponsiveContainer>
-                  <PieChart>
-                    <Pie
-                      data={httpStatusData}
-                      cx="50%"
-                      cy="50%"
-                      innerRadius={50}
-                      outerRadius={80}
-                      paddingAngle={2}
-                      dataKey="value"
-                      stroke="none"
-                    >
-                      {httpStatusData.map((entry, index) => (
-                        <Cell key={`status-${index}`} fill={entry.color} />
-                      ))}
-                    </Pie>
-                    <Tooltip
-                      contentStyle={{
-                        backgroundColor: "#1e293b",
-                        border: "1px solid #334155",
-                        borderRadius: "8px",
-                      }}
-                      formatter={(value: number) => `${value}%`}
-                    />
-                  </PieChart>
-                </ResponsiveContainer>
+              <div style={{ width: "100%", height: "240px" }}>
+                {topHttpStatusData.length === 0 ? (
+                  <div className="flex items-center justify-center h-full">
+                    <div className="text-slate-400 text-center">
+                      <p className="text-base mb-1">暫無數據</p>
+                    </div>
+                  </div>
+                ) : (
+                  <ResponsiveContainer>
+                    <PieChart>
+                      <Pie
+                        data={topHttpStatusData.slice(0, 10)}
+                        cx="50%"
+                        cy="50%"
+                        innerRadius={60}
+                        outerRadius={90}
+                        paddingAngle={5}
+                        dataKey="count"
+                        nameKey="http_status"
+                        stroke="none"
+                      >
+                        {topHttpStatusData.slice(0, 10).map((entry: any, index: number) => (
+                          <Cell key={`cell-${index}`} fill={entry.color} />
+                        ))}
+                      </Pie>
+                      <Tooltip
+                        contentStyle={{
+                          backgroundColor: "#1e293b",
+                          border: "1px solid #334155",
+                          borderRadius: "8px",
+                          color: "#ffffff",
+                        }}
+                        itemStyle={{ color: "#ffffff" }}
+                        formatter={(value: number, name: string) => [
+                          `${value.toLocaleString()} 次`,
+                          name
+                        ]}
+                      />
+                    </PieChart>
+                  </ResponsiveContainer>
+                )}
               </div>
 
-              <div className="space-y-2 mt-4">
-                {httpStatusData.map((item) => (
-                  <div key={item.name} className="flex items-center justify-between text-sm">
-                    <div className="flex items-center gap-2">
-                      <div className="w-3 h-3 rounded" style={{ backgroundColor: item.color }} />
-                      <span className="text-slate-300">{item.name}</span>
-                    </div>
-                    <span className="font-semibold" style={{ color: item.color }}>
-                      {item.value}%
-                    </span>
+              <div className="mt-6 flex flex-wrap items-center justify-center gap-x-4 gap-y-2">
+                {topHttpStatusData.slice(0, 10).map((item: any, index: number) => (
+                  <div key={index} className="flex items-center gap-2 text-xs">
+                    <div className="w-2.5 h-2.5 rounded-sm shrink-0" style={{ backgroundColor: item.color }} />
+                    <span className="text-slate-300 truncate max-w-[80px]">{item.http_status}</span>
+                    <span className="text-white font-medium">{item.percentage.toLocaleString()} %</span>
                   </div>
                 ))}
               </div>
@@ -1619,78 +2585,52 @@ export default function CloudflareOverviewPage() {
 
           {/* Traffic & Request Trend */}
           <motion.div
-            initial={{ y: 20, opacity: 0 }}
-            animate={{ y: 0, opacity: 1 }}
-            transition={{ delay: 0.5, duration: 0.5 }}
-            className="bg-slate-900/40 backdrop-blur-md border border-white/10 p-6 rounded-md"
-          >
-            <h3 className="text-white mb-4 font-normal">流量與請求數趨勢 (近24小時)</h3>
+              initial={{ y: 20, opacity: 0 }}
+              animate={{ y: 0, opacity: 1 }}
+              transition={{ delay: 0.5, duration: 0.5 }}
+              className="bg-slate-900/40 backdrop-blur-md border border-white/10 p-6 rounded-md"
+            >
+              <h3 className="text-white mb-4 font-normal">TOP 5 CDN 節點</h3>
 
-            <div className="h-80">
-              <ResponsiveContainer width="100%" height="100%">
-                <LineChart data={trafficTrendData}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#334155" opacity={0.3} />
-                  <XAxis dataKey="hour" stroke="#94a3b8" tick={{ fill: "#94a3b8", fontSize: 10 }} />
-                  <YAxis
-                    yAxisId="left"
-                    stroke="#3b82f6"
-                    tick={{ fill: "#3b82f6", fontSize: 10 }}
-                    label={{ value: "流量 (TB)", angle: -90, position: "insideLeft", fill: "#3b82f6" }}
-                  />
-                  <YAxis
-                    yAxisId="right"
-                    orientation="right"
-                    stroke="#10b981"
-                    tick={{ fill: "#10b981", fontSize: 10 }}
-                    label={{ value: "請求數 (百萬)", angle: 90, position: "insideRight", fill: "#10b981" }}
-                  />
-                  <Tooltip
-                    contentStyle={{
-                      backgroundColor: "#1e293b",
-                      border: "1px solid #334155",
-                      borderRadius: "8px",
-                      color: "#f1f5f9",
-                    }}
-                    formatter={(value: number, name: string) => [
-                      name === "traffic" ? `${value} TB` : `${value} 百萬`,
-                      name === "traffic" ? "流量" : "請求數",
-                    ]}
-                    labelFormatter={(label) => `時間: ${label} 時`}
-                  />
-                  <Line
-                    yAxisId="left"
-                    type="monotone"
-                    dataKey="traffic"
-                    stroke="#3b82f6"
-                    strokeWidth={2}
-                    dot={{ fill: "#3b82f6", r: 4 }}
-                    name="traffic"
-                  />
-                  <Line
-                    yAxisId="right"
-                    type="monotone"
-                    dataKey="requests"
-                    stroke="#10b981"
-                    strokeWidth={2}
-                    dot={{ fill: "#10b981", r: 4 }}
-                    name="requests"
-                  />
-                </LineChart>
-              </ResponsiveContainer>
-            </div>
-
-            <div className="mt-4 text-xs text-slate-400">幫助使用者觀察流量尖峰與請求數的關係。</div>
-          </motion.div>
+              <div className="overflow-x-auto">
+                <table className="w-full">
+                  <thead>
+                    <tr className="border-b border-slate-700">
+                      <th className="text-left py-3 px-4 text-sm font-medium text-slate-400">節點</th>
+                      <th className="text-left py-3 px-4 text-sm font-medium text-slate-400">平均原站回應時間 (ms)</th>
+                      <th className="text-left py-3 px-4 text-sm font-medium text-slate-400">次數</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {topCdnNodesData.length === 0 ? (
+                      <tr>
+                        <td colSpan={3} className="py-10 text-center text-slate-400">
+                          暫無數據
+                        </td>
+                      </tr>
+                    ) : (
+                      topCdnNodesData.map((item: any, index: number) => (
+                        <tr key={index} className="border-b border-slate-800 hover:bg-slate-800/30">
+                          <td className="py-3 px-4 text-sm text-slate-200 font-mono">{item.name}</td>
+                          <td className="py-3 px-4 text-sm text-slate-300 font-semibold">{item.responseTime}</td>
+                          <td className="py-3 px-4 text-sm text-slate-300 font-semibold">{item.count.toLocaleString()}</td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </motion.div>
         </>
       )
     }
-    // ADDED CODE END
 
     // Overview tab content
     return (
       <>
+
         {/* Alert Banner */}
-        <motion.div
+        {/* <motion.div
           initial={{ y: -20, opacity: 0 }}
           animate={{ y: 0, opacity: 1 }}
           transition={{ duration: 0.5 }}
@@ -1718,37 +2658,67 @@ export default function CloudflareOverviewPage() {
               查看即時攻擊詳情
             </button>
           </div>
-        </motion.div>
+        </motion.div> */}
 
         {/* Stats Cards */}
         <div className="grid grid-cols-4 gap-4 mb-6">
           <motion.div
-            initial={{ y: 20, opacity: 0 }}
-            animate={{ y: 0, opacity: 1 }}
-            transition={{ delay: 0.2, duration: 0.5 }}
-            className="bg-slate-900/40 backdrop-blur-md border border-white/10 p-6 rounded-md"
-          >
-            <div className="mb-2 text-xs font-normal text-slate-300">DDoS 清洗流量 (Inbound)</div>
-            <div className="flex items-baseline gap-2 mb-2 font-extralight">
-              <div className="text-3xl font-medium text-green-400">6.5</div>
-              <div className="text-lg text-green-400">Gbps</div>
-            </div>
-            <div className="text-xs text-green-400">狀態: 繼續中</div>
-          </motion.div>
+              initial={{ y: 20, opacity: 0 }}
+              animate={{ y: 0, opacity: 1 }}
+              transition={{ delay: 0.25, duration: 0.5 }}
+              className="bg-slate-900/40 backdrop-blur-md border border-white/10 p-6 rounded-md group relative"
+            >
+              <div className="mb-2 text-xs text-slate-300">DDoS 清洗流量</div>
+              <div className="flex items-baseline gap-2 mb-1">
+                <div className="text-2xl text-green-400 font-medium">
+                  <CountUp 
+                    end={cleanedTrafficData.bytes} 
+                    decimals={cleanedTrafficData.bytes === 0 ? 0 : 2} 
+                    delay={0.5}
+                    duration={1500}
+                  />
+                </div>
+                <div className="text-lg text-green-400">{cleanedTrafficData.unit}</div>
+              </div>
+              <div className="text-[10px] text-slate-400">
+                Previous: {cleanedTrafficData.previous?.bytes.toLocaleString(undefined, { maximumFractionDigits: 2 })} {cleanedTrafficData.previous?.unit}
+              </div>
+            </motion.div>
 
           <motion.div
             initial={{ y: 20, opacity: 0 }}
             animate={{ y: 0, opacity: 1 }}
             transition={{ delay: 0.25, duration: 0.5 }}
-            className="bg-slate-900/40 backdrop-blur-md border border-white/10 p-6 rounded-md"
+            className="bg-slate-900/40 backdrop-blur-md border border-white/10 p-6 rounded-md group relative"
           >
-            <div className="mb-2 text-xs text-slate-300">WAF 已阻擋威脅 (近1小時)</div>
-            <div className="flex items-baseline gap-2 mb-2">
-              <div className="text-3xl text-white font-medium">1,280</div>
-              <div className="flex items-center gap-1 text-orange-400">
-                <TrendingUp className="w-4 h-4" />
-                <span className="text-sm">150%</span>
+            <div className="mb-2 text-xs text-slate-300">WAF 已阻擋威脅</div>
+            <div className="flex items-baseline gap-2 mb-1">
+              <div className="text-2xl text-white font-medium">
+                <CountUp 
+                  end={wafEventsBlocks || 0} 
+                  delay={0.6}
+                  duration={1500}
+                />
               </div>
+              {/* <div className="flex items-center gap-1 relative">
+                {wafEventsChanges?.blocks !== 0 ? (
+                  <div className={`flex items-center gap-0.5 ${wafEventsChanges?.blocks > 0 ? 'text-red-400' : 'text-green-400'}`}>
+                    {wafEventsChanges?.blocks > 0 ? <TrendingUp className="w-3 h-3" /> : <TrendingDown className="w-3 h-3" />}
+                    <span className="text-sm font-medium">
+                      {wafEventsBlocks - (wafEventsResp?.previous?.blocks || 0) > 0 ? "+" : ""}
+                      {(wafEventsBlocks - (wafEventsResp?.previous?.blocks || 0)).toLocaleString()}
+                    </span>
+                  </div>
+                ) : (
+                  <div className="flex items-center gap-0.5 text-slate-500">
+                    <Minus className="w-3 h-3" />
+                    <span className="text-sm font-medium">0</span>
+                  </div>
+                )}
+              </div> */}
+            </div>
+            <div className="text-[10px] text-slate-400">
+              Previous: {(wafEventsResp?.previous?.blocks || 0).toLocaleString()}
             </div>
           </motion.div>
 
@@ -1756,26 +2726,72 @@ export default function CloudflareOverviewPage() {
             initial={{ y: 20, opacity: 0 }}
             animate={{ y: 0, opacity: 1 }}
             transition={{ delay: 0.3, duration: 0.5 }}
-            className="bg-slate-900/40 backdrop-blur-md border border-white/10 p-6 rounded-md"
+            className="bg-slate-900/40 backdrop-blur-md border border-white/10 p-6 rounded-md group relative"
           >
             <div className="mb-2 text-xs text-slate-300">CDN 快取命中率 (Cache Hit)</div>
-            <div className="flex items-baseline gap-2 mb-2">
-              <div className="text-3xl text-green-400 font-medium">98.5%</div>
+            <div className="flex items-baseline gap-2 mb-1">
+              <div className="text-2xl font-medium text-white">
+                <CountUp 
+                  end={cacheHitRate || 0} 
+                  decimals={cacheHitRate === 0 ? 0 : 2}
+                  suffix="%"
+                  delay={0.7}
+                  duration={1500}
+                />
+              </div>
+              <div className="flex items-center gap-1 relative">
+                {cacheHitChanges?.rate !== 0 ? (
+                  <div className={`flex items-center gap-0.5 ${cacheHitChanges?.rate > 0 ? 'text-red-400' : 'text-green-400'}`}>
+                    {cacheHitChanges?.rate > 0 ? <TrendingUp className="w-3 h-3" /> : <TrendingDown className="w-3 h-3" />}
+                    <span className="text-sm font-medium">{formatRate(Math.abs(cacheHitChanges?.rate || 0))}%</span>
+                  </div>
+                ) : (
+                  <div className="flex items-center gap-0.5 text-slate-500">
+                    <Minus className="w-3 h-3" />
+                    <span className="text-sm font-medium">0.00%</span>
+                  </div>
+                )}
+              </div>
             </div>
-            <div className="text-xs text-green-400">狀態: 極佳</div>
+            <div className="text-[10px] text-slate-400 mb-1">
+              Previous: {formatRate(cacheHitRateResp?.previous?.rate || 0)}%
+            </div>
           </motion.div>
 
           <motion.div
             initial={{ y: 20, opacity: 0 }}
             animate={{ y: 0, opacity: 1 }}
             transition={{ delay: 0.35, duration: 0.5 }}
-            className="bg-slate-900/40 backdrop-blur-md border border-white/10 p-6 rounded-md"
+            className="bg-slate-900/40 backdrop-blur-md border border-white/10 p-6 rounded-md group relative"
           >
             <div className="mb-2 text-xs text-slate-300">源伺服器錯誤率 (5xx)</div>
-            <div className="flex items-baseline gap-2 mb-2">
-              <div className="text-3xl text-green-400 font-medium">0.01%</div>
+            <div className="flex items-baseline gap-2 mb-1">
+              <div className="text-2xl font-medium text-white">
+                <CountUp 
+                  end={originErrorRate || 0} 
+                  decimals={originErrorRate === 0 ? 0 : 2}
+                  suffix="%"
+                  delay={0.8}
+                  duration={1500}
+                />
+              </div>
+              <div className="flex items-center gap-1 relative">
+                {originErrorChanges?.rate !== 0 ? (
+                  <div className={`flex items-center gap-0.5 ${originErrorChanges?.rate < 0 ? 'text-green-400' : 'text-red-400'}`}>
+                    {originErrorChanges?.rate > 0 ? <TrendingUp className="w-3 h-3" /> : <TrendingDown className="w-3 h-3" />}
+                    <span className="text-sm font-medium">{formatRate(Math.abs(originErrorChanges?.rate || 0))}%</span>
+                  </div>
+                ) : (
+                  <div className="flex items-center gap-0.5 text-slate-500">
+                    <Minus className="w-3 h-3" />
+                    <span className="text-sm font-medium">0.00%</span>
+                  </div>
+                )}
+              </div>
             </div>
-            <div className="text-xs text-green-400">狀態: 穩定</div>
+            <div className="text-[10px] text-slate-400 mb-1">
+              Previous: {formatRate(originErrorRateResp?.previous?.rate || 0)}%
+            </div>
           </motion.div>
         </div>
 
@@ -1783,37 +2799,67 @@ export default function CloudflareOverviewPage() {
         <div className="grid grid-cols-2 gap-6 mb-6">
           {/* Traffic Analysis Chart */}
           <motion.div
-            initial={{ y: 20, opacity: 0 }}
-            animate={{ y: 0, opacity: 1 }}
-            transition={{ delay: 0.4, duration: 0.5 }}
+            initial={{ scale: 0.9, opacity: 0, y: 20 }}
+            animate={{ scale: 1, opacity: 1, y: 0 }}
+            transition={{ type: "spring", stiffness: 260, damping: 20, delay: 0.3 }}
             className="bg-slate-900/40 backdrop-blur-md border border-white/10 p-6 rounded-md"
           >
-            <h3 className="text-white mb-4 font-normal">即時流量分析 (近60分鐘)</h3>
-
-            <div className="h-64">
+            <h3 className="text-white mb-4 font-normal">即時流量分析</h3>
+            <div className="h-80">
               <ResponsiveContainer width="100%" height="100%">
-                <AreaChart data={trafficData}>
+                <AreaChart data={trafficAnalysisChartData}>
                   <defs>
-                    <linearGradient id="colorAttack" x1="0" y1="0" x2="0" y2="1">
+                    <linearGradient id="colorBlock" x1="0" y1="0" x2="0" y2="1">
                       <stop offset="5%" stopColor="#ef4444" stopOpacity={0.8} />
                       <stop offset="95%" stopColor="#ef4444" stopOpacity={0.1} />
                     </linearGradient>
-                    <linearGradient id="colorClean" x1="0" y1="0" x2="0" y2="1">
+                    <linearGradient id="colorLog" x1="0" y1="0" x2="0" y2="1">
                       <stop offset="5%" stopColor="#3b82f6" stopOpacity={0.8} />
                       <stop offset="95%" stopColor="#3b82f6" stopOpacity={0.1} />
                     </linearGradient>
                   </defs>
                   <CartesianGrid strokeDasharray="3 3" stroke="#334155" opacity={0.3} />
                   <XAxis
-                    dataKey="time"
+                    dataKey="timestamp"
                     stroke="#94a3b8"
                     tick={{ fill: "#94a3b8", fontSize: 10 }}
-                    label={{ value: "時間 (分鐘)", position: "insideBottom", offset: -5, fill: "#94a3b8" }}
+                    tickFormatter={(val) => {
+                      const item = trafficAnalysisChartData.find((d: any) => d.timestamp === val);
+                      return item ? item.time : "";
+                    }}
+                    angle={-45}
+                    textAnchor="end"
+                    height={70}
+                    interval="preserveStartEnd"
+                    minTickGap={30}
                   />
                   <YAxis
                     stroke="#94a3b8"
                     tick={{ fill: "#94a3b8", fontSize: 10 }}
-                    label={{ value: "流量 (Gbps)", angle: -90, position: "insideLeft", fill: "#94a3b8" }}
+                    tickFormatter={(value) => {
+                      if (value === 0) return "0";
+                      const absValue = Math.abs(value);
+                      const prefix = value < 0 ? "-" : "";
+
+                      // 如果是整數，直接顯示 (例如 1, -1)
+                      if (Number.isInteger(value)) return value.toString();
+
+                      // 1. 如果大於等於 0.01，正常顯示兩位
+                      if (absValue >= 0.01) return prefix + absValue.toFixed(2);
+                      
+                      // 2. 尋找第一個非零位元的位置 i
+                      let i = 3;
+                      while (i < 6) {
+                        if (Math.floor(absValue * Math.pow(10, i) + 0.0000000001) > 0) break;
+                        i++;
+                      }
+                      // 3. 顯示到第一個非零位元的下一位 (i+1)，最大到 6 位
+                      return prefix + absValue.toFixed(Math.min(i + 1, 6));
+                    }}
+                    label={{ value: `流量 (${trafficAnalysisUnit})`, angle: -90, position: "insideLeft", fill: "#94a3b8" }}
+                    domain={trafficAnalysisYDomain}
+                    ticks={trafficAnalysisYTicks}
+                    allowDataOverflow={false}
                   />
                   <Tooltip
                     contentStyle={{
@@ -1822,28 +2868,51 @@ export default function CloudflareOverviewPage() {
                       borderRadius: "8px",
                       color: "#f1f5f9",
                     }}
-                    formatter={(value: number, name: string) => [
-                      `${value} Gbps`,
-                      name === "attack" ? "攻擊流量" : "正常流量",
-                    ]}
-                    labelFormatter={(label) => `時間: ${label} 分鐘`}
+                    formatter={(value: number, name: string) => {
+                      const formatVal = (val: number) => {
+                        if (val === 0) return "0";
+                        if (val >= 0.01) return val.toFixed(2);
+                        
+                        let i = 3;
+                        while (i < 6) {
+                          if (Math.floor(val * Math.pow(10, i) + 0.0000000001) > 0) break;
+                          i++;
+                        }
+                        return val.toFixed(Math.min(i + 1, 6));
+                      };
+                      const labels: Record<string, string> = {
+                        attackVal: "攻擊流量 (Attack Traffic)",
+                        cleanVal: "正常流量 (Clean Traffic)",
+                      };
+                      return [`${formatVal(value)} ${trafficAnalysisUnit}`, labels[name] || name];
+                    }}
+                    labelFormatter={(label, payload) => {
+                      const fullTime = payload?.[0]?.payload?.fullTime
+                      return `時間: ${fullTime || label}`
+                    }}
                   />
                   <Area
                     type="monotone"
-                    dataKey="attack"
-                    stackId="1"
+                    dataKey="attackVal"
                     stroke="#ef4444"
-                    fill="url(#colorAttack)"
+                    fill="url(#colorBlock)"
                     strokeWidth={2}
+                    dot={false}
+                    animationDuration={1500}
+                    animationBegin={100}
                   />
                   <Area
                     type="monotone"
-                    dataKey="clean"
-                    stackId="1"
+                    dataKey="cleanVal"
                     stroke="#3b82f6"
-                    fill="url(#colorClean)"
+                    fill="url(#colorLog)"
                     strokeWidth={2}
+                    dot={false}
+                    animationDuration={1500}
+                    animationBegin={100}
                   />
+                  {/* 將參考線放在最後面，確保在最上層 */}
+                  <ReferenceLine y={0} stroke="#475569" strokeWidth={1} />
                 </AreaChart>
               </ResponsiveContainer>
             </div>
@@ -1860,20 +2929,16 @@ export default function CloudflareOverviewPage() {
               </div>
             </div>
 
-            {/* AI Insight */}
-            <div className="mt-4 text-xs text-cyan-400">
-              AI 洞察: 攻擊流量在 15 分鐘前達到峰值，目前已趨於平緩，清洗中心已有效過濾 99.8% 的惡意流量。
-            </div>
           </motion.div>
 
           {/* Global Attack Sources with MapLibre */}
           <motion.div
             initial={{ y: 20, opacity: 0 }}
             animate={{ y: 0, opacity: 1 }}
-            transition={{ delay: 0.45, duration: 0.5 }}
+            transition={{ delay: 0, duration: 0 }}
             className="bg-slate-900/40 backdrop-blur-md border border-white/10 p-6 rounded-md"
           >
-            <h3 className="text-white mb-4 font-normal">全球攻擊來源 (近1小時)</h3>
+            <h3 className="text-white mb-4 font-normal">全球攻擊來源</h3>
 
             <div ref={mapContainerRef} className="h-64 bg-slate-950/50 rounded-lg overflow-hidden mb-4" />
 
@@ -1881,7 +2946,7 @@ export default function CloudflareOverviewPage() {
             <div>
               <div className="text-sm text-slate-400 mb-3">TOP 3 來源:</div>
               <div className="space-y-2">
-                {attackSources.map((source, index) => (
+                {attackSources.slice(0, 3).map((source: { country: string; percentage: number; color: string }, index: number) => (
                   <div key={index} className="flex items-center justify-between">
                     <div className="flex items-center gap-2">
                       <div className="w-3 h-3 rounded-full" style={{ backgroundColor: source.color }} />
@@ -1904,12 +2969,89 @@ export default function CloudflareOverviewPage() {
 
   return (
     <div className="min-h-screen bg-[#08131D] p-8">
+      <motion.div
+        initial={{ y: -20, opacity: 0 }}
+        animate={{ y: 0, opacity: 1 }}
+        transition={{ duration: 0.3 }}
+        className="mb-6 bg-slate-900/40 backdrop-blur-md border border-white/10 p-4 rounded-md"
+      >
+        <div className="flex items-center justify-between gap-4 flex-wrap">
+          <div className="flex items-center gap-4">
+            <div className="flex items-center gap-2 text-slate-300">
+              <Calendar className="w-4 h-4" />
+              <span className="text-sm font-medium">資料時間範圍：</span>
+            </div>
+
+            {/* 開始日期 */}
+            <div className="flex items-center gap-2">
+              <span className="text-sm text-slate-400">開始日期</span>
+              <Popover>
+                <PopoverTrigger asChild>
+                  <Button variant="outline" className="bg-slate-800 border-slate-700 hover:bg-slate-700 text-white">
+                    {actualTimeRange.from.toLocaleString("zh-TW", {
+                      year: 'numeric',
+                      month: '2-digit',
+                      day: '2-digit',
+                      hour: '2-digit',
+                      minute: '2-digit',
+                      hour12: false
+                    })}
+                  </Button>
+                </PopoverTrigger>
+                <PopoverContent className="w-auto p-0 bg-slate-900 border-slate-700">
+                  <DateTimePicker 
+                    selected={new Date(timeRange.from)} 
+                    onSelect={(date) => date && setTimeRange({ 
+                      ...timeRange, 
+                      from: date,
+                      mode: 'absolute'
+                    })} 
+                  />
+                </PopoverContent>
+              </Popover>
+            </div>
+
+            {/* 結束日期 */}
+            <div className="flex items-center gap-2">
+              <span className="text-sm text-slate-400">結束日期</span>
+              <Popover>
+                <PopoverTrigger asChild>
+                  <Button variant="outline" className="bg-slate-800 border-slate-700 hover:bg-slate-700 text-white">
+                    {actualTimeRange.to.toLocaleString("zh-TW", {
+                      year: 'numeric',
+                      month: '2-digit',
+                      day: '2-digit',
+                      hour: '2-digit',
+                      minute: '2-digit',
+                      hour12: false
+                    })}
+                  </Button>
+                </PopoverTrigger>
+                <PopoverContent className="w-auto p-0 bg-slate-900 border-slate-700">
+                  <DateTimePicker 
+                    selected={new Date(timeRange.to)} 
+                    onSelect={(date) => date && setTimeRange({ 
+                      ...timeRange, 
+                      to: date,
+                      mode: 'absolute'
+                    })} 
+                  />
+                </PopoverContent>
+              </Popover>
+            </div>
+          </div>
+
+          {/* 快速選擇按鈕 */}
+          <TimeRangeControls/>
+        </div>
+      </motion.div>
+
       {/* Top Navigation Tabs */}
       <motion.div
         initial={{ y: -20, opacity: 0 }}
         animate={{ y: 0, opacity: 1 }}
         transition={{ duration: 0.5 }}
-        className="flex gap-2 mb-6 rounded-md"
+        className="flex gap-2 mb-4 rounded-md"
       >
         {tabs.map((tab) => (
           <button
@@ -1922,9 +3064,30 @@ export default function CloudflareOverviewPage() {
             }`}
           >
             {tab.label}
-            {tab.sublabel && <span className="ml-2 text-xs opacity-70">({tab.sublabel})</span>}
           </button>
         ))}
+      </motion.div>
+
+      <motion.div
+        initial={{ y: -10, opacity: 0 }}
+        animate={{ y: 0, opacity: 1 }}
+        transition={{ duration: 0.3, delay: 0.1 }}
+        className="flex items-center gap-2 mb-6"
+      >
+        <div className="bg-slate-900/40 backdrop-blur-md border border-white/10 px-4 py-2 rounded-md flex items-center gap-3">
+          <span className="text-sm text-slate-400 whitespace-nowrap font-medium">網域篩選：</span>
+          <Select value={selectedZone} onValueChange={setSelectedZone}>
+            <SelectTrigger className="w-[240px] bg-slate-800/50 border-slate-700 text-white h-9">
+              <SelectValue placeholder="選擇網域" />
+            </SelectTrigger>
+            <SelectContent className="bg-slate-900 border-slate-700 text-white">
+              <SelectItem value="all">所有網域</SelectItem>
+              {userZones.map((zone) => (
+                <SelectItem key={zone} value={zone}>{zone}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
       </motion.div>
 
       {renderContent()}
