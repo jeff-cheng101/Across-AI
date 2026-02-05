@@ -17,6 +17,7 @@ import { CountUp } from '@/components/CountUp';
 
 export default function Dashboard() {
   const router = useRouter();
+  const tenableUrl = process.env.NEXT_PUBLIC_TENABLE_URL || '';
 
   const stats = {
     securitySources: 7,
@@ -26,14 +27,15 @@ export default function Dashboard() {
   };
 
   const leftConnections = [
-    { startX: 280, startY: 162, endX: 465, endY: 362, delay: 0 }, // Cloudflare - 停在圓左側邊緣
-    { startX: 280, startY: 226, endX: 465, endY: 377, delay: 0.2 }, // Palo Alto
-    { startX: 280, startY: 290, endX: 465, endY: 390, delay: 0.4 }, // F5
-    { startX: 280, startY: 354, endX: 465, endY: 390, delay: 0.6 }, // CATO
-    { startX: 280, startY: 418, endX: 465, endY: 390, delay: 0.8 }, // Check Point
-    { startX: 280, startY: 482, endX: 465, endY: 403, delay: 1.0 }, // INTEZER AI
-    { startX: 280, startY: 546, endX: 465, endY: 410, delay: 1.2 }, // CyCraftAI
-    { startX: 280, startY: 610, endX: 465, endY: 418, delay: 1.4 }, // Custom SIEM
+    { startX: 280, startY: 132, endX: 465, endY: 362, delay: 0 }, // Cloudflare - 停在圓左側邊緣
+    { startX: 280, startY: 196, endX: 465, endY: 372, delay: 0.2 }, // Palo Alto
+    { startX: 280, startY: 260, endX: 465, endY: 382, delay: 0.4 }, // F5
+    { startX: 280, startY: 324, endX: 465, endY: 390, delay: 0.6 }, // CATO
+    { startX: 280, startY: 388, endX: 465, endY: 390, delay: 0.8 }, // Check Point
+    { startX: 280, startY: 452, endX: 465, endY: 390, delay: 1.0 }, // INTEZER AI
+    { startX: 280, startY: 516, endX: 465, endY: 400, delay: 1.2 }, // CyCraftAI
+    { startX: 280, startY: 580, endX: 465, endY: 410, delay: 1.4 }, // Tenable
+    { startX: 280, startY: 644, endX: 465, endY: 420, delay: 1.6 }, // Custom SIEM
   ];
 
   const rightConnections = [
@@ -356,7 +358,7 @@ export default function Dashboard() {
             <p className="text-white text-[16px] font-medium">Cyber LLM</p>
           </div>
 
-          <div className="absolute left-[108px] top-[140px] flex flex-col gap-[20px] w-[172px]">
+          <div className="absolute left-[108px] top-[110px] flex flex-col gap-[20px] w-[172px]">
             {/* Cloudflare */}
             <button
               type="button"
@@ -502,6 +504,25 @@ export default function Dashboard() {
                 </div>
               </div>
             </div>
+
+            {/* Tenable */}
+            <button
+              className="w-full text-left bg-[#08131d] h-[44px] rounded-[8px] border-[0.5px] border-[#898d98] shadow-[1px_1px_10px_0px_rgba(137,141,152,0.6)] 
+                        hover:border-[#6FF8FF] active:scale-[0.98] transition-all"
+              onClick={() => {
+                if (tenableUrl) {
+                  window.open(tenableUrl, '_blank');
+                } 
+              }}
+            >
+              <div className="flex items-center gap-[8px] h-full px-[10px] py-[10px] cursor-pointer">
+                <Image src="/logos/tenable.png" alt="Tenable" width={24} height={24} className="object-contain" />
+                <div className="flex flex-col gap-[4px]">
+                  <p className="text-white text-[13px]">Tenable</p>
+                  <p className="text-[#898d98] text-[10px]">Tenable 弱掃</p>
+                </div>
+              </div>
+            </button>
 
             {/* Custom SIEM */}
             <div className="bg-[#08131d] h-[44px] rounded-[8px] border-[0.5px] border-[#898d98] shadow-[1px_1px_10px_0px_rgba(137,141,152,0.6)]">
