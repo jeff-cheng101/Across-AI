@@ -6,9 +6,11 @@
 
 export { ApiKeysCostCard } from './ApiKeysCostCard';
 export { BudgetGauge } from './BudgetGauge';
+export { GuardrailDetailView } from './GuardrailDetailView';
 export { InfoTooltip } from './InfoTooltip';
 export { MiniServiceCard } from './MiniServiceCard';
 export { RequestsPerDayChart } from './RequestsPerDayChart';
+export { SecuritySection } from './SecuritySection';
 export { Sidebar } from './Sidebar';
 export { SubscriptionCostSection } from './SubscriptionCostSection';
 export { TimeRangeFilter } from './TimeRangeFilter';

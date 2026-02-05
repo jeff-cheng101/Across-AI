@@ -5,34 +5,49 @@ import {
   ChevronLeft,
   ChevronRight,
   LayoutDashboard,
+  ShieldCheck,
   Sparkles,
 } from 'lucide-react';
-import { useState } from 'react';
+import Link from 'next/link';
+import { usePathname } from 'next/navigation';
+import { useEffect, useState } from 'react';
 import { Button } from '@/components/ui/button';
-
-type SidebarProps = {
-  activeItem?: string;
-  onNavigate?: (item: string) => void;
-};
 
 /**
  * AI Gateway 側邊導航列
  *
- * 提供頁面內導航功能
- * 支援收合/展開狀態
+ * 業務背景：提供 AI Gateway 各功能頁面的導航。
+ * 使用 Next.js Link 組件進行路由導航，支援瀏覽器上一頁/下一頁。
+ * 使用 usePathname 判斷當前頁面並高亮對應導航項目。
+ *
+ * 導航項目：
+ * - 儀表板：exactMatch=true，僅完全匹配 /ai-gateway 時高亮
+ * - 安全護欄：exactMatch=false，匹配 /ai-gateway/guardrails 及其子路由
  */
-export function Sidebar({
-  activeItem = 'dashboard',
-  onNavigate,
-}: SidebarProps) {
+export function Sidebar() {
+  const pathname = usePathname();
   const [isCollapsed, setIsCollapsed] = useState(false);
+  const [lastUpdated, setLastUpdated] = useState<string | null>(null);
+
+  // 在客戶端設定時間，避免 SSR hydration mismatch
+  useEffect(() => {
+    setLastUpdated(new Date().toLocaleTimeString());
+  }, []);
 
   const navItems = [
     {
-      id: 'dashboard',
+      href: '/ai-gateway',
       label: '儀表板',
       englishLabel: 'Dashboard',
       icon: LayoutDashboard,
+      exactMatch: true,
+    },
+    {
+      href: '/ai-gateway/guardrails',
+      label: '安全護欄',
+      englishLabel: 'Guardrails',
+      icon: ShieldCheck,
+      exactMatch: false,
     },
   ];
 
@@ -78,13 +93,14 @@ export function Sidebar({
         <div className="space-y-1">
           {navItems.map((item) => {
             const Icon = item.icon;
-            const isActive = activeItem === item.id;
+            const isActive = item.exactMatch
+              ? pathname === item.href
+              : pathname === item.href || pathname.startsWith(`${item.href}/`);
 
             return (
-              <button
-                key={item.id}
-                type="button"
-                onClick={() => onNavigate?.(item.id)}
+              <Link
+                key={item.href}
+                href={item.href}
                 className={`w-full flex items-center gap-3 px-4 py-2.5 rounded transition-colors text-sm ${
                   isActive
                     ? 'bg-zinc-800/50 text-white border border-zinc-700/50 shadow-sm'
@@ -98,16 +114,16 @@ export function Sidebar({
                   }`}
                 />
                 {!isCollapsed && item.label}
-              </button>
+              </Link>
             );
           })}
         </div>
       </nav>
 
-      {!isCollapsed && (
+      {!isCollapsed && lastUpdated && (
         <div className="flex-shrink-0 p-4 border-t border-white/10">
           <div className="text-xs text-slate-500">
-            Last updated: {new Date().toLocaleTimeString()}
+            Last updated: {lastUpdated}
           </div>
         </div>
       )}
