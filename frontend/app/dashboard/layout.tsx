@@ -7,11 +7,16 @@ import { usePathname } from "next/navigation"
 import { motion, AnimatePresence } from "framer-motion"
 import { Settings, ChevronDown, Captions } from "lucide-react"
 import { WAFDataProvider } from "./waf-data-context"
+import { DashboardDataProvider } from "./dashboard-data-context"
 
 const cloudflareSettings = {
   name: "設定",
   icon: Settings,
   children: [
+    {
+      name: "DNS 設定",
+      href: "/dashboard/cloudflare/dns-settings",
+    },
     {
       name: "WAF 設定",
       href: "/dashboard/cloudflare/waf-settings",
@@ -413,8 +418,10 @@ function DashboardLayoutComponent({ children }: { children: React.ReactNode }) {
 
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
   return (
-    <WAFDataProvider>
-      <DashboardLayoutComponent>{children}</DashboardLayoutComponent>
-    </WAFDataProvider>
+    <DashboardDataProvider>
+      <WAFDataProvider>
+        <DashboardLayoutComponent>{children}</DashboardLayoutComponent>
+      </WAFDataProvider>
+    </DashboardDataProvider>
   )
 }
