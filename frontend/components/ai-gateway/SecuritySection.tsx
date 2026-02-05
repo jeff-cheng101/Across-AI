@@ -298,7 +298,10 @@ export function SecuritySection() {
     setIsTesting(true);
 
     // 並行測試所有選中的 guardrail
-    const results: Array<{ guardrailName: string; result: TestGuardrailsOutput }> = [];
+    const results: Array<{
+      guardrailName: string;
+      result: TestGuardrailsOutput;
+    }> = [];
 
     await Promise.all(
       Array.from(selectedTestGuardrails).map(async (guardrailId) => {
@@ -1417,7 +1420,9 @@ export function SecuritySection() {
                     </div>
                     <Select
                       value={
-                        formState.bedrock.bedrockDisableExceptionOnBlock ? 'yes' : 'no'
+                        formState.bedrock.bedrockDisableExceptionOnBlock
+                          ? 'yes'
+                          : 'no'
                       }
                       onValueChange={(v) =>
                         formActions.setBedrockDisableException(v === 'yes')
@@ -1518,9 +1523,7 @@ export function SecuritySection() {
 
                   <div className="grid grid-cols-[180px_1fr] gap-6 items-start">
                     <div className="flex items-center gap-2 pt-2">
-                      <Label className="text-slate-300">
-                        AWS 設定檔名稱：
-                      </Label>
+                      <Label className="text-slate-300">AWS 設定檔名稱：</Label>
                     </div>
                     <Input
                       value={formState.bedrock.bedrockAwsProfileName}
@@ -1555,7 +1558,9 @@ export function SecuritySection() {
                     <Input
                       value={formState.bedrock.bedrockAwsWebIdentityToken}
                       onChange={(e) =>
-                        formActions.setBedrockAwsWebIdentityToken(e.target.value)
+                        formActions.setBedrockAwsWebIdentityToken(
+                          e.target.value,
+                        )
                       }
                       placeholder="用於角色切換的 Web 身分權杖"
                       className="bg-slate-800/50 border-slate-700 text-white font-mono"
@@ -1593,7 +1598,6 @@ export function SecuritySection() {
                   </div>
                 </>
               )}
-
             </div>
           )}
 

@@ -602,7 +602,10 @@ export function transformToLiteLLMFormat(input: CreateGuardrailInput): {
   // Presidio 設定
   if (input.provider === 'presidio') {
     // 優先使用 piiEntitiesConfig（每個 PII 類型獨立設定動作）
-    if (input.piiEntitiesConfig && Object.keys(input.piiEntitiesConfig).length > 0) {
+    if (
+      input.piiEntitiesConfig &&
+      Object.keys(input.piiEntitiesConfig).length > 0
+    ) {
       // 轉換為 LiteLLM 格式：value 轉大寫（MASK/BLOCK）
       litellmParams.pii_entities_config = Object.fromEntries(
         Object.entries(input.piiEntitiesConfig).map(([key, value]) => [
@@ -610,11 +613,17 @@ export function transformToLiteLLMFormat(input: CreateGuardrailInput): {
           value.toUpperCase(),
         ]),
       );
-    } else if (input.piiEntitiesEnabled && input.piiEntitiesEnabled.length > 0) {
+    } else if (
+      input.piiEntitiesEnabled &&
+      input.piiEntitiesEnabled.length > 0
+    ) {
       // 向下相容：使用 piiEntitiesEnabled + piiAction
       const action = input.piiAction || 'mask';
       litellmParams.pii_entities_config = Object.fromEntries(
-        input.piiEntitiesEnabled.map((entity) => [entity, action.toUpperCase()]),
+        input.piiEntitiesEnabled.map((entity) => [
+          entity,
+          action.toUpperCase(),
+        ]),
       );
     }
     if (input.outputParsePrompt) {
@@ -624,7 +633,8 @@ export function transformToLiteLLMFormat(input: CreateGuardrailInput): {
       litellmParams.presidio_analyzer_api_base = input.presidioAnalyzerApiBase;
     }
     if (input.presidioAnonymizerApiBase) {
-      litellmParams.presidio_anonymizer_api_base = input.presidioAnonymizerApiBase;
+      litellmParams.presidio_anonymizer_api_base =
+        input.presidioAnonymizerApiBase;
     }
     if (input.presidioFilterScope) {
       litellmParams.presidio_filter_scope = input.presidioFilterScope;

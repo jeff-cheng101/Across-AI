@@ -1259,7 +1259,8 @@ function SettingsTab({
                           t.category === piiCategoryFilter,
                       ).map((piiType) => {
                         const isEnabled = piiType.id in editPiiEntitiesConfig;
-                        const action = editPiiEntitiesConfig[piiType.id] || 'mask';
+                        const action =
+                          editPiiEntitiesConfig[piiType.id] || 'mask';
                         return (
                           <div
                             key={piiType.id}
@@ -1272,7 +1273,9 @@ function SettingsTab({
                                 type="checkbox"
                                 checked={isEnabled}
                                 onChange={(e) => {
-                                  const newConfig = { ...editPiiEntitiesConfig };
+                                  const newConfig = {
+                                    ...editPiiEntitiesConfig,
+                                  };
                                   if (e.target.checked) {
                                     newConfig[piiType.id] = editPiiAction as
                                       | 'mask'
@@ -1285,7 +1288,9 @@ function SettingsTab({
                                 className="w-4 h-4 rounded border-slate-600 bg-slate-800 text-blue-600 cursor-pointer"
                               />
                             </div>
-                            <div className="p-3 text-slate-200">{piiType.name}</div>
+                            <div className="p-3 text-slate-200">
+                              {piiType.name}
+                            </div>
                             <div className="p-3">
                               <span className="inline-block px-2 py-1 rounded text-xs bg-blue-500/20 text-blue-400 border border-blue-500/30">
                                 {piiType.category}
@@ -1312,10 +1317,16 @@ function SettingsTab({
                                   <SelectValue />
                                 </SelectTrigger>
                                 <SelectContent className="bg-slate-800 border-slate-700">
-                                  <SelectItem value="mask" className="text-slate-200">
+                                  <SelectItem
+                                    value="mask"
+                                    className="text-slate-200"
+                                  >
                                     遮蔽
                                   </SelectItem>
-                                  <SelectItem value="block" className="text-slate-200">
+                                  <SelectItem
+                                    value="block"
+                                    className="text-slate-200"
+                                  >
                                     阻擋
                                   </SelectItem>
                                 </SelectContent>
