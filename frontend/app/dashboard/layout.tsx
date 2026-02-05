@@ -1,193 +1,194 @@
-"use client"
+'use client';
 
-import type React from "react"
-import { useState, useEffect, useRef } from "react"
-import Link from "next/link"
-import { usePathname } from "next/navigation"
-import { motion, AnimatePresence } from "framer-motion"
-import { Settings, ChevronDown, Captions } from "lucide-react"
-import { WAFDataProvider } from "./waf-data-context"
-import { DashboardDataProvider } from "./dashboard-data-context"
+import { AnimatePresence, motion } from 'framer-motion';
+import { Captions, ChevronDown, Settings } from 'lucide-react';
+import Image from 'next/image';
+import Link from 'next/link';
+import { usePathname } from 'next/navigation';
+import type React from 'react';
+import { useEffect, useRef, useState } from 'react';
+import { DashboardDataProvider } from './dashboard-data-context';
+import { WAFDataProvider } from './waf-data-context';
 
 const cloudflareSettings = {
-  name: "設定",
+  name: '設定',
   icon: Settings,
   children: [
     {
-      name: "DNS 設定",
-      href: "/dashboard/cloudflare/dns-settings",
+      name: 'DNS 設定',
+      href: '/dashboard/cloudflare/dns-settings',
     },
     {
-      name: "WAF 設定",
-      href: "/dashboard/cloudflare/waf-settings",
+      name: 'WAF 設定',
+      href: '/dashboard/cloudflare/waf-settings',
     },
     {
-      name: "DDoS 設定",
-      href: "/dashboard/cloudflare/ddos-settings",
+      name: 'DDoS 設定',
+      href: '/dashboard/cloudflare/ddos-settings',
     },
     {
-      name: "CDN 設定",
-      href: "/dashboard/cloudflare/cdn-settings",
+      name: 'CDN 設定',
+      href: '/dashboard/cloudflare/cdn-settings',
     },
   ],
-}
+};
 
 const f5Settings = {
-  name: "設定",
+  name: '設定',
   icon: Settings,
   children: [
     {
-      name: "WAF 設定",
-      href: "/dashboard/f5/waf-settings",
+      name: 'WAF 設定',
+      href: '/dashboard/f5/waf-settings',
     },
   ],
-}
+};
 
 const catoSettings = {
-  name: "設定",
+  name: '設定',
   icon: Settings,
   children: [
     {
-      name: "SASE 設定",
-      href: "/dashboard/cato/sase-settings",
+      name: 'SASE 設定',
+      href: '/dashboard/cato/sase-settings',
     },
   ],
-}
+};
 
 const otherBrands = [
   {
-    name: "Cloudflare",
-    href: "/dashboard/cloudflare/overview",
+    name: 'Cloudflare',
+    href: '/dashboard/cloudflare/overview',
     isImage: true,
-    imageSrc: "/logos/Cloudflar.png",
-    color: "#F38020",
+    imageSrc: '/logos/Cloudflar.png',
+    color: '#F38020',
     isClickable: true,
   },
   {
-    name: "PaloAlto",
-    href: "/dashboard/paloalto",
+    name: 'PaloAlto',
+    href: '/dashboard/paloalto',
     isImage: true,
-    imageSrc: "/logos/palo-alto-networks-1.png",
-    color: "#FA582D",
+    imageSrc: '/logos/palo-alto-networks-1.png',
+    color: '#FA582D',
     isClickable: true,
   },
   {
-    name: "F5",
-    href: "/dashboard/f5",
+    name: 'F5',
+    href: '/dashboard/f5',
     isImage: true,
-    imageSrc: "/logos/f5_b.png",
-    color: "#E40046",
+    imageSrc: '/logos/f5_b.png',
+    color: '#E40046',
     isClickable: true,
   },
   {
-    name: "CATO",
-    href: "/dashboard/cato",
+    name: 'CATO',
+    href: '/dashboard/cato',
     isImage: true,
-    imageSrc: "/logos/cato-networks.png",
-    color: "#00A3E0",
+    imageSrc: '/logos/cato-networks.png',
+    color: '#00A3E0',
     isClickable: true,
   },
   {
-    name: "Intezer",
-    href: "/dashboard/intezer",
+    name: 'Intezer',
+    href: '/dashboard/intezer',
     isImage: true,
-    imageSrc: "/logos/INTEZER_logo.png",
-    color: "#7B68EE",
+    imageSrc: '/logos/INTEZER_logo.png',
+    color: '#7B68EE',
     isClickable: false,
   },
   {
-    name: "CycrafAI",
-    href: "/dashboard/cycrafai",
+    name: 'CycrafAI',
+    href: '/dashboard/cycrafai',
     isImage: true,
-    imageSrc: "/logos/craftai.png",
-    color: "#00CED1",
+    imageSrc: '/logos/craftai.png',
+    color: '#00CED1',
     isClickable: false,
   },
   {
-    name: "SIEM",
-    href: "/dashboard/siem",
+    name: 'SIEM',
+    href: '/dashboard/siem',
     isImage: false,
     icon: Captions,
-    color: "#9CA3AF",
+    color: '#9CA3AF',
     isClickable: false,
   },
-]
+];
 
-const MIN_WIDTH = 80
-const MAX_WIDTH = 256
-const COLLAPSE_THRESHOLD = 150
+const MIN_WIDTH = 80;
+const MAX_WIDTH = 256;
+const COLLAPSE_THRESHOLD = 150;
 
 function DashboardLayoutComponent({ children }: { children: React.ReactNode }) {
-  const pathname = usePathname()
-  const [sidebarWidth, setSidebarWidth] = useState(MIN_WIDTH)
-  const [isResizing, setIsResizing] = useState(false)
-  const sidebarRef = useRef<HTMLDivElement>(null)
-  const [currentBrand, setCurrentBrand] = useState(otherBrands[0])
-  const [isSettingsExpanded, setIsSettingsExpanded] = useState(false)
+  const pathname = usePathname();
+  const [sidebarWidth, setSidebarWidth] = useState(MIN_WIDTH);
+  const [isResizing, setIsResizing] = useState(false);
+  const sidebarRef = useRef<HTMLDivElement>(null);
+  const [currentBrand, setCurrentBrand] = useState(otherBrands[0]);
+  const [isSettingsExpanded, setIsSettingsExpanded] = useState(false);
 
   useEffect(() => {
-    const savedWidth = localStorage.getItem("dashboard-sidebar-width")
+    const savedWidth = localStorage.getItem('dashboard-sidebar-width');
     if (savedWidth) {
-      setSidebarWidth(Number(savedWidth))
+      setSidebarWidth(Number(savedWidth));
     }
-  }, [])
+  }, []);
 
   useEffect(() => {
-    const brand = otherBrands.find((b) => pathname.startsWith(b.href))
-    setCurrentBrand(brand || otherBrands[0])
-  }, [pathname])
+    const brand = otherBrands.find((b) => pathname.startsWith(b.href));
+    setCurrentBrand(brand || otherBrands[0]);
+  }, [pathname]);
 
   useEffect(() => {
     const handleMouseMove = (e: MouseEvent) => {
-      if (!isResizing) return
+      if (!isResizing) return;
 
-      const newWidth = e.clientX
+      const newWidth = e.clientX;
       if (newWidth >= MIN_WIDTH && newWidth <= MAX_WIDTH) {
-        setSidebarWidth(newWidth)
-        localStorage.setItem("dashboard-sidebar-width", String(newWidth))
+        setSidebarWidth(newWidth);
+        localStorage.setItem('dashboard-sidebar-width', String(newWidth));
       }
-    }
+    };
 
     const handleMouseUp = () => {
-      setIsResizing(false)
-    }
+      setIsResizing(false);
+    };
 
     if (isResizing) {
-      document.addEventListener("mousemove", handleMouseMove)
-      document.addEventListener("mouseup", handleMouseUp)
+      document.addEventListener('mousemove', handleMouseMove);
+      document.addEventListener('mouseup', handleMouseUp);
     }
 
     return () => {
-      document.removeEventListener("mousemove", handleMouseMove)
-      document.removeEventListener("mouseup", handleMouseUp)
-    }
-  }, [isResizing])
+      document.removeEventListener('mousemove', handleMouseMove);
+      document.removeEventListener('mouseup', handleMouseUp);
+    };
+  }, [isResizing]);
 
-  const isDashboardRoot = pathname === "/dashboard"
-  const isCloudflareRoute = pathname.startsWith("/dashboard/cloudflare")
-  const isF5Route = pathname.startsWith("/dashboard/f5")
-  const isCatoRoute = pathname.startsWith("/dashboard/cato")
-  const isCollapsed = sidebarWidth < COLLAPSE_THRESHOLD
+  const isDashboardRoot = pathname === '/dashboard';
+  const isCloudflareRoute = pathname.startsWith('/dashboard/cloudflare');
+  const isF5Route = pathname.startsWith('/dashboard/f5');
+  const isCatoRoute = pathname.startsWith('/dashboard/cato');
+  const isCollapsed = sidebarWidth < COLLAPSE_THRESHOLD;
 
   const handleMouseDown = (e: React.MouseEvent) => {
-    e.preventDefault()
-    setIsResizing(true)
-  }
+    e.preventDefault();
+    setIsResizing(true);
+  };
 
   const handleSettingsClick = () => {
     if (isCollapsed) {
-      setSidebarWidth(MAX_WIDTH)
-      localStorage.setItem("dashboard-sidebar-width", String(MAX_WIDTH))
+      setSidebarWidth(MAX_WIDTH);
+      localStorage.setItem('dashboard-sidebar-width', String(MAX_WIDTH));
       setTimeout(() => {
-        setIsSettingsExpanded(true)
-      }, 100)
+        setIsSettingsExpanded(true);
+      }, 100);
     } else {
-      setIsSettingsExpanded(!isSettingsExpanded)
+      setIsSettingsExpanded(!isSettingsExpanded);
     }
-  }
+  };
 
   if (isDashboardRoot) {
-    return <div className="h-screen bg-[#08131D]">{children}</div>
+    return <div className="h-screen bg-[#08131D]">{children}</div>;
   }
 
   const currentSettings = isCloudflareRoute
@@ -196,7 +197,7 @@ function DashboardLayoutComponent({ children }: { children: React.ReactNode }) {
       ? f5Settings
       : isCatoRoute
         ? catoSettings
-        : null
+        : null;
 
   return (
     <div className="flex h-screen bg-[#08131D]">
@@ -215,20 +216,29 @@ function DashboardLayoutComponent({ children }: { children: React.ReactNode }) {
       >
         {/* Header - 顯示當前品牌 */}
         <div className="p-6 border-b border-white/10">
-          <div className={`flex items-center ${isCollapsed ? "justify-center" : "gap-3"}`}>
+          <div
+            className={`flex items-center ${isCollapsed ? 'justify-center' : 'gap-3'}`}
+          >
             <div
               className="w-10 h-10 rounded-lg flex items-center justify-center p-2 flex-shrink-0"
               style={{ backgroundColor: `${currentBrand.color}20` }}
             >
               {currentBrand.isImage ? (
-                <img
-                  src={currentBrand.imageSrc || "/placeholder.svg"}
+                <Image
+                  src={currentBrand.imageSrc || '/placeholder.svg'}
                   alt={currentBrand.name}
+                  width={40}
+                  height={40}
                   className="w-full h-full object-contain"
                 />
               ) : (
                 <div className="w-full h-full flex items-center justify-center">
-                  {currentBrand.icon && <currentBrand.icon className="w-5 h-5" style={{ color: currentBrand.color }} />}
+                  {currentBrand.icon && (
+                    <currentBrand.icon
+                      className="w-5 h-5"
+                      style={{ color: currentBrand.color }}
+                    />
+                  )}
                 </div>
               )}
             </div>
@@ -236,13 +246,17 @@ function DashboardLayoutComponent({ children }: { children: React.ReactNode }) {
               {!isCollapsed && (
                 <motion.div
                   initial={{ opacity: 0, width: 0 }}
-                  animate={{ opacity: 1, width: "auto" }}
+                  animate={{ opacity: 1, width: 'auto' }}
                   exit={{ opacity: 0, width: 0 }}
                   transition={{ duration: 0.2 }}
                 >
                   <div>
-                    <h2 className="text-white font-semibold whitespace-nowrap">{currentBrand.name}</h2>
-                    <p className="text-xs text-slate-400 whitespace-nowrap">Dashboard</p>
+                    <h2 className="text-white font-semibold whitespace-nowrap">
+                      {currentBrand.name}
+                    </h2>
+                    <p className="text-xs text-slate-400 whitespace-nowrap">
+                      Dashboard
+                    </p>
                   </div>
                 </motion.div>
               )}
@@ -259,7 +273,7 @@ function DashboardLayoutComponent({ children }: { children: React.ReactNode }) {
                 whileHover={{ x: 2 }}
                 onClick={handleSettingsClick}
                 className={`flex items-center gap-3 px-4 py-3 rounded-lg transition-all duration-200 cursor-pointer text-slate-400 hover:text-white hover:bg-white/5 ${
-                  isCollapsed ? "justify-center" : ""
+                  isCollapsed ? 'justify-center' : ''
                 }`}
                 title={isCollapsed ? currentSettings.name : undefined}
               >
@@ -268,7 +282,7 @@ function DashboardLayoutComponent({ children }: { children: React.ReactNode }) {
                   {!isCollapsed && (
                     <motion.span
                       initial={{ opacity: 0, width: 0 }}
-                      animate={{ opacity: 1, width: "auto" }}
+                      animate={{ opacity: 1, width: 'auto' }}
                       exit={{ opacity: 0, width: 0 }}
                       transition={{ duration: 0.2 }}
                       className="whitespace-nowrap flex-1"
@@ -278,7 +292,10 @@ function DashboardLayoutComponent({ children }: { children: React.ReactNode }) {
                   )}
                 </AnimatePresence>
                 {!isCollapsed && (
-                  <motion.div animate={{ rotate: isSettingsExpanded ? 0 : -90 }} transition={{ duration: 0.2 }}>
+                  <motion.div
+                    animate={{ rotate: isSettingsExpanded ? 0 : -90 }}
+                    transition={{ duration: 0.2 }}
+                  >
                     <ChevronDown className="w-4 h-4" />
                   </motion.div>
                 )}
@@ -289,27 +306,29 @@ function DashboardLayoutComponent({ children }: { children: React.ReactNode }) {
                 {isSettingsExpanded && !isCollapsed && (
                   <motion.div
                     initial={{ opacity: 0, height: 0 }}
-                    animate={{ opacity: 1, height: "auto" }}
+                    animate={{ opacity: 1, height: 'auto' }}
                     exit={{ opacity: 0, height: 0 }}
                     transition={{ duration: 0.2 }}
                     className="ml-4 space-y-1"
                   >
                     {currentSettings.children.map((item) => {
-                      const isActive = pathname === item.href
+                      const isActive = pathname === item.href;
                       return (
                         <Link key={item.href} href={item.href}>
                           <motion.div
                             whileHover={{ x: 2 }}
                             className={`flex items-center gap-3 px-4 py-2 rounded-lg transition-all duration-200 ${
                               isActive
-                                ? "bg-slate-800/50 text-white"
-                                : "text-slate-400 hover:text-white hover:bg-white/5"
+                                ? 'bg-slate-800/50 text-white'
+                                : 'text-slate-400 hover:text-white hover:bg-white/5'
                             }`}
                           >
-                            <span className="text-sm whitespace-nowrap">{item.name}</span>
+                            <span className="text-sm whitespace-nowrap">
+                              {item.name}
+                            </span>
                           </motion.div>
                         </Link>
-                      )
+                      );
                     })}
                   </motion.div>
                 )}
@@ -323,6 +342,76 @@ function DashboardLayoutComponent({ children }: { children: React.ReactNode }) {
             </div>
           )}
 
+          {/* War Room Button */}
+          <Link href="/dashboard/war-room">
+            <div className="relative mb-2 group">
+              {/* Breathing outer glow */}
+              <div className="absolute -inset-0.5 bg-gradient-to-r from-cyan-500 via-teal-500 to-cyan-500 rounded-xl opacity-75 blur group-hover:opacity-100 animate-pulse" />
+
+              {/* Animated gradient border */}
+              <div className="absolute inset-0 rounded-xl overflow-hidden">
+                <div
+                  className="absolute inset-0 rounded-xl"
+                  style={{
+                    background:
+                      'linear-gradient(90deg, transparent, cyan, transparent)',
+                    animation: 'border-run 3s linear infinite',
+                  }}
+                />
+              </div>
+
+              {/* Button content */}
+              <motion.div
+                whileHover={{ scale: 1.02 }}
+                className={`relative flex items-center gap-3 px-4 py-3 rounded-xl transition-all duration-200 bg-slate-900/95 backdrop-blur-sm ${
+                  isCollapsed ? 'justify-center' : ''
+                } cursor-pointer`}
+                title={isCollapsed ? '戰情室' : undefined}
+              >
+                <AnimatePresence>
+                  {!isCollapsed && (
+                    <motion.div
+                      initial={{ opacity: 0 }}
+                      animate={{ opacity: 1 }}
+                      exit={{ opacity: 0 }}
+                      transition={{ duration: 0.2 }}
+                      className="flex flex-col items-center justify-center flex-1 text-center"
+                    >
+                      <span className="text-cyan-400 font-Regular text-lg tracking-wider">
+                        戰情室
+                      </span>
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+
+                {isCollapsed && (
+                  <div className="flex flex-col items-center justify-center">
+                    <span className="text-cyan-400 font-Regular text-base">
+                      戰
+                    </span>
+                    <span className="text-cyan-400 font-Regular text-base">
+                      情
+                    </span>
+                    <span className="text-cyan-400 font-Regular text-base">
+                      室
+                    </span>
+                  </div>
+                )}
+              </motion.div>
+            </div>
+          </Link>
+
+          <style jsx>{`
+            @keyframes border-run {
+              0% {
+                transform: translateX(-100%);
+              }
+              100% {
+                transform: translateX(100%);
+              }
+            }
+          `}</style>
+
           {!isCollapsed && (
             <div className="px-4 py-2 uppercase tracking-wider text-destructive-foreground font-medium text-base">
               Global dashboard
@@ -330,15 +419,17 @@ function DashboardLayoutComponent({ children }: { children: React.ReactNode }) {
           )}
 
           {otherBrands.map((brand) => {
-            const isActive = pathname.startsWith(brand.href)
+            const isActive = pathname.startsWith(brand.href);
 
             const brandContent = (
               <motion.div
                 key={brand.href} // Added key property here
                 whileHover={brand.isClickable ? { x: 2 } : {}}
                 className={`flex items-center gap-3 px-4 py-3 rounded-lg transition-all duration-200 ${
-                  isActive ? "bg-slate-800/50 text-white" : "text-slate-400 hover:text-white hover:bg-white/5"
-                } ${isCollapsed ? "justify-center" : ""} ${!brand.isClickable ? "opacity-50 cursor-not-allowed" : "cursor-pointer"}`}
+                  isActive
+                    ? 'bg-slate-800/50 text-white'
+                    : 'text-slate-400 hover:text-white hover:bg-white/5'
+                } ${isCollapsed ? 'justify-center' : ''} ${!brand.isClickable ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}`}
                 title={isCollapsed ? brand.name : undefined}
               >
                 {brand.isImage ? (
@@ -346,9 +437,11 @@ function DashboardLayoutComponent({ children }: { children: React.ReactNode }) {
                     className="w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 p-1.5"
                     style={{ backgroundColor: `${brand.color}20` }}
                   >
-                    <img
-                      src={brand.imageSrc || "/placeholder.svg"}
+                    <Image
+                      src={brand.imageSrc || '/placeholder.svg'}
                       alt={brand.name}
+                      width={32}
+                      height={32}
                       className="w-full h-full object-contain"
                     />
                   </div>
@@ -357,14 +450,19 @@ function DashboardLayoutComponent({ children }: { children: React.ReactNode }) {
                     className="w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0"
                     style={{ backgroundColor: `${brand.color}20` }}
                   >
-                    {brand.icon && <brand.icon className="w-5 h-5 text-foreground" style={{ color: brand.color }} />}
+                    {brand.icon && (
+                      <brand.icon
+                        className="w-5 h-5 text-foreground"
+                        style={{ color: brand.color }}
+                      />
+                    )}
                   </div>
                 )}
                 <AnimatePresence>
                   {!isCollapsed && (
                     <motion.span
                       initial={{ opacity: 0, width: 0 }}
-                      animate={{ opacity: 1, width: "auto" }}
+                      animate={{ opacity: 1, width: 'auto' }}
                       exit={{ opacity: 0, width: 0 }}
                       transition={{ duration: 0.2 }}
                       className="whitespace-nowrap font-light font-sans"
@@ -374,7 +472,7 @@ function DashboardLayoutComponent({ children }: { children: React.ReactNode }) {
                   )}
                 </AnimatePresence>
               </motion.div>
-            )
+            );
 
             return brand.isClickable ? (
               <Link key={brand.href} href={brand.href}>
@@ -382,7 +480,7 @@ function DashboardLayoutComponent({ children }: { children: React.ReactNode }) {
               </Link>
             ) : (
               <div key={brand.href}>{brandContent}</div>
-            )
+            );
           })}
         </nav>
 
@@ -390,38 +488,52 @@ function DashboardLayoutComponent({ children }: { children: React.ReactNode }) {
         <div className="p-4 border-t border-white/10 space-y-2">
           <Link href="/dashboard">
             <button
-              className={`w-full px-4 py-2 text-sm text-slate-400 hover:text-white hover:bg-white/5 rounded-lg transition-all duration-200 ${isCollapsed ? "flex justify-center" : ""}`}
-              title={isCollapsed ? "返回主控台" : undefined}
+              type="button"
+              className={`w-full px-4 py-2 text-sm text-slate-400 hover:text-white hover:bg-white/5 rounded-lg transition-all duration-200 ${isCollapsed ? 'flex justify-center' : ''}`}
+              title={isCollapsed ? '返回主控台' : undefined}
             >
-              {isCollapsed ? "←" : "← 返回主控台"}
+              {isCollapsed ? '←' : '← 返回主控台'}
             </button>
           </Link>
         </div>
 
         {/* Resize Handle */}
-        <div
+        <button
+          type="button"
+          aria-label="調整側邊欄寬度"
           onMouseDown={handleMouseDown}
-          className={`absolute top-0 right-0 w-1 h-full cursor-col-resize hover:bg-blue-500/50 transition-colors ${
-            isResizing ? "bg-blue-500" : "bg-transparent"
+          onKeyDown={(e) => {
+            if (e.key === 'ArrowLeft') {
+              setSidebarWidth((w) => Math.max(MIN_WIDTH, w - 10));
+            } else if (e.key === 'ArrowRight') {
+              setSidebarWidth((w) => Math.min(MAX_WIDTH, w + 10));
+            }
+          }}
+          className={`absolute top-0 right-0 w-1 h-full cursor-col-resize hover:bg-blue-500/50 transition-colors border-0 bg-transparent p-0 ${
+            isResizing ? 'bg-blue-500' : ''
           }`}
           style={{ zIndex: 10 }}
         >
           <div className="absolute top-1/2 right-0 transform translate-x-1/2 -translate-y-1/2 w-3 h-12 rounded-full bg-slate-700/50 hover:bg-blue-500/50 transition-colors" />
-        </div>
+        </button>
       </motion.div>
 
       {/* Main Content */}
       <div className="flex-1 overflow-auto">{children}</div>
     </div>
-  )
+  );
 }
 
-export default function DashboardLayout({ children }: { children: React.ReactNode }) {
+export default function DashboardLayout({
+  children,
+}: {
+  children: React.ReactNode;
+}) {
   return (
     <DashboardDataProvider>
       <WAFDataProvider>
         <DashboardLayoutComponent>{children}</DashboardLayoutComponent>
       </WAFDataProvider>
     </DashboardDataProvider>
-  )
+  );
 }
