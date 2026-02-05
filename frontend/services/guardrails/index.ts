@@ -183,6 +183,37 @@ export const MODE_OPTIONS = [
   },
 ] as const;
 
+/**
+ * Provider 顯示名稱映射（UI 友善名稱）
+ * 業務背景：用於詳情頁面和列表的顯示
+ */
+export const PROVIDER_DISPLAY_NAMES: Record<string, string> = {
+  presidio: 'Presidio (Microsoft)',
+  bedrock: 'AWS Bedrock',
+};
+
+/**
+ * Mode 顯示名稱映射（UI 友善名稱）
+ * 業務背景：用於詳情頁面顯示模式的中文名稱
+ */
+export const MODE_DISPLAY_NAMES: Record<string, string> = {
+  pre_call: '請求前 (Pre-call)',
+  during_call: '請求中 (During-call)',
+  post_call: '請求後 (Post-call)',
+  logging_only: '僅記錄 (Logging)',
+  pre_mcp_call: 'MCP 呼叫前',
+  during_mcp_call: 'MCP 呼叫中',
+};
+
+/**
+ * PII 處理動作顯示名稱映射
+ * 業務背景：用於 Presidio PII 設定的動作顯示
+ */
+export const PII_ACTION_DISPLAY_NAMES: Record<string, string> = {
+  mask: '遮蔽 (Mask)',
+  block: '阻擋 (Block)',
+};
+
 // ===== Type Guards =====
 
 /**

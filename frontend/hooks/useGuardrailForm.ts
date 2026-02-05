@@ -16,7 +16,10 @@ import { useCallback, useMemo, useReducer } from 'react';
 import type {
   BedrockFields,
   CreateGuardrailInput,
+  Guardrail,
+  PiiEntitiesConfig,
   PresidioFields,
+  UpdateGuardrailInput,
 } from '@/services/guardrails';
 import {
   isValidMode as checkValidMode,
@@ -39,7 +42,7 @@ type BasicState = {
 /**
  * Presidio Provider 設定狀態
  * 業務背景：與 PresidioFields schema 對齊，確保類型安全
- * 額外欄位：piiEntities（UI 用）、categoryFilter（UI 篩選用）
+ * 額外欄位：piiEntities（UI 用）、categoryFilter（UI 篩選用）、piiEntitiesConfig（新格式）
  */
 type PresidioState = Required<
   Pick<
@@ -53,6 +56,7 @@ type PresidioState = Required<
   >
 > & {
   piiEntities: string[]; // UI 用：已選擇的 PII 類型列表
+  piiEntitiesConfig: PiiEntitiesConfig; // 新格式：每個 PII 類型的獨立動作設定
   piiAction: 'mask' | 'block'; // 全域 PII 處理動作
   categoryFilter: string; // UI 用：類別篩選
 };
@@ -126,7 +130,11 @@ type FormAction =
   | { type: 'TOGGLE_MODE_DROPDOWN' }
   | { type: 'CLOSE_MODE_DROPDOWN' }
   // Reset
-  | { type: 'RESET_FORM' };
+  | { type: 'RESET_FORM' }
+  // Initialize from existing guardrail (for edit mode)
+  | { type: 'INITIALIZE_FROM_GUARDRAIL'; payload: Guardrail }
+  // PII entities config (new format with per-entity actions)
+  | { type: 'SET_PII_ENTITIES_CONFIG'; payload: PiiEntitiesConfig };
 
 // ===== 初始狀態 =====
 
@@ -139,6 +147,7 @@ const initialState: GuardrailFormState = {
   },
   presidio: {
     piiEntities: [],
+    piiEntitiesConfig: {},
     piiAction: 'mask',
     categoryFilter: 'all',
     outputParsePrompt: '',
@@ -362,6 +371,57 @@ function guardrailFormReducer(
     case 'RESET_FORM':
       return initialState;
 
+    // Initialize from existing guardrail (for edit mode)
+    case 'INITIALIZE_FROM_GUARDRAIL': {
+      const g = action.payload;
+      return {
+        ...state,
+        basic: {
+          name: g.guardrailName,
+          provider: g.provider,
+          modes: [g.mode],
+          defaultOn: g.defaultOn,
+        },
+        presidio: {
+          ...state.presidio,
+          piiEntities: g.piiEntitiesEnabled ?? [],
+          piiEntitiesConfig: g.piiEntitiesConfig ?? {},
+          piiAction: g.piiAction ?? 'mask',
+          outputParsePrompt: g.outputParsePrompt ?? '',
+          presidioAnalyzerApiBase: g.presidioAnalyzerApiBase ?? '',
+          presidioAnonymizerApiBase: g.presidioAnonymizerApiBase ?? '',
+          presidioFilterScope: g.presidioFilterScope ?? '',
+          presidioRunOn: g.presidioRunOn ?? '',
+          presidioLanguage: g.presidioLanguage ?? '',
+        },
+        bedrock: {
+          ...state.bedrock,
+          bedrockGuardrailId: g.bedrockGuardrailId ?? '',
+          bedrockGuardrailVersion: g.bedrockGuardrailVersion ?? '',
+          bedrockDisableExceptionOnBlock:
+            g.bedrockDisableExceptionOnBlock ?? false,
+          bedrockAwsRegionName: g.bedrockAwsRegionName ?? '',
+          bedrockAwsAccessKeyId: g.bedrockAwsAccessKeyId ?? '',
+          bedrockAwsSecretAccessKey: g.bedrockAwsSecretAccessKey ?? '',
+          bedrockAwsSessionToken: g.bedrockAwsSessionToken ?? '',
+          bedrockAwsSessionName: g.bedrockAwsSessionName ?? '',
+          bedrockAwsProfileName: g.bedrockAwsProfileName ?? '',
+          bedrockAwsRoleName: g.bedrockAwsRoleName ?? '',
+          bedrockAwsWebIdentityToken: g.bedrockAwsWebIdentityToken ?? '',
+          bedrockAwsStsEndpoint: g.bedrockAwsStsEndpoint ?? '',
+          bedrockAwsBedrockRuntimeEndpoint:
+            g.bedrockAwsBedrockRuntimeEndpoint ?? '',
+        },
+      };
+    }
+
+    // PII entities config (new format)
+    case 'SET_PII_ENTITIES_CONFIG':
+      return {
+        ...state,
+        presidio: { ...state.presidio, piiEntitiesConfig: action.payload },
+      };
+
     default:
       return state;
   }
@@ -521,6 +581,24 @@ export function useGuardrailForm() {
     dispatch({ type: 'RESET_FORM' });
   }, []);
 
+  /**
+   * 從現有 Guardrail 初始化表單狀態（編輯模式）
+   *
+   * 業務背景：編輯現有 Guardrail 時，需要將後端資料映射回表單狀態
+   */
+  const initializeFromGuardrail = useCallback((guardrail: Guardrail) => {
+    dispatch({ type: 'INITIALIZE_FROM_GUARDRAIL', payload: guardrail });
+  }, []);
+
+  /**
+   * 設定 PII 實體的個別動作配置
+   *
+   * 業務背景：新版 Presidio 支援每個 PII 類型有獨立的處理動作（mask/block）
+   */
+  const setPiiEntitiesConfig = useCallback((config: PiiEntitiesConfig) => {
+    dispatch({ type: 'SET_PII_ENTITIES_CONFIG', payload: config });
+  }, []);
+
   // ===== 驗證 =====
 
   /**
@@ -655,6 +733,116 @@ export function useGuardrailForm() {
     return input;
   }, [state, isBasicValid, isProviderValid, isModeValid]);
 
+  /**
+   * 建構 UpdateGuardrailInput 物件（編輯模式）
+   *
+   * 業務背景：將表單狀態轉換為更新 API 請求格式
+   * 與 buildCreateInput 不同，這裡需要包含 guardrailId
+   *
+   * @param guardrailId 要更新的 Guardrail ID
+   * @returns UpdateGuardrailInput 或 null（驗證失敗時）
+   */
+  const buildUpdateInput = useCallback(
+    (guardrailId: string): UpdateGuardrailInput | null => {
+      if (!isBasicValid || !isProviderValid || !isModeValid) {
+        return null;
+      }
+
+      const provider = state.basic.provider;
+      const mode = state.basic.modes[0];
+
+      if (!checkValidProvider(provider) || !checkValidMode(mode)) {
+        return null;
+      }
+
+      const input: UpdateGuardrailInput = {
+        guardrailId,
+        guardrailName: state.basic.name.trim(),
+        provider,
+        mode,
+        defaultOn: state.basic.defaultOn,
+      };
+
+      // 根據 Provider 添加特定設定
+      if (provider === 'presidio') {
+        input.piiEntitiesEnabled = state.presidio.piiEntities;
+        // 新增：piiEntitiesConfig（每個 PII 類型的個別動作）
+        if (Object.keys(state.presidio.piiEntitiesConfig).length > 0) {
+          input.piiEntitiesConfig = state.presidio.piiEntitiesConfig;
+        }
+        const piiAction = state.presidio.piiAction;
+        if (isValidPiiAction(piiAction)) {
+          input.piiAction = piiAction;
+        }
+        if (state.presidio.outputParsePrompt) {
+          input.outputParsePrompt = state.presidio.outputParsePrompt;
+        }
+        if (state.presidio.presidioAnalyzerApiBase) {
+          input.presidioAnalyzerApiBase =
+            state.presidio.presidioAnalyzerApiBase;
+        }
+        if (state.presidio.presidioAnonymizerApiBase) {
+          input.presidioAnonymizerApiBase =
+            state.presidio.presidioAnonymizerApiBase;
+        }
+        if (state.presidio.presidioFilterScope) {
+          input.presidioFilterScope = state.presidio.presidioFilterScope;
+        }
+        if (state.presidio.presidioRunOn) {
+          input.presidioRunOn = state.presidio.presidioRunOn;
+        }
+        if (state.presidio.presidioLanguage) {
+          input.presidioLanguage = state.presidio.presidioLanguage;
+        }
+      } else if (provider === 'bedrock') {
+        if (state.bedrock.bedrockGuardrailId) {
+          input.bedrockGuardrailId = state.bedrock.bedrockGuardrailId;
+        }
+        if (state.bedrock.bedrockGuardrailVersion) {
+          input.bedrockGuardrailVersion = state.bedrock.bedrockGuardrailVersion;
+        }
+        input.bedrockDisableExceptionOnBlock =
+          state.bedrock.bedrockDisableExceptionOnBlock;
+        if (state.bedrock.bedrockAwsRegionName) {
+          input.bedrockAwsRegionName = state.bedrock.bedrockAwsRegionName;
+        }
+        if (state.bedrock.bedrockAwsAccessKeyId) {
+          input.bedrockAwsAccessKeyId = state.bedrock.bedrockAwsAccessKeyId;
+        }
+        if (state.bedrock.bedrockAwsSecretAccessKey) {
+          input.bedrockAwsSecretAccessKey =
+            state.bedrock.bedrockAwsSecretAccessKey;
+        }
+        if (state.bedrock.bedrockAwsSessionToken) {
+          input.bedrockAwsSessionToken = state.bedrock.bedrockAwsSessionToken;
+        }
+        if (state.bedrock.bedrockAwsSessionName) {
+          input.bedrockAwsSessionName = state.bedrock.bedrockAwsSessionName;
+        }
+        if (state.bedrock.bedrockAwsProfileName) {
+          input.bedrockAwsProfileName = state.bedrock.bedrockAwsProfileName;
+        }
+        if (state.bedrock.bedrockAwsRoleName) {
+          input.bedrockAwsRoleName = state.bedrock.bedrockAwsRoleName;
+        }
+        if (state.bedrock.bedrockAwsWebIdentityToken) {
+          input.bedrockAwsWebIdentityToken =
+            state.bedrock.bedrockAwsWebIdentityToken;
+        }
+        if (state.bedrock.bedrockAwsStsEndpoint) {
+          input.bedrockAwsStsEndpoint = state.bedrock.bedrockAwsStsEndpoint;
+        }
+        if (state.bedrock.bedrockAwsBedrockRuntimeEndpoint) {
+          input.bedrockAwsBedrockRuntimeEndpoint =
+            state.bedrock.bedrockAwsBedrockRuntimeEndpoint;
+        }
+      }
+
+      return input;
+    },
+    [state, isBasicValid, isProviderValid, isModeValid],
+  );
+
   // ===== 返回值 =====
 
   return {
@@ -679,6 +867,7 @@ export function useGuardrailForm() {
       setPresidioFilterScope,
       setPresidioRunOn,
       setPresidioLanguage,
+      setPiiEntitiesConfig,
       // Bedrock
       setBedrockGuardrailId,
       setBedrockGuardrailVersion,
@@ -698,6 +887,8 @@ export function useGuardrailForm() {
       toggleModeDropdown,
       closeModeDropdown,
       resetForm,
+      // Edit mode
+      initializeFromGuardrail,
     },
     validation: {
       isBasicValid,
@@ -705,6 +896,7 @@ export function useGuardrailForm() {
       isModeValid,
     },
     buildCreateInput,
+    buildUpdateInput,
   };
 }
 
