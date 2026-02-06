@@ -7,10 +7,13 @@ require('ts-node').register({
   transpileOnly: true, // 只轉譯，不進行類型檢查（提升速度）
 });
 
+const http = require('node:http');
 const express = require('express');
 const cors = require('cors');
+const { WebSocketServer } = require('ws');
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 const { elkMCPClient } = require('./services/elkMCPClient');
+const { LiveLogStreamService } = require('./services/liveLogStreamService');
 const { ELK_CONFIG } = require('./config/elkConfig');
 
 // 產品專屬路由模組
@@ -24,6 +27,8 @@ const trendRoutes = require('./routes/trend.routes'); // 趨勢對比分析路�
 const gatewayRoutes = require('./routes/gateway.routes');
 
 const app = express();
+const liveLogStreamService = new LiveLogStreamService();
+const LIVE_LOG_WEBSOCKET_PATH = '/api/live/logs';
 
 // CORS 配置 - 支援前端靜態匯出（直接呼叫外部 API）
 // 注意：靜態匯出時不能使用 Next.js rewrites，必須直接呼叫後端
@@ -48,6 +53,23 @@ const corsOptions = {
   allowedHeaders: ['Content-Type', 'Authorization'],
 };
 
+/**
+ * 檢查 WebSocket Origin 是否允許
+ *
+ * 業務背景：WebSocket 不走 CORS 中介層，需手動比對 Origin。
+ * 邊界條件：非瀏覽器連線可能沒有 Origin，直接允許。
+ *
+ * @param {string|undefined} origin WebSocket Origin
+ * @returns {boolean} 是否允許
+ */
+function isWebSocketOriginAllowed(origin) {
+  if (!origin) {
+    return true;
+  }
+
+  return corsOrigins.includes(origin);
+}
+
 app.use(cors(corsOptions));
 app.use(express.json());
 
@@ -60,6 +82,53 @@ app.use('/api/reports', reportRoutes);
 app.use('/api/workflow', workflowRoutes);
 app.use('/api/cloudflare/trend', trendRoutes); // 趨勢對比分析路由,only for cf
 app.use('/api/gateway', gatewayRoutes);
+
+// ============================================================
+// WebSocket Server（Live Logs）
+// ============================================================
+
+const httpServer = http.createServer(app);
+const webSocketServer = new WebSocketServer({ noServer: true });
+
+webSocketServer.on('connection', (webSocketConnection, upgradeRequest) => {
+  liveLogStreamService.handleWebSocketConnection(
+    webSocketConnection,
+    upgradeRequest,
+  );
+});
+
+httpServer.on('upgrade', (upgradeRequest, networkSocket, headBuffer) => {
+  if (!upgradeRequest.url) {
+    networkSocket.destroy();
+    return;
+  }
+
+  const requestUrl = new URL(
+    upgradeRequest.url,
+    `http://${upgradeRequest.headers.host || 'localhost'}`,
+  );
+
+  if (requestUrl.pathname !== LIVE_LOG_WEBSOCKET_PATH) {
+    networkSocket.destroy();
+    return;
+  }
+
+  const origin = upgradeRequest.headers.origin;
+  if (!isWebSocketOriginAllowed(origin)) {
+    networkSocket.write('HTTP/1.1 403 Forbidden\r\n\r\n');
+    networkSocket.destroy();
+    return;
+  }
+
+  webSocketServer.handleUpgrade(
+    upgradeRequest,
+    networkSocket,
+    headBuffer,
+    (webSocketConnection) => {
+      webSocketServer.emit('connection', webSocketConnection, upgradeRequest);
+    },
+  );
+});
 
 // --- 工具函數 ---
 
@@ -830,7 +899,7 @@ async function warmupELKConnection() {
 
 // 啟動服務
 const port = 8081;
-app.listen(port, async () => {
+httpServer.listen(port, async () => {
   console.log(`🚀 Backend API 已啟動: http://localhost:${port}`);
   console.log('📊 DDoS 攻擊圖表分析系統已就緒');
 

@@ -395,9 +395,16 @@ class ElkMCPClient {
   }
 
   // 建構 Elasticsearch 查詢（產品無關）
-  buildElasticsearchQuery(timeRange = '1h', filters = {}, fieldMapping = null, maxResults = ELK_CONFIG.elasticsearch.maxResults) {
+  buildElasticsearchQuery(
+    timeRange = '1h',
+    filters = {},
+    fieldMapping = null,
+    maxResults = ELK_CONFIG.elasticsearch.maxResults,
+    timestampField = '@timestamp',
+  ) {
     // 智能時間範圍查詢策略
     let query;
+    const resolvedTimestampField = timestampField || '@timestamp';
 
     //處理 ELK_MAX_RESULTS(maxResults) 不能超過 10000，Elasticsearch 單次查詢限制
     if (maxResults > 10000) {
@@ -414,7 +421,7 @@ class ElkMCPClient {
         },
         sort: [
           {
-            "@timestamp": {
+            [resolvedTimestampField]: {
               order: "desc"
             }
           }
@@ -427,7 +434,7 @@ class ElkMCPClient {
       query = {
         query: {
           range: {
-            "@timestamp": {
+            [resolvedTimestampField]: {
               gte: timeRange.start,
               lte: timeRange.end
             }
@@ -435,7 +442,7 @@ class ElkMCPClient {
         },
         sort: [
           {
-            "@timestamp": {
+            [resolvedTimestampField]: {
               order: "desc"
             }
           }
@@ -452,7 +459,7 @@ class ElkMCPClient {
       query = {
         query: {
           range: {
-            "@timestamp": {
+            [resolvedTimestampField]: {
               gte: fromTime.toISOString(),
               lte: now.toISOString()
             }
@@ -460,7 +467,7 @@ class ElkMCPClient {
         },
         sort: [
           {
-            "@timestamp": {
+            [resolvedTimestampField]: {
               order: "desc"
             }
           }
@@ -551,7 +558,7 @@ class ElkMCPClient {
   // 執行 Elasticsearch 查詢（支援動態索引）
   // options 可以包含: { indexPattern, fieldMapping }
   async queryElasticsearch(timeRange = '1h', options = {}) {
-    const { indexPattern, fieldMapping, ...filters } = options;
+    const { indexPattern, fieldMapping, timestampField, ...filters } = options;
     
     try {
       await this.ensureConnection();
@@ -562,7 +569,13 @@ class ElkMCPClient {
     }
 
     try {
-      const query = this.buildElasticsearchQuery(timeRange, filters, fieldMapping, ELK_CONFIG.elasticsearch.maxResults);
+      const query = this.buildElasticsearchQuery(
+        timeRange,
+        filters,
+        fieldMapping,
+        ELK_CONFIG.elasticsearch.maxResults,
+        timestampField,
+      );
       
       // 使用提供的索引模式，或回退到預設
       const targetIndex = indexPattern || ELK_CONFIG.elasticsearch.index;
@@ -622,7 +635,7 @@ class ElkMCPClient {
             hits: records.map((record, index) => ({
               id: record.RayID || record._id || index.toString(),
               source: record,
-              timestamp: record["@timestamp"]
+              timestamp: record[timestampField] || record["@timestamp"]
             }))
           };
         } else {
@@ -662,7 +675,7 @@ class ElkMCPClient {
         hits: hits.map(hit => ({
           id: hit._id,
           source: hit._source,
-          timestamp: hit._source["@timestamp"]
+          timestamp: hit._source?.[timestampField] || hit._source?.["@timestamp"]
         }))
       };
 
@@ -735,7 +748,8 @@ class ElkMCPClient {
   async queryElasticsearchBatched(timeRange = '1h', options = {}) {
     const { 
       indexPattern, 
-      fieldMapping, 
+      fieldMapping,
+      timestampField,
       batchSize = ELK_CONFIG.elasticsearch.batchSize,  // 從 .env 的 ELK_BATCH_SIZE 讀取，預設 10
       maxBatches = ELK_CONFIG.elasticsearch.maxBatches,  // 從 .env 的 ELK_MAX_BATCHES 讀取，預設 10
       ...filters 
@@ -761,7 +775,13 @@ class ElkMCPClient {
     while (currentBatch < maxBatches) {
       try {
         // 建構單一批次的查詢
-        const baseQuery = this.buildElasticsearchQuery(timeRange, filters, fieldMapping, batchSize);
+        const baseQuery = this.buildElasticsearchQuery(
+          timeRange,
+          filters,
+          fieldMapping,
+          batchSize,
+          timestampField,
+        );
         const batchQuery = {
           ...baseQuery,
           from: from,
@@ -902,13 +922,19 @@ class ElkMCPClient {
   async queryWithNewInstance(timeRange = '1h', options = {}) {
     console.log('🆕 使用新實例執行 Elasticsearch 查詢...');
     
-    const { indexPattern, fieldMapping, ...filters } = options;
+    const { indexPattern, fieldMapping, timestampField, ...filters } = options;
     const newClient = new ElkMCPClient();
     
     try {
       await newClient.connect();
       
-      const query = newClient.buildElasticsearchQuery(timeRange, filters, fieldMapping, ELK_CONFIG.elasticsearch.maxResults);
+      const query = newClient.buildElasticsearchQuery(
+        timeRange,
+        filters,
+        fieldMapping,
+        ELK_CONFIG.elasticsearch.maxResults,
+        timestampField,
+      );
       const targetIndex = indexPattern || ELK_CONFIG.elasticsearch.index;
       
       console.log('📊 執行 Elasticsearch 查詢（新實例）...');
