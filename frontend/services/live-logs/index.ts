@@ -158,6 +158,7 @@ export type LiveLogStreamClientOptions = {
 };
 
 const LIVE_LOG_WEBSOCKET_PATH = '/api/live/logs';
+const CLIENT_PING_INTERVAL_MILLISECONDS = 20000;
 
 const BACKEND_WEBSOCKET_BASE_URL = process.env.NEXT_PUBLIC_BACKEND_WS_URL;
 
@@ -252,6 +253,7 @@ export function createLiveLogStreamClient(
 ): LiveLogStreamClient {
   let webSocketConnection: WebSocket | null = null;
   let connectionStatus: LiveLogConnectionStatus = 'idle';
+  let pingTimer: ReturnType<typeof setInterval> | null = null;
 
   /**
    * 更新連線狀態並通知外部
@@ -322,10 +324,20 @@ export function createLiveLogStreamClient(
 
     webSocketConnection.addEventListener('open', () => {
       updateConnectionStatus('open');
+      if (pingTimer) {
+        clearInterval(pingTimer);
+      }
+      pingTimer = setInterval(() => {
+        sendPing();
+      }, CLIENT_PING_INTERVAL_MILLISECONDS);
     });
 
     webSocketConnection.addEventListener('close', () => {
       updateConnectionStatus('closed');
+      if (pingTimer) {
+        clearInterval(pingTimer);
+        pingTimer = null;
+      }
       webSocketConnection = null;
     });
 
@@ -346,6 +358,10 @@ export function createLiveLogStreamClient(
       webSocketConnection.close();
       webSocketConnection = null;
       updateConnectionStatus('closed');
+    }
+    if (pingTimer) {
+      clearInterval(pingTimer);
+      pingTimer = null;
     }
   }
 

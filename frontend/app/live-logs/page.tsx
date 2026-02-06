@@ -16,6 +16,8 @@ import {
 const DEFAULT_SUBSCRIPTION_ID = 'live-logs-demo';
 const DEFAULT_TIME_RANGE = '1h';
 const DEFAULT_INTERVAL_MILLISECONDS = 5000;
+const MINIMUM_POLLING_INTERVAL_MILLISECONDS = 2000;
+const MAXIMUM_POLLING_INTERVAL_MILLISECONDS = 60000;
 const MAXIMUM_DISPLAY_RECORDS = 200;
 
 /**
@@ -245,7 +247,34 @@ export default function LiveLogsPage() {
       return undefined;
     }
 
-    return Math.trunc(parsedValue);
+    const normalizedValue = Math.trunc(parsedValue);
+    if (normalizedValue < MINIMUM_POLLING_INTERVAL_MILLISECONDS) {
+      return MINIMUM_POLLING_INTERVAL_MILLISECONDS;
+    }
+    if (normalizedValue > MAXIMUM_POLLING_INTERVAL_MILLISECONDS) {
+      return MAXIMUM_POLLING_INTERVAL_MILLISECONDS;
+    }
+    return normalizedValue;
+  }
+
+  /**
+   * 取得輪詢間隔並同步回填至輸入框
+   *
+   * @returns 解析後的輪詢間隔
+   */
+  function resolveIntervalMillisecondsForRequest(): number | undefined {
+    const intervalMilliseconds = parseIntervalMilliseconds(
+      intervalMillisecondsInput,
+    );
+
+    if (intervalMilliseconds !== undefined) {
+      const normalizedInput = String(intervalMilliseconds);
+      if (normalizedInput !== intervalMillisecondsInput) {
+        setIntervalMillisecondsInput(normalizedInput);
+      }
+    }
+
+    return intervalMilliseconds;
   }
 
   /**
@@ -291,9 +320,7 @@ export default function LiveLogsPage() {
         productType: selectedProductType,
         timeRange: timeRangeInput.trim() || DEFAULT_TIME_RANGE,
         filters: buildFilters(),
-        intervalMilliseconds: parseIntervalMilliseconds(
-          intervalMillisecondsInput,
-        ),
+        intervalMilliseconds: resolveIntervalMillisecondsForRequest(),
       });
     } catch (error) {
       setLastErrorMessage('訂閱失敗，請檢查輸入條件');
@@ -323,9 +350,7 @@ export default function LiveLogsPage() {
         subscriptionId: DEFAULT_SUBSCRIPTION_ID,
         timeRange: timeRangeInput.trim() || DEFAULT_TIME_RANGE,
         filters: buildFilters(),
-        intervalMilliseconds: parseIntervalMilliseconds(
-          intervalMillisecondsInput,
-        ),
+        intervalMilliseconds: resolveIntervalMillisecondsForRequest(),
       });
     } catch (error) {
       setLastErrorMessage('更新失敗，請檢查輸入條件');
@@ -541,7 +566,7 @@ export default function LiveLogsPage() {
               </label>
 
               <label className="flex flex-col gap-2 text-xs text-slate-300">
-                輪詢間隔（毫秒）
+                輪詢間隔（毫秒，最小 2000 / 最大 60000）
                 <input
                   value={intervalMillisecondsInput}
                   onChange={handleIntervalChange}

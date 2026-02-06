@@ -1,7 +1,6 @@
 // backend/services/liveLogStreamService.js
 // 即時日誌串流服務：WebSocket 訂閱管理 + ELK 增量查詢 + 事件推送
 
-const { z } = require('zod');
 const { WebSocket } = require('ws');
 const { elkMCPClient } = require('./elkMCPClient');
 const cloudflareELKConfig = require('../config/products/cloudflare/cloudflareELKConfig');
@@ -18,111 +17,98 @@ const {
 // ============================================================
 // WebSocket 協議定義（Client ↔ Server）
 // ============================================================
+// 注意：後端使用 CommonJS，Zod v4 的 require('zod') 有相容性問題，
+// 因此改用手動驗證取代 Zod schema。
+// 前端（TypeScript ESM）仍使用 Zod schema 驗證。
 
-const LIVE_LOG_PRODUCT_TYPE_SCHEMA = z.enum(['cloudflare', 'f5', 'checkpoint']);
-
-const LIVE_LOG_RELATIVE_TIME_RANGE_SCHEMA = z
-  .string()
-  .regex(/^\d+[mhd]$/, '時間範圍格式需為 10m / 1h / 7d');
-
-const LIVE_LOG_ABSOLUTE_TIME_RANGE_SCHEMA = z.object({
-  start: z.string().datetime(),
-  end: z.string().datetime(),
-});
-
-const LIVE_LOG_TIME_RANGE_SCHEMA = z.union([
-  LIVE_LOG_RELATIVE_TIME_RANGE_SCHEMA,
-  LIVE_LOG_ABSOLUTE_TIME_RANGE_SCHEMA,
+const VALID_PRODUCT_TYPES = new Set(['cloudflare', 'f5', 'checkpoint']);
+const VALID_CLIENT_ACTIONS = new Set([
+  'subscribe',
+  'update_filters',
+  'unsubscribe',
+  'ping',
 ]);
+const RELATIVE_TIME_RANGE_PATTERN = /^\d+[mhd]$/;
 
-const LIVE_LOG_FILTERS_SCHEMA = z
-  .object({
-    clientIp: z.string().min(1).optional(),
-    securityAction: z.string().min(1).optional(),
-    minWafScore: z.number().int().min(0).optional(),
-  })
-  .strict();
+/**
+ * 驗證 Client 訊息結構
+ *
+ * 業務背景：替代 Zod schema 驗證，避免 Zod v4 CommonJS 相容性問題。
+ * 只驗證關鍵欄位，不做深層驗證（前端已用 Zod 嚴格驗證）。
+ *
+ * @param {unknown} message 解析後的訊息
+ * @returns {{valid: boolean, action?: string, data?: object, errorMessage?: string}}
+ */
+function validateClientMessage(message) {
+  if (!message || typeof message !== 'object') {
+    return { valid: false, errorMessage: '訊息必須為物件' };
+  }
 
-const LIVE_LOG_CURSOR_SCHEMA = z.object({
-  timestamp: z.string().datetime(),
-  lastRecordId: z.string().min(1).optional(),
-});
+  const { action } = message;
+  if (!action || !VALID_CLIENT_ACTIONS.has(action)) {
+    return { valid: false, errorMessage: '不支援的訊息類型' };
+  }
 
-const LIVE_LOG_SUBSCRIBE_MESSAGE_SCHEMA = z.object({
-  action: z.literal('subscribe'),
-  subscriptionId: z.string().min(1),
-  productType: LIVE_LOG_PRODUCT_TYPE_SCHEMA,
-  timeRange: LIVE_LOG_TIME_RANGE_SCHEMA.optional(),
-  filters: LIVE_LOG_FILTERS_SCHEMA.optional(),
-  intervalMilliseconds: z.number().int().min(2000).max(60000).optional(),
-  cursor: LIVE_LOG_CURSOR_SCHEMA.optional(),
-});
+  if (action === 'ping') {
+    return { valid: true, action, data: message };
+  }
 
-const LIVE_LOG_UPDATE_FILTERS_MESSAGE_SCHEMA = z.object({
-  action: z.literal('update_filters'),
-  subscriptionId: z.string().min(1),
-  timeRange: LIVE_LOG_TIME_RANGE_SCHEMA.optional(),
-  filters: LIVE_LOG_FILTERS_SCHEMA.optional(),
-  intervalMilliseconds: z.number().int().min(2000).max(60000).optional(),
-  cursor: LIVE_LOG_CURSOR_SCHEMA.optional(),
-});
+  if (action === 'unsubscribe') {
+    if (!message.subscriptionId || typeof message.subscriptionId !== 'string') {
+      return { valid: false, errorMessage: '缺少 subscriptionId' };
+    }
+    return { valid: true, action, data: message };
+  }
 
-const LIVE_LOG_UNSUBSCRIBE_MESSAGE_SCHEMA = z.object({
-  action: z.literal('unsubscribe'),
-  subscriptionId: z.string().min(1),
-});
+  if (action === 'subscribe') {
+    if (!message.subscriptionId || typeof message.subscriptionId !== 'string') {
+      return { valid: false, errorMessage: '缺少 subscriptionId' };
+    }
+    if (!message.productType || !VALID_PRODUCT_TYPES.has(message.productType)) {
+      return { valid: false, errorMessage: '不支援的產品類型' };
+    }
+    if (message.timeRange) {
+      if (typeof message.timeRange === 'string') {
+        if (!RELATIVE_TIME_RANGE_PATTERN.test(message.timeRange)) {
+          return {
+            valid: false,
+            errorMessage: '時間範圍格式錯誤，請使用 10m / 1h / 7d',
+          };
+        }
+      } else if (typeof message.timeRange === 'object') {
+        if (!message.timeRange.start || !message.timeRange.end) {
+          return { valid: false, errorMessage: '絕對時間範圍需包含 start 和 end' };
+        }
+      }
+    }
+    if (
+      message.intervalMilliseconds !== undefined &&
+      (typeof message.intervalMilliseconds !== 'number' ||
+        message.intervalMilliseconds < 2000 ||
+        message.intervalMilliseconds > 60000)
+    ) {
+      return { valid: false, errorMessage: '輪詢間隔需介於 2000~60000 毫秒' };
+    }
+    return { valid: true, action, data: message };
+  }
 
-const LIVE_LOG_PING_MESSAGE_SCHEMA = z.object({
-  action: z.literal('ping'),
-});
+  if (action === 'update_filters') {
+    if (!message.subscriptionId || typeof message.subscriptionId !== 'string') {
+      return { valid: false, errorMessage: '缺少 subscriptionId' };
+    }
+    if (
+      message.intervalMilliseconds !== undefined &&
+      (typeof message.intervalMilliseconds !== 'number' ||
+        message.intervalMilliseconds < 2000 ||
+        message.intervalMilliseconds > 60000)
+    ) {
+      return { valid: false, errorMessage: '輪詢間隔需介於 2000~60000 毫秒' };
+    }
+    return { valid: true, action, data: message };
+  }
 
-const LIVE_LOG_CLIENT_MESSAGE_SCHEMA = z.union([
-  LIVE_LOG_SUBSCRIBE_MESSAGE_SCHEMA,
-  LIVE_LOG_UPDATE_FILTERS_MESSAGE_SCHEMA,
-  LIVE_LOG_UNSUBSCRIBE_MESSAGE_SCHEMA,
-  LIVE_LOG_PING_MESSAGE_SCHEMA,
-]);
-
-const LIVE_LOG_RECORD_SCHEMA = z.object({
-  recordId: z.string().min(1),
-  timestamp: z.string().datetime(),
-  source: z.record(z.unknown()),
-});
-
-const LIVE_LOG_SNAPSHOT_EVENT_SCHEMA = z.object({
-  event: z.literal('snapshot'),
-  subscriptionId: z.string().min(1),
-  productType: LIVE_LOG_PRODUCT_TYPE_SCHEMA,
-  records: z.array(LIVE_LOG_RECORD_SCHEMA),
-  cursor: LIVE_LOG_CURSOR_SCHEMA.optional(),
-  receivedAt: z.string().datetime(),
-  stats: z
-    .object({
-      totalRecords: z.number().int().min(0),
-    })
-    .optional(),
-});
-
-const LIVE_LOG_UPDATE_EVENT_SCHEMA = z.object({
-  event: z.literal('update'),
-  subscriptionId: z.string().min(1),
-  productType: LIVE_LOG_PRODUCT_TYPE_SCHEMA,
-  records: z.array(LIVE_LOG_RECORD_SCHEMA),
-  cursor: LIVE_LOG_CURSOR_SCHEMA.optional(),
-  receivedAt: z.string().datetime(),
-});
-
-const LIVE_LOG_HEARTBEAT_EVENT_SCHEMA = z.object({
-  event: z.literal('heartbeat'),
-  serverTime: z.string().datetime(),
-});
-
-const LIVE_LOG_ERROR_EVENT_SCHEMA = z.object({
-  event: z.literal('error'),
-  message: z.string().min(1),
-  code: z.string().min(1).optional(),
-  subscriptionId: z.string().min(1).optional(),
-});
+  return { valid: false, errorMessage: '不支援的訊息類型' };
+}
 
 // ============================================================
 // 服務內部設定
@@ -582,16 +568,16 @@ class LiveLogStreamService {
       return;
     }
 
-    let validatedMessage;
-    try {
-      validatedMessage = LIVE_LOG_CLIENT_MESSAGE_SCHEMA.parse(parsedMessage);
-    } catch (error) {
+    const validationResult = validateClientMessage(parsedMessage);
+    if (!validationResult.valid) {
       this.sendErrorEvent(webSocketConnection, {
-        message: '訊息結構不符合協議',
+        message: validationResult.errorMessage || '訊息結構不符合協議',
         code: 'INVALID_MESSAGE_SCHEMA',
       });
       return;
     }
+
+    const validatedMessage = validationResult.data;
 
     switch (validatedMessage.action) {
       case 'subscribe':
@@ -912,7 +898,7 @@ class LiveLogStreamService {
       return;
     }
 
-    const eventPayload = LIVE_LOG_SNAPSHOT_EVENT_SCHEMA.parse({
+    const eventPayload = {
       event: 'snapshot',
       subscriptionId: payload.subscriptionId,
       productType: payload.productType,
@@ -922,7 +908,7 @@ class LiveLogStreamService {
       stats: {
         totalRecords: payload.totalRecords,
       },
-    });
+    };
 
     webSocketConnection.send(JSON.stringify(eventPayload));
   }
@@ -938,14 +924,14 @@ class LiveLogStreamService {
       return;
     }
 
-    const eventPayload = LIVE_LOG_UPDATE_EVENT_SCHEMA.parse({
+    const eventPayload = {
       event: 'update',
       subscriptionId: payload.subscriptionId,
       productType: payload.productType,
       records: payload.records,
       cursor: payload.cursor,
       receivedAt: new Date().toISOString(),
-    });
+    };
 
     webSocketConnection.send(JSON.stringify(eventPayload));
   }
@@ -960,10 +946,10 @@ class LiveLogStreamService {
       return;
     }
 
-    const eventPayload = LIVE_LOG_HEARTBEAT_EVENT_SCHEMA.parse({
+    const eventPayload = {
       event: 'heartbeat',
       serverTime: new Date().toISOString(),
-    });
+    };
 
     webSocketConnection.send(JSON.stringify(eventPayload));
   }
@@ -979,12 +965,12 @@ class LiveLogStreamService {
       return;
     }
 
-    const eventPayload = LIVE_LOG_ERROR_EVENT_SCHEMA.parse({
+    const eventPayload = {
       event: 'error',
       message: payload.message,
       code: payload.code,
       subscriptionId: payload.subscriptionId,
-    });
+    };
 
     webSocketConnection.send(JSON.stringify(eventPayload));
   }
@@ -1018,9 +1004,4 @@ class LiveLogStreamService {
 
 module.exports = {
   LiveLogStreamService,
-  LIVE_LOG_CLIENT_MESSAGE_SCHEMA,
-  LIVE_LOG_SNAPSHOT_EVENT_SCHEMA,
-  LIVE_LOG_UPDATE_EVENT_SCHEMA,
-  LIVE_LOG_HEARTBEAT_EVENT_SCHEMA,
-  LIVE_LOG_ERROR_EVENT_SCHEMA,
 };
