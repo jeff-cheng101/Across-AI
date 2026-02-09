@@ -11,7 +11,7 @@ import {
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import React, { useEffect, useState } from 'react';
-import { logout, logoutContract } from '@/app/routes/auth';
+import { logout } from '@/app/routes/auth';
 import authenticator, { checkAuth } from '@/app/util/authenticator';
 import { Button } from '@/components/ui/button';
 import {
@@ -157,24 +157,6 @@ export function Navbar() {
     }
   };
 
-  const handleLogoutContract = async () => {
-    try {
-      const resp = await logoutContract();
-      if (resp.success && resp.user && resp.user.role === 'management') {
-        router.push('/account/management');
-      } else if (resp.success && resp.user && resp.user.role === 'reseller') {
-        router.push('/account/dealer');
-      } else {
-        console.error('Back to management failed:', resp.message);
-        router.push('/');
-      }
-    } catch (error) {
-      console.error('Back to management failed:', error);
-      router.push('/');
-      throw error;
-    }
-  };
-
   return (
     <header className="sticky top-0 z-50 w-full border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
       <div className="w-full max-w-full flex h-16 items-center px-4 sm:px-6 lg:px-8 bg-[rgba(10,22,40,1)]">
@@ -233,18 +215,6 @@ export function Navbar() {
                   </Button>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end" className="w-56">
-                  {auth?.maintainer?.role === 'management' ||
-                  auth?.maintainer?.role === 'reseller' ||
-                  auth?.user?.role === 'management' ||
-                  auth?.user?.role === 'reseller' ? (
-                    <DropdownMenuItem
-                      onClick={handleLogoutContract}
-                      className="text-black-600 focus:text-black-600"
-                    >
-                      <LogOut className="mr-2 h-4 w-4" />
-                      <span>進入管理系統</span>
-                    </DropdownMenuItem>
-                  ) : null}
                   <DropdownMenuItem
                     onClick={handleLogout}
                     className="text-red-600 focus:text-red-600"

@@ -4,8 +4,8 @@ import { authClient } from '@/lib/api-clients';
 // 為了兼容性，將 authClient 作為 request 使用
 const request = authClient;
 
-// 用戶角色類型
-export type UserRole = 'management' | 'reseller' | 'user';
+// 用戶角色類型（已簡化，僅保留 user 權限）
+export type UserRole = 'user';
 
 // 類型定義
 export interface LoginResponse {
@@ -213,45 +213,3 @@ export const resetPassword = async (data: {
   }
 };
 
-// 切换用户身份 (管理员权限)
-export const switchToUserContract = async (
-  contractNo: string,
-): Promise<LoginResponse> => {
-  try {
-    const resp = await request.post<LoginResponse>('/auth/switch_contract', {
-      contractNo: contractNo,
-    });
-
-    if (verifyStatus(resp.status)) {
-      const auth = {
-        loginState: true,
-        user: resp.data.user,
-        contract: resp.data.contract,
-        message: resp.data.message || '已切换到用户身份',
-      };
-      authSubject.next(auth);
-    }
-    return resp.data;
-  } catch (error: any) {
-    throw new Error(error.message || '切换用户失败');
-  }
-};
-
-export const logoutContract = async (): Promise<LogoutResponse> => {
-  try {
-    const resp = await request.post<LoginResponse>('/auth/switch_management');
-
-    if (verifyStatus(resp.status)) {
-      const auth = {
-        loginState: true,
-        user: resp.data.user,
-        contract: resp.data.contract || {},
-        message: resp.data.message || '已返回管理员身份',
-      };
-      authSubject.next(auth);
-    }
-    return resp.data;
-  } catch (error: any) {
-    throw new Error(error.message || '返回管理员失败');
-  }
-};

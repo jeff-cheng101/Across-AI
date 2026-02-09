@@ -9,7 +9,7 @@ import { Label } from "@/components/ui/label"
 import { Separator } from "@/components/ui/separator"
 import { Shield, Mail, Lock, Eye, EyeOff } from "lucide-react"
 import Link from "next/link"
-import { login, UserRole } from "../routes/auth"
+import { login } from "../routes/auth"
 import { notifyError, notifySuccess } from "../util/notify"
 
 export default function LoginPage() {
@@ -18,19 +18,6 @@ export default function LoginPage() {
   const [showPassword, setShowPassword] = useState(false)
   const [isLoading, setIsLoading] = useState(false)
   const router = useRouter()
-
-  const getRedirectPath = (role: UserRole): string => {
-    switch (role) {
-      case 'management':
-        return '/account/management'
-      case 'reseller':
-        return '/account/dealer'
-      case 'user':
-        return '/dashboard'
-      default:
-        return '/dashboard'
-    }
-  }
 
   const handleLogin = async () => {
     if (!email || !password) {
@@ -43,9 +30,7 @@ export default function LoginPage() {
       const response = await login({ email, password })
       
       if (response.success && response.user) {
-        // 根據角色重定向
-        const redirectPath = getRedirectPath(response.user.role)
-        router.push(redirectPath)
+        router.push('/dashboard')
       } else {
         notifyError(response.message || '登入失敗')
       }

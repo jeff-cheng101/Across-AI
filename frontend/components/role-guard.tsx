@@ -70,19 +70,8 @@ export function RoleGuard({ children, allowedRoles, fallback }: RoleGuardProps) 
           if (allowedRoles.includes(authState.user.role)) {
             setHasAccess(true)
           } else {
-            switch (authState.user.role) {
-              case 'management':
-                router.push('/account/management')
-                break
-              case 'reseller':
-                router.push('/account/dealer')
-                break
-              case 'user':
-                router.push('/dashboard')
-                break
-              default:
-                router.push('/')
-            }
+            // 權限不符時統一導向 dashboard
+            router.push('/dashboard')
           }
         } else {
           router.push('/')

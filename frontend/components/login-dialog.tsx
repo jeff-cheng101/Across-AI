@@ -16,7 +16,7 @@ import { Label } from "@/components/ui/label"
 import { User, Mail } from "lucide-react"
 import { LoadingOverlay } from '@/components/ui/loading-overlay'
 import { RingLoader } from 'react-spinners'
-import { login, UserRole, forgotPassword } from "@/app/routes/auth"
+import { login, forgotPassword } from "@/app/routes/auth"
 import { notifyError, notifySuccess } from "@/app/util/notify"
 
 export function LoginDialog() {
@@ -27,19 +27,6 @@ export function LoginDialog() {
   const [forgotEmail, setForgotEmail] = useState("")
   const router = useRouter()
   const [isLoading, setIsLoading] = useState(false)
-
-  const getRedirectPath = (role: UserRole): string => {
-    switch (role) {
-      case 'management':
-        return '/account/management'
-      case 'reseller':
-        return '/account/dealer'
-      case 'user':
-        return '/dashboard'
-      default:
-        return '/dashboard'
-    }
-  }
 
   const handleLogin = async () => {
     if (!email || !password) {
@@ -55,11 +42,7 @@ export function LoginDialog() {
       
       if (response.success && response.user) {
         console.log('Login successful, user role:', response.user.role)
-        
-        // 根據角色重定向
-        const redirectPath = getRedirectPath(response.user.role)
-        console.log('Redirecting to:', redirectPath)
-        router.push(redirectPath)
+        router.push('/dashboard')
         setOpen(false)
       } else {
         console.log('Login failed - response:', response)

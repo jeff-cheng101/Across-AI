@@ -93,14 +93,8 @@ export default function Home() {
     // 檢查登入狀態
     const checkLoginStatus = async () => {
       const auth = authenticator.authValue;
-      if (auth) {
-        if (
-          auth.user?.role === 'management' ||
-          auth.user?.role === 'reseller' ||
-          auth.user?.role === 'user'
-        ) {
-          setIsLoggedIn(true);
-        }
+      if (auth?.loginState && auth?.user) {
+        setIsLoggedIn(true);
       }
 
       // 第一次檢查登入狀態後，觸發 Dify 登入
