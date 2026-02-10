@@ -36,54 +36,30 @@ export default function Home() {
   const [isLoggedIn, setIsLoggedIn] = useState(false);
   const hasDifyLoginTriggered = useRef(false);
 
+  /**
+   * 透過後端 API Route 代理呼叫 Dify 登入 API，
+   * 避免 CORS 問題及前端暴露帳密。
+   */
   const handleDifyLogin = async () => {
-    console.log('🚀 開始呼叫 Dify 登入 API...');
+    console.log('🚀 開始透過後端代理呼叫 Dify 登入...');
     try {
-      const difyEmail = process.env.NEXT_PUBLIC_DIFY_EMAIL;
-      const difyPassword = process.env.NEXT_PUBLIC_DIFY_PWD;
-
-      console.log('🔑 環境變數檢查:', {
-        hasEmail: !!difyEmail,
-        hasPassword: !!difyPassword,
-      });
-
-      if (!difyEmail || !difyPassword) {
-        console.error('❌ 環境變數未配置');
-        return { success: false, error: 'Dify credentials not configured' };
-      }
-
-      const difyBaseUrl = process.env.NEXT_PUBLIC_DIFY_URL;
-      const loginUrl = `${difyBaseUrl}/console/api/login`;
-      console.log('🌐 呼叫 Dify API:', loginUrl);
-
-      const response = await fetch(loginUrl, {
+      const response = await fetch('/api/dify/login', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
         credentials: 'include',
-        body: JSON.stringify({
-          email: difyEmail,
-          language: 'zh-Hant',
-          password: difyPassword,
-          remember_me: true,
-        }),
       });
 
-      console.log('📡 收到 Dify API 響應，狀態碼:', response.status);
-      const data = await response.json();
-      console.log('📄 Dify API 返回數據:', data);
+      const result = await response.json();
 
-      if (response.ok) {
-        console.log('✅ Dify 登入成功', data);
-        return { success: true, data };
-      } else {
-        console.error('❌ Dify 登入失敗', data);
-        return { success: false, error: data.message || 'Dify login failed' };
+      if (result.success) {
+        console.log('✅ Dify 登入成功');
+        return { success: true, data: result.data };
       }
+
+      console.error('❌ Dify 登入失敗:', result.error);
+      return { success: false, error: result.error || 'Dify 登入失敗' };
     } catch (error) {
-      console.error('⚠️ Dify API 調用錯誤', error);
-      return { success: false, error: 'API 調用失敗' };
+      console.error('⚠️ Dify 登入 API 調用錯誤:', error);
+      return { success: false, error: 'Dify 登入 API 調用失敗' };
     }
   };
 
