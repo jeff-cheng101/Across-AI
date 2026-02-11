@@ -12,8 +12,8 @@ import { createDifyProvider } from 'dify-ai-provider';
 import { type NextRequest, NextResponse } from 'next/server';
 
 const DIFY_SERVICE_URL = process.env.DIFY_SERVICE_URL;
-const DIFY_APP_ID = process.env.DIFY_APP_ID;
-const DIFY_API_KEY = process.env.DIFY_API_KEY;
+const DIFY_CHAT_ID = process.env.DIFY_CHAT_ID;
+const DIFY_CHAT_KEY = process.env.DIFY_CHAT_KEY;
 
 interface ChatRequestBody {
   messages: UIMessage[];
@@ -41,12 +41,12 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    if (!DIFY_SERVICE_URL || !DIFY_APP_ID || !DIFY_API_KEY) {
+    if (!DIFY_SERVICE_URL || !DIFY_CHAT_ID || !DIFY_CHAT_KEY) {
       return NextResponse.json(
         {
           success: false,
           error:
-            'Dify API 配置缺失 (DIFY_SERVICE_URL, DIFY_APP_ID, DIFY_API_KEY)',
+            'Dify API 配置缺失 (DIFY_SERVICE_URL, DIFY_CHAT_ID, DIFY_CHAT_KEY)',
         },
         { status: 500 },
       );
@@ -62,9 +62,9 @@ export async function POST(request: NextRequest) {
       baseURL: DIFY_SERVICE_URL,
     });
 
-    const model = difyProvider(DIFY_APP_ID, {
+    const model = difyProvider(DIFY_CHAT_ID, {
       responseMode: 'streaming',
-      apiKey: DIFY_API_KEY,
+      apiKey: DIFY_CHAT_KEY,
     });
 
     // 設定 headers 用於對話連續性

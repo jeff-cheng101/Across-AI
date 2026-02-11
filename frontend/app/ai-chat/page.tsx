@@ -92,25 +92,67 @@ export default function AIChatPage() {
 
   // 追蹤是否為新對話（沒有選擇任何對話時發送的第一條訊息）
   const isNewConversationRef = useRef(false);
+  
+  // 用 ref 存儲當前的 conversationId，確保每次請求都能獲取最新值
+  const conversationIdRef = useRef<string | undefined>(selectedChatId);
+  
+  // 更新 ref 當 selectedChatId 改變時
+  useEffect(() => {
+    conversationIdRef.current = selectedChatId;
+  }, [selectedChatId]);
 
   // 建立自定義 transport 以連接 API Route Handler
+  // body 參數使用函數，每次發送消息時都會調用，確保使用最新的 conversationId
   const transport = useMemo(
     () =>
       new DefaultChatTransport({
         api: '/api/chat',
         credentials: 'include',
-        // 傳遞額外的 body 參數
-        body: {
-          userId: getUserId(),
-          conversationId: selectedChatId,
+        // body 參數可以是函數，每次發送消息時都會調用
+        body: () => {
+          const currentConversationId = conversationIdRef.current;
+          console.log(`🔗 準備發送消息 - Conversation ID: ${currentConversationId || '(新對話)'}`);
+          return {
+            userId: getUserId(),
+            conversationId: currentConversationId,
+          };
         },
       }),
-    [selectedChatId],
+    [], // 只需要創建一次，因為 body 是函數，會動態獲取最新值
   );
 
   // 使用 useChat hook（v3 API）
   const { messages, sendMessage, status, setMessages } = useChat({
     transport,
+    /**
+     * 當 AI 回覆完成時的回調
+     * 用於在新對話創建後更新 selectedChatId，確保後續消息發送到同一個對話
+     */
+    onFinish: async () => {
+      // 如果是新對話（沒有選擇任何對話ID），需要獲取剛創建的對話ID
+      if (isNewConversationRef.current) {
+        try {
+          // 等待一下確保後端已建立對話
+          await new Promise((resolve) => setTimeout(resolve, 500));
+          
+          // 重新獲取對話列表
+          const userId = getUserId();
+          const { conversations } = await import('@/services/chat').then(
+            (m) => m.getConversations(userId, 1),
+          );
+          
+          // 如果有對話，將最新的對話設為當前選中
+          if (conversations.length > 0) {
+            const latestConversationId = conversations[0].id;
+            console.log(`🔗 新對話已建立，ID: ${latestConversationId}`);
+            setSelectedChatId(latestConversationId);
+            isNewConversationRef.current = false;
+          }
+        } catch (error) {
+          console.error('❌ 獲取新對話 ID 失敗:', error);
+        }
+      }
+    },
   });
 
   /**
@@ -181,29 +223,26 @@ export default function AIChatPage() {
   }, []);
 
   /**
-   * 監聽訊息變化：
-   * 1. 當有新訊息時自動滾動到底部
-   * 2. 當新對話完成第一次回覆後刷新側邊欄
+   * 監聽訊息變化：當有新訊息時自動滾動到底部
    */
   useEffect(() => {
     // 只有訊息增加時才滾動（避免載入歷史時滾動）
     if (messages.length > prevMessagesLengthRef.current) {
       scrollToBottom();
-
-      // 如果是新對話且 AI 已經回覆（至少有 2 條訊息：用戶 + AI）
-      // 刷新側邊欄讓新對話出現在列表中
-      if (isNewConversationRef.current && messages.length >= 2) {
-        // 延遲刷新，確保後端已建立對話
-        const timer = setTimeout(() => {
-          setSidebarRefreshTrigger((prev) => prev + 1);
-          isNewConversationRef.current = false; // 重置標記
-        }, 1000);
-        return () => clearTimeout(timer);
-      }
     }
 
     prevMessagesLengthRef.current = messages.length;
   }, [messages, scrollToBottom]);
+
+  /**
+   * 監聽 selectedChatId 變化：當新對話 ID 設定後，刷新側邊欄
+   */
+  useEffect(() => {
+    // 如果 selectedChatId 剛被設定（從 undefined 變為有值），刷新側邊欄
+    if (selectedChatId) {
+      setSidebarRefreshTrigger((prev) => prev + 1);
+    }
+  }, [selectedChatId]);
 
   return (
     <div className="flex h-[calc(100vh-64px)]">

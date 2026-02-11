@@ -4,7 +4,7 @@
 import { type NextRequest, NextResponse } from 'next/server';
 
 const DIFY_SERVICE_URL = process.env.DIFY_SERVICE_URL;
-const DIFY_API_KEY = process.env.DIFY_API_KEY;
+const DIFY_CHAT_KEY = process.env.DIFY_CHAT_KEY;
 
 interface Message {
   id: string;
@@ -53,7 +53,7 @@ export async function GET(
       );
     }
 
-    if (!DIFY_SERVICE_URL || !DIFY_API_KEY) {
+    if (!DIFY_SERVICE_URL || !DIFY_CHAT_KEY) {
       return NextResponse.json(
         {
           success: false,
@@ -84,7 +84,7 @@ export async function GET(
     const response = await fetch(url.toString(), {
       method: 'GET',
       headers: {
-        Authorization: `Bearer ${DIFY_API_KEY}`,
+        Authorization: `Bearer ${DIFY_CHAT_KEY}`,
         'Content-Type': 'application/json',
       },
     });
