@@ -122,10 +122,10 @@ function AdminHeader() {
   return (
     <header className="h-14 border-b border-border bg-card/80 backdrop-blur-md flex items-center justify-between px-4 z-50 relative">
       <div className="flex items-center gap-3">
-        <div className="flex items-center gap-2">
+        <button onClick={() => router.push('/')} className="flex items-center gap-2 hover:opacity-80 transition-opacity">
           <span className="font-semibold text-primary text-lg">ACROSS</span>
           <span className="font-semibold text-foreground hidden sm:inline">後台管理系統</span>
-        </div>
+        </button>
       </div>
 
       <div className="flex items-center gap-2">
