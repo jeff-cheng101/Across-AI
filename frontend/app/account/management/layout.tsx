@@ -40,8 +40,6 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
-import { RoleGuard } from '@/components/role-guard'
-import authenticator from '@/app/util/authenticator'
 import { logout } from '@/app/routes/auth'
 
 import './admin-console.css'
@@ -114,7 +112,6 @@ function AdminSidebar() {
 
 // ===== AdminHeader =====
 function AdminHeader() {
-  const auth = authenticator.authValue
   const router = useRouter()
 
   const handleLogout = async () => {
@@ -147,14 +144,13 @@ function AdminHeader() {
               <div className="w-7 h-7 rounded-full bg-primary/20 flex items-center justify-center">
                 <User className="h-3.5 w-3.5 text-primary" />
               </div>
-              <span className="text-sm hidden sm:inline">{auth?.user?.name ?? '管理員'}</span>
+              <span className="text-sm hidden sm:inline">管理員</span>
               <ChevronDown className="h-3 w-3" />
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" className="w-48">
             <div className="px-3 py-2">
-              <p className="text-sm font-medium">{auth?.user?.name ?? '管理員'}</p>
-              <p className="text-xs text-muted-foreground">{auth?.user?.email ?? ''}</p>
+              <p className="text-sm font-medium">管理員</p>
             </div>
             <DropdownMenuSeparator />
             <DropdownMenuItem onClick={handleLogout} className="text-destructive">
@@ -180,22 +176,20 @@ function AdminFooter() {
 // ===== Layout =====
 export default function ManagementLayout({ children }: { children: React.ReactNode }) {
   return (
-    <RoleGuard allowedRoles={['management']}>
-      <TooltipProvider>
-        <div className="min-h-screen flex flex-col bg-background">
-          <AdminHeader />
-          <div className="flex flex-1 overflow-hidden">
-            <AdminSidebar />
-            <main className="flex-1 overflow-auto p-6 relative">
-              <div className="ai-bg-flow" />
-              <div className="relative z-10">
-                {children}
-              </div>
-            </main>
-          </div>
-          <AdminFooter />
+    <TooltipProvider>
+      <div className="min-h-screen flex flex-col bg-background">
+        <AdminHeader />
+        <div className="flex flex-1 overflow-hidden">
+          <AdminSidebar />
+          <main className="flex-1 overflow-auto p-6 relative">
+            <div className="ai-bg-flow" />
+            <div className="relative z-10">
+              {children}
+            </div>
+          </main>
         </div>
-      </TooltipProvider>
-    </RoleGuard>
+        <AdminFooter />
+      </div>
+    </TooltipProvider>
   )
 }
