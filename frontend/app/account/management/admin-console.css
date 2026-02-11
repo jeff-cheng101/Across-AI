@@ -1,0 +1,99 @@
+/**
+ * 管理後台專屬樣式（移植自 nebula-admin-console）
+ *
+ * 業務背景：提供 Nebula 管理後台的 neon-card 發光邊框、側欄導覽光暈、
+ * 背景流動粒子等視覺效果，維持與原始設計一致的科技感 UI。
+ *
+ * 依賴：需搭配 tailwindcss 使用，CSS 變數承繼自 globals.css。
+ * 僅在 /account/management 路由下載入。
+ */
+
+/* ===== Neon glow card ===== */
+.neon-card {
+  position: relative;
+  border-radius: 0.75rem;
+  overflow: hidden;
+  background: hsl(var(--card));
+  border-color: transparent;
+  box-shadow:
+    0 0 1px hsl(195 65% 52% / 0.4),
+    inset 0 0 1px hsl(195 65% 52% / 0.1);
+}
+.neon-card::before {
+  content: '';
+  position: absolute;
+  inset: -1px;
+  border-radius: inherit;
+  padding: 1px;
+  background: linear-gradient(
+    135deg,
+    hsl(195 65% 52% / 0.3),
+    transparent 40%,
+    hsl(267 100% 50% / 0.2),
+    transparent 80%,
+    hsl(195 65% 52% / 0.2)
+  );
+  -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+  mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  pointer-events: none;
+}
+
+/* ===== Sidebar nav glow ===== */
+.sidebar-nav-glow {
+  position: relative;
+}
+.sidebar-nav-glow::after {
+  content: '';
+  position: absolute;
+  bottom: 0;
+  left: 50%;
+  width: 60%;
+  height: 1px;
+  transform: translateX(-50%);
+  background: linear-gradient(90deg, transparent, hsl(195 65% 52% / 0.3), transparent);
+  animation: sidebar-pulse 3s ease-in-out infinite;
+}
+@keyframes sidebar-pulse {
+  0%, 100% { opacity: 0.3; }
+  50% { opacity: 0.8; }
+}
+
+/* ===== Background flowing particles ===== */
+.ai-bg-flow {
+  position: fixed;
+  inset: 0;
+  overflow: hidden;
+  z-index: 0;
+  pointer-events: none;
+}
+.ai-bg-flow::before,
+.ai-bg-flow::after {
+  content: '';
+  position: absolute;
+  border-radius: 50%;
+  filter: blur(100px);
+  animation: float-orb-slow 20s ease-in-out infinite;
+}
+.ai-bg-flow::before {
+  width: 500px;
+  height: 500px;
+  background: hsl(195 65% 52% / 0.06);
+  top: -150px;
+  left: -150px;
+  animation-delay: 0s;
+}
+.ai-bg-flow::after {
+  width: 400px;
+  height: 400px;
+  background: hsl(195 65% 52% / 0.04);
+  bottom: -150px;
+  right: -100px;
+  animation-delay: -10s;
+}
+@keyframes float-orb-slow {
+  0%, 100% { transform: translate(0, 0) scale(1); opacity: 0.5; }
+  33% { transform: translate(80px, 50px) scale(1.1); opacity: 0.8; }
+  66% { transform: translate(-40px, 100px) scale(0.9); opacity: 0.4; }
+}
