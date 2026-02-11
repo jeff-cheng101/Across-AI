@@ -62,6 +62,29 @@ async function proxyRequest(request: NextRequest, path: string[]) {
       }
     });
 
+    // 開發環境：對 auth API 記錄實際 response 內容
+    const isAuthApi =
+      (targetPath === 'auth/login' && request.method === 'POST') ||
+      targetPath === 'auth/status';
+    if (isAuthApi && process.env.NODE_ENV === 'development') {
+      const bodyText = await response.text();
+      try {
+        const parsed = JSON.parse(bodyText);
+        console.log(
+          `📋 Auth [${targetPath}] response:`,
+          JSON.stringify(parsed, null, 2),
+        );
+      } catch {
+        console.log(`📋 Auth [${targetPath}] response (raw):`, bodyText);
+      }
+      responseHeaders.set('Content-Type', 'application/json');
+      return new Response(bodyText, {
+        status: response.status,
+        statusText: response.statusText,
+        headers: responseHeaders,
+      });
+    }
+
     // 直接串流轉發回應
     return new Response(response.body, {
       status: response.status,

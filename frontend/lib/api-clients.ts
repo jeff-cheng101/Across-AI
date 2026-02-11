@@ -18,7 +18,7 @@
 
 import axios, { type AxiosError, type AxiosInstance } from 'axios';
 import type { AppRouterInstance } from 'next/dist/shared/lib/app-router-context.shared-runtime';
-import { authSubject } from '@/app/util/authenticator';
+import { useAuthStore } from '@/lib/auth-store';
 
 // HTTP 狀態碼
 const HTTP_STATUS = {
@@ -52,10 +52,8 @@ const setupResponseInterceptor = (
         const url = error.response.config?.url || '';
         if (!url.includes('logout')) {
           console.log('Unauthorized access detected, triggering logout...');
-          authSubject.next({
-            loginState: false,
-            message: '登入已過期，請重新登入',
-          });
+          // 使用 Zustand 清除认证状态
+          useAuthStore.getState().clearUser();
 
           // 使用 Next.js 路由跳轉
           if (globalRouter) {
