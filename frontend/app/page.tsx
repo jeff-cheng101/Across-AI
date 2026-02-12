@@ -19,7 +19,7 @@ import { useState } from 'react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { useAuthStore, useIsLoggedIn } from '@/lib/auth-store';
+import { useAuthStore, useIsLoggedIn, useUser } from '@/lib/auth-store';
 import { login as apiLogin } from '@/services/auth';
 
 interface ModuleCard {
@@ -70,7 +70,28 @@ const MODULES: Omit<ModuleCard, 'authorized'>[] = [
   },
 ];
 
-const AUTHORIZED_MODULES = ['ais', 'aig', 'aie'];
+/**
+ * 展示用模組權限對照表
+ *
+ * 業務背景：依據登入的 email 決定該使用者可存取哪些模組，
+ * 此為 demo 展示用邏輯，不會進入正式開發 codebase。
+ *
+ * 規則：
+ * - admin@gmail.com：可看到 AIS / AIG / AIE 三個模組
+ * - management@gmail.com：可看到 AIG / AIE
+ * - finance@gmail.com：只能看到 AIE
+ * - 其他 email：預設看到全部三個模組（AIS / AIG / AIE）
+ */
+const MODULE_ACCESS_BY_EMAIL: Record<string, string[]> = {
+  'admin@gmail.com': ['ais', 'aig', 'aie'],
+  'management@gmail.com': ['aig', 'aie'],
+  'finance@gmail.com': ['aie'],
+};
+
+function getAuthorizedModulesByEmail(email: string | undefined): string[] {
+  if (!email) return [];
+  return MODULE_ACCESS_BY_EMAIL[email] ?? [];
+}
 
 const ORBIT_CIRCLE_SIZE = 76;
 
@@ -150,7 +171,10 @@ export default function Home() {
   const [resetEmailError, setResetEmailError] = useState('');
   const router = useRouter();
   const isLoggedIn = useIsLoggedIn();
+  const user = useUser();
   const setUser = useAuthStore((state) => state.setUser);
+
+  const authorizedModules = getAuthorizedModulesByEmail(user?.email);
 
   // 登入 Mutation
   const loginMutation = useMutation({
@@ -174,7 +198,7 @@ export default function Home() {
 
   const modules: ModuleCard[] = MODULES.map((m) => ({
     ...m,
-    authorized: isLoggedIn && AUTHORIZED_MODULES.includes(m.id),
+    authorized: isLoggedIn && authorizedModules.includes(m.id),
   }));
 
   const validateEmail = (email: string) => {
