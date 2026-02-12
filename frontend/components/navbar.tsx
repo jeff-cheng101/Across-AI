@@ -151,8 +151,32 @@ export function Navbar() {
     logoutMutation.mutate();
   };
 
+  /**
+   * 進入管理系統
+   *
+   * 業務背景：
+   * - 使用者角色已是 management 且尚未切換到其他合約 → 直接導航，不呼叫 API
+   * - 若已切換到合約使用者身份（contract 有值）→ 呼叫 switchToManagement API 切回管理員
+   *
+   * 邊界條件：
+   * - 尚未切換合約時直接呼叫 API 會得到 401/403，
+   *   authClient 攔截器會自動清除登入狀態並跳轉首頁（看起來像登出）
+   */
   const handleSwitchToManagement = () => {
-    switchToManagementMutation.mutate();
+    const currentContract = useAuthStore.getState().contract;
+    const hasActiveContract =
+      currentContract !== null &&
+      currentContract !== undefined &&
+      (typeof currentContract !== 'object' ||
+        Object.keys(currentContract).length > 0);
+
+    if (hasActiveContract) {
+      // 已切換到合約使用者，需要呼叫 API 切回管理員身份
+      switchToManagementMutation.mutate();
+    } else {
+      // 尚未切換合約，直接導航到管理系統
+      router.push('/account/management');
+    }
   };
 
   return (

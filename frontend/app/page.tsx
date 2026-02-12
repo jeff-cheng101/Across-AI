@@ -189,6 +189,11 @@ export default function Home() {
       toast.success('登入成功', {
         description: `歡迎回來！`,
       });
+
+      // 業務規則：management 角色登入並完成 MFA 後，直接導向管理主控台
+      if (data.user.role === 'management') {
+        router.push('/account/management');
+      }
     },
     onError: (error: unknown) => {
       const message = getReadableLoginErrorMessage(error);
@@ -947,7 +952,7 @@ export default function Home() {
                   <Button
                     type="submit"
                     disabled={loginMutation.isPending}
-                    className="w-full h-11 gap-2 text-sm font-semibold"
+                    className="relative -left-0.5 top-0 w-full h-11 gap-2 text-sm font-semibold"
                   >
                     <Shield className="w-4 h-4" />
                     {loginMutation.isPending ? 'Verifying...' : 'Verify'}
