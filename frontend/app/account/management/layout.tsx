@@ -17,6 +17,7 @@
  */
 
 import { useState } from 'react'
+import Image from 'next/image'
 import { usePathname, useRouter } from 'next/navigation'
 import {
   LayoutDashboard,
@@ -78,12 +79,18 @@ function AdminSidebar() {
           {collapsed ? <PanelLeftOpen className="h-4 w-4" /> : <PanelLeftClose className="h-4 w-4" />}
         </Button>
       </div>
+      {!collapsed && (
+        <div className="px-3 pb-2">
+          <span className="font-semibold text-foreground text-sm">後台管理系統</span>
+        </div>
+      )}
       <nav className="flex-1 py-2 px-2 space-y-1">
         {ADMIN_NAV_ITEMS.map((item) => {
           const isActive = pathname === item.path
           const btn = (
             <button
               key={item.path}
+              type="button"
               onClick={() => router.push(item.path)}
               className={cn(
                 'w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm transition-all duration-200 sidebar-nav-glow',
@@ -125,9 +132,14 @@ function AdminHeader() {
   return (
     <header className="h-14 border-b border-border bg-card/80 backdrop-blur-md flex items-center justify-between px-4 z-50 relative">
       <div className="flex items-center gap-3">
-        <button onClick={() => router.push('/')} className="flex items-center gap-2 hover:opacity-80 transition-opacity">
-          <span className="font-semibold text-primary text-lg">ACROSS</span>
-          <span className="font-semibold text-foreground hidden sm:inline">後台管理系統</span>
+        <button type="button" onClick={() => router.push('/')} className="flex items-center gap-2 hover:opacity-80 transition-opacity">
+          <Image
+            src="/images/across_white.png"
+            alt="ACROSS"
+            width={132}
+            height={24}
+            className="w-auto h-6"
+          />
         </button>
       </div>
 
