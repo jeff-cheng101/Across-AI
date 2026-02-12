@@ -1,260 +1,295 @@
-"use client"
+'use client';
 
-import { useState, useEffect } from "react"
-import Link from "next/link"
-import { format } from "date-fns"
-import { useRouter } from "next/navigation"
-import { Card, CardContent } from "@/components/ui/card"
-import { Badge } from "@/components/ui/badge"
-import { Button } from "@/components/ui/button"
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
-import { Calendar } from "@/components/ui/calendar"
+import { format } from 'date-fns';
 import {
-  Plus,
+  ArrowDown,
+  ArrowUp,
+  ArrowUpDown,
   CalendarIcon,
   ChevronLeft,
   ChevronRight,
-  ArrowUpDown,
-  ArrowUp,
-  ArrowDown,
   ChevronsLeft,
   ChevronsRight,
-} from "lucide-react"
-import authenticator from '@/app/util/authenticator'
-import { getTicketsByUser } from "@/app/routes/ticket"
-import { checkAuth } from '@/app/util/authenticator'
+  Plus,
+} from 'lucide-react';
+import Link from 'next/link';
+import { useRouter } from 'next/navigation';
+import { useCallback, useEffect, useState } from 'react';
+import { getTicketsByUser } from '@/app/routes/ticket';
+import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
+import { Calendar } from '@/components/ui/calendar';
+import { Card, CardContent } from '@/components/ui/card';
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from '@/components/ui/popover';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '@/components/ui/table';
+import { useUser } from '@/lib/auth-store';
 
 interface Ticket {
-  id: string
-  ticket_no: string
-  subject: string
-  severity: "LOW" | "MEDIUM" | "HIGH" | "CRITICAL"
-  status: "處理中" | "待回覆" | "已完成" | "已關閉"
-  contact_name: string
-  incident_date: Date
-  last_action_date: Date
+  id: string;
+  ticket_no: string;
+  subject: string;
+  severity: 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL';
+  status: '處理中' | '待回覆' | '已完成' | '已關閉';
+  contact_name: string;
+  incident_date: Date;
+  last_action_date: Date;
 }
 
-type SortField = "subject" | "severity" | "status" | "contact_name" | "incident_date" | "last_action_date" | null
-type SortOrder = "asc" | "desc" | null
+type SortField =
+  | 'subject'
+  | 'severity'
+  | 'status'
+  | 'contact_name'
+  | 'incident_date'
+  | 'last_action_date'
+  | null;
+type SortOrder = 'asc' | 'desc' | null;
 
 export default function TicketsPage() {
-  const [auth, setAuth] = useState<any>({ loginState: false })
-  const [tickets, setTickets] = useState<Ticket[]>([])
-  const [statusFilter, setStatusFilter] = useState<string>("全部狀態")
-  const [severityFilter, setSeverityFilter] = useState<string>("全部層級")
-  const [startDate, setStartDate] = useState<Date | undefined>()
-  const [endDate, setEndDate] = useState<Date | undefined>()
-  const [sortField, setSortField] = useState<SortField>(null)
-  const [sortOrder, setSortOrder] = useState<SortOrder>(null)
-  const [currentPage, setCurrentPage] = useState(1)
-  const [itemsPerPage, setItemsPerPage] = useState(10)
-  const router = useRouter()
+  const user = useUser();
+  const [tickets, setTickets] = useState<Ticket[]>([]);
+  const [statusFilter, setStatusFilter] = useState<string>('全部狀態');
+  const [severityFilter, setSeverityFilter] = useState<string>('全部層級');
+  const [startDate, setStartDate] = useState<Date | undefined>();
+  const [endDate, setEndDate] = useState<Date | undefined>();
+  const [sortField, setSortField] = useState<SortField>(null);
+  const [sortOrder, setSortOrder] = useState<SortOrder>(null);
+  const [currentPage, setCurrentPage] = useState(1);
+  const [itemsPerPage, setItemsPerPage] = useState(10);
+  const router = useRouter();
 
-  useEffect(() => {
-    let isMounted = true
-    checkAuth()
-    const subscription = authenticator.authObservable.subscribe((nextAuth: any) => {
-      if (!isMounted) return
-      try {
-        const authValue = typeof nextAuth === 'string' ? JSON.parse(nextAuth) : nextAuth
-        setAuth(authValue || { loginState: false })
-        console.log('Auth updated:', authValue)
-      } catch (error) {
-        console.error('Auth parse error:', error)
-        setAuth({ loginState: false })
-      }
-    })
-    
-    return () => { 
-      isMounted = false
-      subscription.unsubscribe() 
-    }
-  }, [])
-
-  useEffect(() => {
-    if (auth?.user?.email) {
-      loadSettings()
-    }
-  }, [auth])
-
-  const loadSettings = async () => {
+  const loadSettings = useCallback(async () => {
     try {
-      if (auth?.user?.email) {
-        const ticketResp = await getTicketsByUser(auth?.user?.email || '')
+      if (user?.email) {
+        const ticketResp = await getTicketsByUser(user.email);
         const tickets = ticketResp.data || [];
-        for (let ticket of tickets) {
-          ticket.status = ticket.status === 'PENDING' ? '待回覆' : ticket.status === 'IN_PROGRESS' ? '處理中' : ticket.status === 'RESOLVED' ? '已完成' : ticket.status === 'CLOSED' ? '已關閉' : '處理中';
-          if (ticket.incident_date && typeof ticket.incident_date === 'string') {
+        for (const ticket of tickets) {
+          ticket.status =
+            ticket.status === 'PENDING'
+              ? '待回覆'
+              : ticket.status === 'IN_PROGRESS'
+                ? '處理中'
+                : ticket.status === 'RESOLVED'
+                  ? '已完成'
+                  : ticket.status === 'CLOSED'
+                    ? '已關閉'
+                    : '處理中';
+          if (
+            ticket.incident_date &&
+            typeof ticket.incident_date === 'string'
+          ) {
             ticket.incident_date = new Date(ticket.incident_date);
           }
-          if (ticket.last_action_date && typeof ticket.last_action_date === 'string') {
+          if (
+            ticket.last_action_date &&
+            typeof ticket.last_action_date === 'string'
+          ) {
             ticket.last_action_date = new Date(ticket.last_action_date);
           }
         }
-        setTickets(tickets)
-        console.log(tickets)
+        setTickets(tickets);
       }
     } catch (error) {
-      console.error('Error loading tickets:', error)
+      console.error('Error loading tickets:', error);
     }
-  }
+  }, [user?.email]);
 
-  const getSeverityColor = (severity: string) => {
-    switch (severity) {
-      case "CRITICAL":
-        return "bg-red-500/20 text-red-400"
-      case "HIGH":
-        return "bg-orange-500/20 text-orange-400"
-      case "MEDIUM":
-        return "bg-yellow-500/20 text-yellow-400"
-      case "LOW":
-        return "bg-gray-500/20 text-gray-400"
-      default:
-        return "bg-gray-500/20 text-gray-400"
+  useEffect(() => {
+    if (user?.email) {
+      loadSettings();
     }
-  }
+  }, [user?.email, loadSettings]);
 
   const getStatusColor = (status: string) => {
     switch (status) {
-      case "處理中":
-        return "bg-cyan-500/20 text-cyan-400 border-cyan-500/30"
-      case "待回覆":
-        return "bg-gray-500/20 text-gray-400 border-gray-500/30"
-      case "已完成":
-        return "bg-green-500/20 text-green-400 border-green-500/30"
+      case '處理中':
+        return 'bg-cyan-500/20 text-cyan-400 border-cyan-500/30';
+      case '待回覆':
+        return 'bg-gray-500/20 text-gray-400 border-gray-500/30';
+      case '已完成':
+        return 'bg-green-500/20 text-green-400 border-green-500/30';
       default:
-        return "bg-gray-500/20 text-gray-400 border-gray-500/30"
+        return 'bg-gray-500/20 text-gray-400 border-gray-500/30';
     }
-  }
+  };
 
   const getSeverityLabel = (severity: string) => {
     switch (severity) {
-      case "LOW":
-        return "Low - 低"
-      case "MEDIUM":
-        return "Medium - 中"
-      case "HIGH":
-        return "High - 高"
-      case "CRITICAL":
-        return "Critical - 極緊急"
+      case 'LOW':
+        return 'Low - 低';
+      case 'MEDIUM':
+        return 'Medium - 中';
+      case 'HIGH':
+        return 'High - 高';
+      case 'CRITICAL':
+        return 'Critical - 極緊急';
       default:
-        return severity
+        return severity;
     }
-  }
+  };
 
   const filteredTickets = tickets.filter((ticket) => {
-    if (statusFilter !== "全部狀態" && ticket.status !== statusFilter) return false
-    if (severityFilter !== "全部層級" && ticket.severity !== severityFilter) return false
+    if (statusFilter !== '全部狀態' && ticket.status !== statusFilter)
+      return false;
+    if (severityFilter !== '全部層級' && ticket.severity !== severityFilter)
+      return false;
 
     if (startDate) {
-      const ticketDate = new Date(ticket.incident_date)
-      ticketDate.setHours(0, 0, 0, 0)
-      const filterStart = new Date(startDate)
-      filterStart.setHours(0, 0, 0, 0)
-      if (ticketDate < filterStart) return false
+      const ticketDate = new Date(ticket.incident_date);
+      ticketDate.setHours(0, 0, 0, 0);
+      const filterStart = new Date(startDate);
+      filterStart.setHours(0, 0, 0, 0);
+      if (ticketDate < filterStart) return false;
     }
 
     if (endDate) {
-      const ticketDate = new Date(ticket.incident_date)
-      ticketDate.setHours(0, 0, 0, 0)
-      const filterEnd = new Date(endDate)
-      filterEnd.setHours(23, 59, 59, 999)
-      if (ticketDate > filterEnd) return false
+      const ticketDate = new Date(ticket.incident_date);
+      ticketDate.setHours(0, 0, 0, 0);
+      const filterEnd = new Date(endDate);
+      filterEnd.setHours(23, 59, 59, 999);
+      if (ticketDate > filterEnd) return false;
     }
 
-    return true
-  })
+    return true;
+  });
+
+  const handleStatusFilterChange = (value: string) => {
+    setStatusFilter(value);
+    setCurrentPage(1);
+  };
+
+  const handleSeverityFilterChange = (value: string) => {
+    setSeverityFilter(value);
+    setCurrentPage(1);
+  };
+
+  const handleStartDateChange = (date: Date | undefined) => {
+    setStartDate(date);
+    setCurrentPage(1);
+  };
+
+  const handleEndDateChange = (date: Date | undefined) => {
+    setEndDate(date);
+    setCurrentPage(1);
+  };
 
   const handleSort = (field: SortField) => {
     if (sortField === field) {
-      if (sortOrder === "asc") {
-        setSortOrder("desc")
-      } else if (sortOrder === "desc") {
-        setSortField(null)
-        setSortOrder(null)
+      if (sortOrder === 'asc') {
+        setSortOrder('desc');
+      } else if (sortOrder === 'desc') {
+        setSortField(null);
+        setSortOrder(null);
       }
     } else {
-      setSortField(field)
-      setSortOrder("asc")
+      setSortField(field);
+      setSortOrder('asc');
     }
-  }
+    setCurrentPage(1);
+  };
 
   const SortIcon = ({ field }: { field: SortField }) => {
     if (sortField !== field) {
-      return <ArrowUpDown className="w-4 h-4 text-slate-500" />
+      return <ArrowUpDown className="w-4 h-4 text-slate-500" />;
     }
-    if (sortOrder === "asc") {
-      return <ArrowUp className="w-4 h-4 text-cyan-400" />
+    if (sortOrder === 'asc') {
+      return <ArrowUp className="w-4 h-4 text-cyan-400" />;
     }
-    return <ArrowDown className="w-4 h-4 text-cyan-400" />
-  }
+    return <ArrowDown className="w-4 h-4 text-cyan-400" />;
+  };
 
   const sortedTickets = [...filteredTickets].sort((a, b) => {
-    if (!sortField || !sortOrder) return 0
+    if (!sortField || !sortOrder) return 0;
 
-    let comparison = 0
+    let comparison = 0;
 
     switch (sortField) {
-      case "subject":
-        comparison = a.subject.localeCompare(b.subject, "zh-TW")
-        break
-      case "severity":
-        const severityOrder = { LOW: 1, MEDIUM: 2, HIGH: 3, CRITICAL: 4 }
-        comparison = severityOrder[a.severity] - severityOrder[b.severity]
-        break
-      case "status":
-        comparison = a.status.localeCompare(b.status, "zh-TW")
-        break
-      case "contact_name":
-        comparison = a.contact_name.localeCompare(b.contact_name, "zh-TW")
-        break
-      case "incident_date":
-        const aIncidentDate = a.incident_date instanceof Date ? a.incident_date : new Date(a.incident_date)
-        const bIncidentDate = b.incident_date instanceof Date ? b.incident_date : new Date(b.incident_date)
-        comparison = aIncidentDate.getTime() - bIncidentDate.getTime()
-        break
-      case "last_action_date":
-        const aLastActionDate = a.last_action_date instanceof Date ? a.last_action_date : new Date(a.last_action_date)
-        const bLastActionDate = b.last_action_date instanceof Date ? b.last_action_date : new Date(b.last_action_date)
-        comparison = aLastActionDate.getTime() - bLastActionDate.getTime()
-        break
+      case 'subject':
+        comparison = a.subject.localeCompare(b.subject, 'zh-TW');
+        break;
+      case 'severity': {
+        const severityOrder = { LOW: 1, MEDIUM: 2, HIGH: 3, CRITICAL: 4 };
+        comparison = severityOrder[a.severity] - severityOrder[b.severity];
+        break;
+      }
+      case 'status':
+        comparison = a.status.localeCompare(b.status, 'zh-TW');
+        break;
+      case 'contact_name':
+        comparison = a.contact_name.localeCompare(b.contact_name, 'zh-TW');
+        break;
+      case 'incident_date': {
+        const aIncidentDate =
+          a.incident_date instanceof Date
+            ? a.incident_date
+            : new Date(a.incident_date);
+        const bIncidentDate =
+          b.incident_date instanceof Date
+            ? b.incident_date
+            : new Date(b.incident_date);
+        comparison = aIncidentDate.getTime() - bIncidentDate.getTime();
+        break;
+      }
+      case 'last_action_date': {
+        const aLastActionDate =
+          a.last_action_date instanceof Date
+            ? a.last_action_date
+            : new Date(a.last_action_date);
+        const bLastActionDate =
+          b.last_action_date instanceof Date
+            ? b.last_action_date
+            : new Date(b.last_action_date);
+        comparison = aLastActionDate.getTime() - bLastActionDate.getTime();
+        break;
+      }
     }
 
-    return sortOrder === "asc" ? comparison : -comparison
-  })
+    return sortOrder === 'asc' ? comparison : -comparison;
+  });
 
-  const totalPages = Math.ceil(sortedTickets.length / itemsPerPage)
-  const startIndex = (currentPage - 1) * itemsPerPage
-  const endIndex = startIndex + itemsPerPage
-  const paginatedTickets = sortedTickets.slice(startIndex, endIndex)
-
-  useEffect(() => {
-    setCurrentPage(1)
-  }, [statusFilter, severityFilter, startDate, endDate, sortField, sortOrder])
+  const totalPages = Math.ceil(sortedTickets.length / itemsPerPage);
+  const startIndex = (currentPage - 1) * itemsPerPage;
+  const endIndex = startIndex + itemsPerPage;
+  const paginatedTickets = sortedTickets.slice(startIndex, endIndex);
 
   const handlePreviousPage = () => {
-    setCurrentPage((prev) => Math.max(1, prev - 1))
-  }
+    setCurrentPage((prev) => Math.max(1, prev - 1));
+  };
 
   const handleNextPage = () => {
-    setCurrentPage((prev) => Math.min(totalPages, prev + 1))
-  }
+    setCurrentPage((prev) => Math.min(totalPages, prev + 1));
+  };
 
   const handleFirstPage = () => {
-    setCurrentPage(1)
-  }
+    setCurrentPage(1);
+  };
 
   const handleLastPage = () => {
-    setCurrentPage(totalPages)
-  }
+    setCurrentPage(totalPages);
+  };
 
   const handleItemsPerPageChange = (value: string) => {
-    setItemsPerPage(Number(value))
-    setCurrentPage(1)
-  }
+    setItemsPerPage(Number(value));
+    setCurrentPage(1);
+  };
 
   return (
     <div className="min-h-screen bg-[#08131D] p-8">
@@ -277,7 +312,13 @@ export default function TicketsPage() {
             <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
               <div className="flex items-center gap-2">
                 <div className="flex items-center justify-center w-10 h-10 rounded-lg bg-slate-800/50">
-                  <svg className="w-5 h-5 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <svg
+                    className="w-5 h-5 text-slate-400"
+                    fill="none"
+                    stroke="currentColor"
+                    viewBox="0 0 24 24"
+                  >
+                    <title>篩選狀態</title>
                     <path
                       strokeLinecap="round"
                       strokeLinejoin="round"
@@ -286,7 +327,7 @@ export default function TicketsPage() {
                     />
                   </svg>
                 </div>
-                <Select value={statusFilter} onValueChange={setStatusFilter}>
+                <Select value={statusFilter} onValueChange={handleStatusFilterChange}>
                   <SelectTrigger className="flex-1 bg-slate-800/50 border-white/10 text-white focus:border-slate-600 hover:border-slate-600">
                     <SelectValue placeholder="全部狀態" />
                   </SelectTrigger>
@@ -302,7 +343,13 @@ export default function TicketsPage() {
 
               <div className="flex items-center gap-2">
                 <div className="flex items-center justify-center w-10 h-10 rounded-lg bg-slate-800/50">
-                  <svg className="w-5 h-5 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <svg
+                    className="w-5 h-5 text-slate-400"
+                    fill="none"
+                    stroke="currentColor"
+                    viewBox="0 0 24 24"
+                  >
+                    <title>篩選層級</title>
                     <path
                       strokeLinecap="round"
                       strokeLinejoin="round"
@@ -311,7 +358,10 @@ export default function TicketsPage() {
                     />
                   </svg>
                 </div>
-                <Select value={severityFilter} onValueChange={setSeverityFilter}>
+                <Select
+                  value={severityFilter}
+                  onValueChange={handleSeverityFilterChange}
+                >
                   <SelectTrigger className="flex-1 bg-slate-800/50 border-white/10 text-white focus:border-slate-600 hover:border-slate-600">
                     <SelectValue placeholder="全部層級" />
                   </SelectTrigger>
@@ -332,14 +382,19 @@ export default function TicketsPage() {
                     className="flex items-center gap-2 bg-slate-800/50 border-white/10 text-slate-400 hover:text-white hover:bg-slate-800 justify-start"
                   >
                     <CalendarIcon className="w-5 h-5" />
-                    <span className="text-sm">{startDate ? format(startDate, "yyyy/MM/dd") : "開始日期"}</span>
+                    <span className="text-sm">
+                      {startDate ? format(startDate, 'yyyy/MM/dd') : '開始日期'}
+                    </span>
                   </Button>
                 </PopoverTrigger>
-                <PopoverContent className="w-auto p-0 bg-slate-800 border-white/10" align="start">
+                <PopoverContent
+                  className="w-auto p-0 bg-slate-800 border-white/10"
+                  align="start"
+                >
                   <Calendar
                     mode="single"
                     selected={startDate}
-                    onSelect={setStartDate}
+                    onSelect={handleStartDateChange}
                     initialFocus
                     className="bg-slate-800 text-white"
                   />
@@ -348,7 +403,7 @@ export default function TicketsPage() {
                       <Button
                         variant="ghost"
                         size="sm"
-                        onClick={() => setStartDate(undefined)}
+                        onClick={() => handleStartDateChange(undefined)}
                         className="w-full text-slate-400 hover:text-white hover:bg-slate-700"
                       >
                         清除日期
@@ -365,14 +420,19 @@ export default function TicketsPage() {
                     className="flex items-center gap-2 bg-slate-800/50 border-white/10 text-slate-400 hover:text-white hover:bg-slate-800 justify-start"
                   >
                     <CalendarIcon className="w-5 h-5" />
-                    <span className="text-sm">{endDate ? format(endDate, "yyyy/MM/dd") : "結束日期"}</span>
+                    <span className="text-sm">
+                      {endDate ? format(endDate, 'yyyy/MM/dd') : '結束日期'}
+                    </span>
                   </Button>
                 </PopoverTrigger>
-                <PopoverContent className="w-auto p-0 bg-slate-800 border-white/10" align="start">
+                <PopoverContent
+                  className="w-auto p-0 bg-slate-800 border-white/10"
+                  align="start"
+                >
                   <Calendar
                     mode="single"
                     selected={endDate}
-                    onSelect={setEndDate}
+                    onSelect={handleEndDateChange}
                     initialFocus
                     className="bg-slate-800 text-white"
                   />
@@ -381,7 +441,7 @@ export default function TicketsPage() {
                       <Button
                         variant="ghost"
                         size="sm"
-                        onClick={() => setEndDate(undefined)}
+                        onClick={() => handleEndDateChange(undefined)}
                         className="w-full text-slate-400 hover:text-white hover:bg-slate-700"
                       >
                         清除日期
@@ -404,7 +464,8 @@ export default function TicketsPage() {
               <TableRow className="border-b border-white/10 hover:bg-transparent">
                 <TableHead className="text-slate-400">
                   <button
-                    onClick={() => handleSort("subject")}
+                    type="button"
+                    onClick={() => handleSort('subject')}
                     className="flex items-center gap-1 hover:text-white transition-colors"
                   >
                     主題
@@ -413,7 +474,8 @@ export default function TicketsPage() {
                 </TableHead>
                 <TableHead className="text-slate-400">
                   <button
-                    onClick={() => handleSort("severity")}
+                    type="button"
+                    onClick={() => handleSort('severity')}
                     className="flex items-center gap-1 hover:text-white transition-colors"
                   >
                     層級
@@ -422,7 +484,8 @@ export default function TicketsPage() {
                 </TableHead>
                 <TableHead className="text-slate-400">
                   <button
-                    onClick={() => handleSort("status")}
+                    type="button"
+                    onClick={() => handleSort('status')}
                     className="flex items-center gap-1 hover:text-white transition-colors"
                   >
                     狀態
@@ -431,7 +494,8 @@ export default function TicketsPage() {
                 </TableHead>
                 <TableHead className="text-slate-400">
                   <button
-                    onClick={() => handleSort("contact_name")}
+                    type="button"
+                    onClick={() => handleSort('contact_name')}
                     className="flex items-center gap-1 hover:text-white transition-colors"
                   >
                     聯絡人
@@ -440,7 +504,8 @@ export default function TicketsPage() {
                 </TableHead>
                 <TableHead className="text-slate-400">
                   <button
-                    onClick={() => handleSort("incident_date")}
+                    type="button"
+                    onClick={() => handleSort('incident_date')}
                     className="flex items-center gap-1 hover:text-white transition-colors"
                   >
                     案件日期
@@ -449,7 +514,8 @@ export default function TicketsPage() {
                 </TableHead>
                 <TableHead className="text-slate-400">
                   <button
-                    onClick={() => handleSort("last_action_date")}
+                    type="button"
+                    onClick={() => handleSort('last_action_date')}
                     className="flex items-center gap-1 hover:text-white transition-colors"
                   >
                     更新日期
@@ -462,28 +528,49 @@ export default function TicketsPage() {
             <TableBody>
               {paginatedTickets.length === 0 ? (
                 <TableRow className="border-b border-white/10 hover:bg-transparent">
-                  <TableCell colSpan={7} className="text-center py-12 text-slate-500">
-                    {tickets.length === 0 ? "尚無工單資料，請點擊「建立工單」新增" : "沒有符合篩選條件的工單"}
+                  <TableCell
+                    colSpan={7}
+                    className="text-center py-12 text-slate-500"
+                  >
+                    {tickets.length === 0
+                      ? '尚無工單資料，請點擊「建立工單」新增'
+                      : '沒有符合篩選條件的工單'}
                   </TableCell>
                 </TableRow>
               ) : (
                 paginatedTickets.map((ticket) => (
                   <TableRow
                     key={ticket.id}
-                    onClick={() => router.push(`/ai-analysis/tickets/${ticket.id}`)}
+                    onClick={() =>
+                      router.push(`/ai-analysis/tickets/${ticket.id}`)
+                    }
                     className="border-b border-white/10 hover:bg-white/5 cursor-pointer"
                   >
-                    <TableCell className="text-white font-medium">{ticket.subject}</TableCell>
-                    <TableCell>
-                      <span className="text-slate-400">{getSeverityLabel(ticket.severity)}</span>
+                    <TableCell className="text-white font-medium">
+                      {ticket.subject}
                     </TableCell>
                     <TableCell>
-                      <Badge className={getStatusColor(ticket.status)}>{ticket.status}</Badge>
+                      <span className="text-slate-400">
+                        {getSeverityLabel(ticket.severity)}
+                      </span>
                     </TableCell>
-                    <TableCell className="text-slate-300">{ticket.contact_name}</TableCell>
-                    <TableCell className="text-slate-300">{format(ticket.incident_date, "yyyy/MM/dd")}</TableCell>
-                    <TableCell className="text-slate-300">{format(ticket.last_action_date, "yyyy/MM/dd")}</TableCell>
-                    <TableCell className="text-slate-300">{ticket.ticket_no}</TableCell>
+                    <TableCell>
+                      <Badge className={getStatusColor(ticket.status)}>
+                        {ticket.status}
+                      </Badge>
+                    </TableCell>
+                    <TableCell className="text-slate-300">
+                      {ticket.contact_name}
+                    </TableCell>
+                    <TableCell className="text-slate-300">
+                      {format(ticket.incident_date, 'yyyy/MM/dd')}
+                    </TableCell>
+                    <TableCell className="text-slate-300">
+                      {format(ticket.last_action_date, 'yyyy/MM/dd')}
+                    </TableCell>
+                    <TableCell className="text-slate-300">
+                      {ticket.ticket_no}
+                    </TableCell>
                   </TableRow>
                 ))
               )}
@@ -495,7 +582,10 @@ export default function TicketsPage() {
           <div className="flex items-center justify-between text-slate-400 text-sm">
             <div className="flex items-center gap-2">
               <span>每頁顯示</span>
-              <Select value={itemsPerPage.toString()} onValueChange={handleItemsPerPageChange}>
+              <Select
+                value={itemsPerPage.toString()}
+                onValueChange={handleItemsPerPageChange}
+              >
                 <SelectTrigger className="w-20 bg-slate-800/50 border-white/10 text-white focus:border-slate-600 h-8">
                   <SelectValue />
                 </SelectTrigger>
@@ -556,5 +646,5 @@ export default function TicketsPage() {
         )}
       </div>
     </div>
-  )
+  );
 }

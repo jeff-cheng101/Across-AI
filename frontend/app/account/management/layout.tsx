@@ -17,6 +17,7 @@
  */
 
 import { useState } from 'react'
+import Image from 'next/image'
 import { usePathname, useRouter } from 'next/navigation'
 import {
   LayoutDashboard,
@@ -40,6 +41,8 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
+import { RoleGuard } from '@/components/role-guard'
+import authenticator from '@/app/util/authenticator'
 import { logout } from '@/app/routes/auth'
 
 import './admin-console.css'
@@ -76,12 +79,18 @@ function AdminSidebar() {
           {collapsed ? <PanelLeftOpen className="h-4 w-4" /> : <PanelLeftClose className="h-4 w-4" />}
         </Button>
       </div>
+      {!collapsed && (
+        <div className="px-3 pb-2">
+          <span className="font-semibold text-foreground text-sm">後台管理系統</span>
+        </div>
+      )}
       <nav className="flex-1 py-2 px-2 space-y-1">
         {ADMIN_NAV_ITEMS.map((item) => {
           const isActive = pathname === item.path
           const btn = (
             <button
               key={item.path}
+              type="button"
               onClick={() => router.push(item.path)}
               className={cn(
                 'w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm transition-all duration-200 sidebar-nav-glow',
@@ -112,6 +121,7 @@ function AdminSidebar() {
 
 // ===== AdminHeader =====
 function AdminHeader() {
+  const auth = authenticator.authValue
   const router = useRouter()
 
   const handleLogout = async () => {
@@ -122,9 +132,14 @@ function AdminHeader() {
   return (
     <header className="h-14 border-b border-border bg-card/80 backdrop-blur-md flex items-center justify-between px-4 z-50 relative">
       <div className="flex items-center gap-3">
-        <button onClick={() => router.push('/')} className="flex items-center gap-2 hover:opacity-80 transition-opacity">
-          <span className="font-semibold text-primary text-lg">ACROSS</span>
-          <span className="font-semibold text-foreground hidden sm:inline">後台管理系統</span>
+        <button type="button" onClick={() => router.push('/')} className="flex items-center gap-2 hover:opacity-80 transition-opacity">
+          <Image
+            src="/images/across_white.png"
+            alt="ACROSS"
+            width={132}
+            height={24}
+            className="w-auto h-6"
+          />
         </button>
       </div>
 
@@ -144,13 +159,14 @@ function AdminHeader() {
               <div className="w-7 h-7 rounded-full bg-primary/20 flex items-center justify-center">
                 <User className="h-3.5 w-3.5 text-primary" />
               </div>
-              <span className="text-sm hidden sm:inline">管理員</span>
+              <span className="text-sm hidden sm:inline">{auth?.user?.name ?? '管理員'}</span>
               <ChevronDown className="h-3 w-3" />
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" className="w-48">
             <div className="px-3 py-2">
-              <p className="text-sm font-medium">管理員</p>
+              <p className="text-sm font-medium">{auth?.user?.name ?? '管理員'}</p>
+              <p className="text-xs text-muted-foreground">{auth?.user?.email ?? ''}</p>
             </div>
             <DropdownMenuSeparator />
             <DropdownMenuItem onClick={handleLogout} className="text-destructive">
@@ -176,20 +192,22 @@ function AdminFooter() {
 // ===== Layout =====
 export default function ManagementLayout({ children }: { children: React.ReactNode }) {
   return (
-    <TooltipProvider>
-      <div className="min-h-screen flex flex-col bg-background">
-        <AdminHeader />
-        <div className="flex flex-1 overflow-hidden">
-          <AdminSidebar />
-          <main className="flex-1 overflow-auto p-6 relative">
-            <div className="ai-bg-flow" />
-            <div className="relative z-10">
-              {children}
-            </div>
-          </main>
+    <RoleGuard allowedRoles={['management']}>
+      <TooltipProvider>
+        <div className="min-h-screen flex flex-col bg-background">
+          <AdminHeader />
+          <div className="flex flex-1 overflow-hidden">
+            <AdminSidebar />
+            <main className="flex-1 overflow-auto p-6 relative">
+              <div className="ai-bg-flow" />
+              <div className="relative z-10">
+                {children}
+              </div>
+            </main>
+          </div>
+          <AdminFooter />
         </div>
-        <AdminFooter />
-      </div>
-    </TooltipProvider>
+      </TooltipProvider>
+    </RoleGuard>
   )
 }
