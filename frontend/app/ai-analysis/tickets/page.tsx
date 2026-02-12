@@ -171,6 +171,26 @@ export default function TicketsPage() {
     return true;
   });
 
+  const handleStatusFilterChange = (value: string) => {
+    setStatusFilter(value);
+    setCurrentPage(1);
+  };
+
+  const handleSeverityFilterChange = (value: string) => {
+    setSeverityFilter(value);
+    setCurrentPage(1);
+  };
+
+  const handleStartDateChange = (date: Date | undefined) => {
+    setStartDate(date);
+    setCurrentPage(1);
+  };
+
+  const handleEndDateChange = (date: Date | undefined) => {
+    setEndDate(date);
+    setCurrentPage(1);
+  };
+
   const handleSort = (field: SortField) => {
     if (sortField === field) {
       if (sortOrder === 'asc') {
@@ -183,6 +203,7 @@ export default function TicketsPage() {
       setSortField(field);
       setSortOrder('asc');
     }
+    setCurrentPage(1);
   };
 
   const SortIcon = ({ field }: { field: SortField }) => {
@@ -249,10 +270,6 @@ export default function TicketsPage() {
   const endIndex = startIndex + itemsPerPage;
   const paginatedTickets = sortedTickets.slice(startIndex, endIndex);
 
-  useEffect(() => {
-    setCurrentPage(1);
-  }, []);
-
   const handlePreviousPage = () => {
     setCurrentPage((prev) => Math.max(1, prev - 1));
   };
@@ -310,7 +327,7 @@ export default function TicketsPage() {
                     />
                   </svg>
                 </div>
-                <Select value={statusFilter} onValueChange={setStatusFilter}>
+                <Select value={statusFilter} onValueChange={handleStatusFilterChange}>
                   <SelectTrigger className="flex-1 bg-slate-800/50 border-white/10 text-white focus:border-slate-600 hover:border-slate-600">
                     <SelectValue placeholder="全部狀態" />
                   </SelectTrigger>
@@ -343,7 +360,7 @@ export default function TicketsPage() {
                 </div>
                 <Select
                   value={severityFilter}
-                  onValueChange={setSeverityFilter}
+                  onValueChange={handleSeverityFilterChange}
                 >
                   <SelectTrigger className="flex-1 bg-slate-800/50 border-white/10 text-white focus:border-slate-600 hover:border-slate-600">
                     <SelectValue placeholder="全部層級" />
@@ -377,7 +394,7 @@ export default function TicketsPage() {
                   <Calendar
                     mode="single"
                     selected={startDate}
-                    onSelect={setStartDate}
+                    onSelect={handleStartDateChange}
                     initialFocus
                     className="bg-slate-800 text-white"
                   />
@@ -386,7 +403,7 @@ export default function TicketsPage() {
                       <Button
                         variant="ghost"
                         size="sm"
-                        onClick={() => setStartDate(undefined)}
+                        onClick={() => handleStartDateChange(undefined)}
                         className="w-full text-slate-400 hover:text-white hover:bg-slate-700"
                       >
                         清除日期
@@ -415,7 +432,7 @@ export default function TicketsPage() {
                   <Calendar
                     mode="single"
                     selected={endDate}
-                    onSelect={setEndDate}
+                    onSelect={handleEndDateChange}
                     initialFocus
                     className="bg-slate-800 text-white"
                   />
@@ -424,7 +441,7 @@ export default function TicketsPage() {
                       <Button
                         variant="ghost"
                         size="sm"
-                        onClick={() => setEndDate(undefined)}
+                        onClick={() => handleEndDateChange(undefined)}
                         className="w-full text-slate-400 hover:text-white hover:bg-slate-700"
                       >
                         清除日期

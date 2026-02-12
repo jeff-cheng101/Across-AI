@@ -292,7 +292,9 @@ export const switchToUserContract = async (
     }
     return resp.data;
   } catch (error: unknown) {
-    throw new Error((isAuthApiError(error) && error.message) || '切換使用者失敗');
+    throw new Error(
+      (isAuthApiError(error) && error.message) || '切換使用者失敗',
+    );
   }
 };
 
