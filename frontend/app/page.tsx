@@ -15,12 +15,13 @@ import {
 import Image from 'next/image';
 import { useRouter } from 'next/navigation';
 import type React from 'react';
-import { useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { useAuthStore, useIsLoggedIn, useUser } from '@/lib/auth-store';
 import { login as apiLogin } from '@/services/auth';
+import { loginDifyConsole } from '@/services/dify';
 
 interface ModuleCard {
   id: string;
@@ -173,8 +174,21 @@ export default function Home() {
   const isLoggedIn = useIsLoggedIn();
   const user = useUser();
   const setUser = useAuthStore((state) => state.setUser);
+  const hasDifyLoginTriggered = useRef(false);
 
   const authorizedModules = getAuthorizedModulesByEmail(user?.email);
+
+  const triggerDifyConsoleLogin = useCallback(async () => {
+    if (hasDifyLoginTriggered.current) {
+      return;
+    }
+
+    hasDifyLoginTriggered.current = true;
+    const loginResult = await loginDifyConsole();
+    if (!loginResult.success) {
+      console.error('Dify 自動登入失敗:', loginResult.error);
+    }
+  }, []);
 
   // 登入 Mutation
   const loginMutation = useMutation({
@@ -190,6 +204,9 @@ export default function Home() {
         description: `歡迎回來！`,
       });
 
+      // 不阻塞 ACROSS 登入導向，改為背景觸發 Dify 登入。
+      void triggerDifyConsoleLogin();
+
       // 業務規則：management 角色登入並完成 MFA 後，直接導向管理主控台
       if (data.user.role === 'management') {
         router.push('/account/management');
@@ -200,6 +217,13 @@ export default function Home() {
       setMfaError(message);
     },
   });
+
+  useEffect(() => {
+    if (!isLoggedIn) {
+      return;
+    }
+    void triggerDifyConsoleLogin();
+  }, [isLoggedIn, triggerDifyConsoleLogin]);
 
   const modules: ModuleCard[] = MODULES.map((m) => ({
     ...m,
