@@ -10,10 +10,10 @@
  * - AUTH_SERVICE_URL: 認證服務 URL
  * - BACKEND_SERVICE_URL: 後端 API 服務 URL
  *
- * TODO: 考慮重構 API Client 架構
- * 目前所有 API 請求（auth, backend, local）都已透過 Next.js Route Handlers (/api/*) 處理。
- * 理論上可以統一使用一個 base URL 為 /api 的 client 即可，不需要區分 authClient 和 backendClient。
- * 未來可以簡化為單一 client，透過不同路徑前綴 (auth/, backend/, chat/) 區分服務。
+ * 為什麼拆成多個 Client 而非統一成一個：
+ * - 隱藏路由前綴：呼叫端寫 authClient.get('/users') 而非 client.get('/auth/users')，不需知道路由分層
+ * - 各服務 timeout 不同（auth 5min / backend 20min / next 10min）
+ * - 錯誤處理策略不同（authClient 遇 401/403 自動登出，其他不處理）
  */
 
 import axios, { type AxiosError, type AxiosInstance } from 'axios';
@@ -26,7 +26,7 @@ const HTTP_STATUS = {
   FORBIDDEN: 403,
 } as const;
 
-// 全局路由跳轉處理器（來自 Next.js useRouter）
+// 全域路由跳轉處理器（來自 Next.js useRouter）
 let globalRouter: AppRouterInstance | null = null;
 
 export const setGlobalRouter = (router: AppRouterInstance) => {
@@ -52,7 +52,7 @@ const setupResponseInterceptor = (
         const url = error.response.config?.url || '';
         if (!url.includes('logout')) {
           console.log('Unauthorized access detected, triggering logout...');
-          // 使用 Zustand 清除认证状态
+          // 使用 Zustand 清除認證狀態
           useAuthStore.getState().clearUser();
 
           // 使用 Next.js 路由跳轉
@@ -71,7 +71,7 @@ const setupResponseInterceptor = (
 
 /**
  * Auth Client - 認證服務
- * 用於：登入、用戶管理、票據、系統設定、合約等
+ * 用於：登入、使用者管理、票據、系統設定、合約等
  *
  * Base URL: /api/auth
  * 實際代理到: ${AUTH_SERVICE_URL}/api/internal (由 next.config.mjs 的 rewrites 處理)
@@ -116,5 +116,5 @@ export const nextClient: AxiosInstance = axios.create({
 
 setupResponseInterceptor(nextClient, false);
 
-// 為了向後兼容，導出 authClient 作為默認導出
+// 為了向後相容，匯出 authClient 作為預設匯出
 export default authClient;

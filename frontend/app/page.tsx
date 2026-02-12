@@ -152,7 +152,7 @@ export default function Home() {
   const isLoggedIn = useIsLoggedIn();
   const setUser = useAuthStore((state) => state.setUser);
 
-  // 登录 Mutation
+  // 登入 Mutation
   const loginMutation = useMutation({
     mutationFn: ({ email, password }: { email: string; password: string }) =>
       apiLogin({ email, password }),
@@ -233,7 +233,7 @@ export default function Home() {
       return;
     }
 
-    // 使用 loginMutation，onSuccess 和 onError 回调会处理状态更新
+    // 使用 loginMutation，onSuccess 和 onError 回調會處理狀態更新
     loginMutation.mutate({ email, password });
   };
 

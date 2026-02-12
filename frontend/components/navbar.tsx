@@ -88,6 +88,18 @@ const ListItem = React.forwardRef<
 });
 ListItem.displayName = 'ListItem';
 
+/**
+ * 全站導覽列元件
+ *
+ * 業務背景：顯示於所有非首頁/非管理頁面的頂部導覽列，
+ * 提供服務總覽、事件管理、AI Chat 等入口，以及使用者登入/登出功能
+ *
+ * 依賴：
+ * - lib/auth-store: 使用者認證狀態（登入狀態、角色判斷）
+ * - services/auth: 登出和切換管理員身份 API
+ * - lib/api-clients: 設定全域路由器供攔截器使用
+ * - components/login-dialog: 登入對話框元件
+ */
 export function Navbar() {
   const router = useRouter();
   const [isOpen, setIsOpen] = useState(false);
@@ -97,7 +109,7 @@ export function Navbar() {
   const setUser = useAuthStore((state) => state.setUser);
 
   useEffect(() => {
-    // 设置全局路由器供request拦截器使用
+    // 設定全域路由器供request攔截器使用
     setGlobalRouter(router);
   }, [router]);
 
@@ -110,17 +122,17 @@ export function Navbar() {
     },
     onError: (error) => {
       console.error('Logout failed:', error);
-      clearUser(); // 即使失败也清除状态
+      clearUser(); // 即使失敗也清除狀態
       router.push('/');
     },
   });
 
-  // 切换回管理员 Mutation
+  // 切換回管理員 Mutation
   const switchToManagementMutation = useMutation({
     mutationFn: apiSwitchToManagement,
     onSuccess: (data) => {
       setUser(data.user, data.contract);
-      // 根据角色跳转到对应页面
+      // 根據角色跳轉到對應頁面
       if (data.user.role === 'management') {
         router.push('/account/management');
       } else if (data.user.role === 'reseller') {

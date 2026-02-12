@@ -1,26 +1,26 @@
 /**
  * @deprecated
- * 此文件已废弃，请使用 services/auth/index.ts 代替
+ * 此檔案已棄用，請使用 services/auth/index.ts 代替
  *
- * 新架构使用 Zustand + TanStack Query + Service 层：
- * - services/auth/index.ts - API 函数和 Schema
- * - lib/auth-store.ts - Zustand 状态管理
- * - 组件中直接使用 useMutation/useQuery
+ * 新架構使用 Zustand + TanStack Query + Service 層：
+ * - services/auth/index.ts - API 函數和 Schema
+ * - lib/auth-store.ts - Zustand 狀態管理
+ * - 元件中直接使用 useMutation/useQuery
  *
- * 此文件保留仅为向后兼容，将在后续版本中移除
+ * 此檔案保留僅為向後相容，將在後續版本中移除
  */
 
 import authenticator from '@/app/util/authenticator';
 import { authClient } from '@/lib/api-clients';
 
-// 為了兼容性，將 authClient 作為 request 使用
+// 為了相容性，將 authClient 作為 request 使用
 const request = authClient;
 
-// 用戶角色類型
+// 使用者角色類型
 export type UserRole = 'management' | 'reseller' | 'user';
 
 // 類型定義
-export interface LoginResponse {
+export type LoginResponse = {
   success: boolean;
   account: string;
   message: string;
@@ -32,9 +32,9 @@ export interface LoginResponse {
   };
   contract?: unknown;
   token?: string;
-}
+};
 
-export interface VerifyResponse {
+export type VerifyResponse = {
   loginState: boolean;
   account?: string;
   message?: string;
@@ -45,9 +45,9 @@ export interface VerifyResponse {
     name: string;
   };
   contract?: unknown;
-}
+};
 
-export interface LogoutResponse {
+export type LogoutResponse = {
   success: boolean;
   message: string;
   user?: {
@@ -57,7 +57,7 @@ export interface LogoutResponse {
     name: string;
   };
   contract?: unknown;
-}
+};
 
 type AuthApiError = {
   message?: string;
@@ -193,7 +193,7 @@ export const getConfig = async (): Promise<unknown> => {
   return resp.data;
 };
 
-// 忘記密碼 - 發送重設郵件
+// 忘記密碼 - 發送重設信件
 export const forgotPassword = async (
   email: string,
 ): Promise<{ success: boolean; message: string }> => {
@@ -219,14 +219,14 @@ export const forgotPassword = async (
       status: errorStatus,
     });
 
-    // 優先使用響應攔截器設置的 message，否則使用後備訊息
+    // 優先使用回應攔截器設定的 message，否則使用後備訊息
     const errorMessage =
       (isAuthApiError(error) ? error.message : undefined) ||
       (isAuthApiError(error)
         ? error.response?.data?.error?.message
         : undefined) ||
       (isAuthApiError(error) ? error.response?.data?.message : undefined) ||
-      '發送重設郵件失敗';
+      '發送重設信件失敗';
 
     throw new Error(errorMessage);
   }
@@ -259,7 +259,7 @@ export const resetPassword = async (data: {
       status: errorStatus,
     });
 
-    // 優先使用響應攔截器設置的 message，否則使用後備訊息
+    // 優先使用回應攔截器設定的 message，否則使用後備訊息
     const errorMessage =
       (isAuthApiError(error) ? error.message : undefined) ||
       (isAuthApiError(error)
@@ -272,7 +272,7 @@ export const resetPassword = async (data: {
   }
 };
 
-// 切换用户身份 (管理员权限)
+// 切換使用者身份 (管理員權限)
 export const switchToUserContract = async (
   contractNo: string,
 ): Promise<LoginResponse> => {
@@ -286,13 +286,13 @@ export const switchToUserContract = async (
         loginState: true,
         user: resp.data.user,
         contract: resp.data.contract,
-        message: resp.data.message || '已切换到用户身份',
+        message: resp.data.message || '已切換到使用者身份',
       };
       authSubject.next(auth);
     }
     return resp.data;
   } catch (error: unknown) {
-    throw new Error((isAuthApiError(error) && error.message) || '切换用户失败');
+    throw new Error((isAuthApiError(error) && error.message) || '切換使用者失敗');
   }
 };
 
@@ -305,14 +305,14 @@ export const logoutContract = async (): Promise<LogoutResponse> => {
         loginState: true,
         user: resp.data.user,
         contract: resp.data.contract || {},
-        message: resp.data.message || '已返回管理员身份',
+        message: resp.data.message || '已返回管理員身份',
       };
       authSubject.next(auth);
     }
     return resp.data;
   } catch (error: unknown) {
     throw new Error(
-      (isAuthApiError(error) && error.message) || '返回管理员失败',
+      (isAuthApiError(error) && error.message) || '返回管理員失敗',
     );
   }
 };

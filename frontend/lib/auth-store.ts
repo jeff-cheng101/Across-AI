@@ -1,21 +1,21 @@
 /**
- * 认证状态管理 - Zustand Store
+ * 認證狀態管理 - Zustand Store
  *
- * 业务背景：统一管理用户认证状态，替代原有的 RxJS BehaviorSubject 方案
+ * 業務背景：統一管理使用者認證狀態，替代原有的 RxJS BehaviorSubject 方案
  *
- * 数据流：
- * - 组件通过 TanStack Query Mutation 调用 services/auth API
- * - Mutation onSuccess 回调更新此 Store
- * - 组件通过 selectors 订阅状态变化并自动重渲染
+ * 資料流：
+ * - 元件透過 TanStack Query Mutation 調用 services/auth API
+ * - Mutation onSuccess 回調更新此 Store
+ * - 元件透過 selectors 訂閱狀態變化並自動重新渲染
  *
- * 依赖：
- * - zustand: 状态管理
- * - zustand/middleware: devtools（调试）和 persist（持久化）
+ * 依賴：
+ * - zustand: 狀態管理
+ * - zustand/middleware: devtools（偵錯）和 persist（持久化）
  *
  * 特性：
- * - localStorage 持久化（刷新页面保持登录）
- * - Redux DevTools 支持（开发时查看状态变化）
- * - 细粒度 selectors（性能优化，减少不必要的重渲染）
+ * - localStorage 持久化（重新整理頁面保持登入）
+ * - Redux DevTools 支援（開發時查看狀態變化）
+ * - 細粒度 selectors（效能優化，減少不必要的重新渲染）
  */
 
 import { create } from 'zustand';
@@ -23,36 +23,36 @@ import { createJSONStorage, devtools, persist } from 'zustand/middleware';
 import type { User } from '@/services/auth';
 
 /**
- * 认证状态接口
+ * 認證狀態類型
  */
-interface AuthState {
-  // 状态
+type AuthState = {
+  // 狀態
   user: User | null;
   contract: unknown;
   isLoggedIn: boolean;
 
-  // Actions（只负责更新状态，不处理副作用）
+  // Actions（只負責更新狀態，不處理副作用）
   setUser: (user: User | null, contract?: unknown) => void;
   clearUser: () => void;
-}
+};
 
 /**
  * Zustand Store
  *
- * 中间件顺序：devtools(persist(...))
- * - persist 在内层，先处理持久化
- * - devtools 在外层，记录所有状态变化
+ * 中間件順序：devtools(persist(...))
+ * - persist 在內層，先處理持久化
+ * - devtools 在外層，記錄所有狀態變化
  */
 export const useAuthStore = create<AuthState>()(
   devtools(
     persist(
       (set) => ({
-        // 初始状态
+        // 初始狀態
         user: null,
         contract: null,
         isLoggedIn: false,
 
-        // 设置用户（登录成功后调用）
+        // 設定使用者（登入成功後調用）
         setUser: (user, contract = null) =>
           set(
             {
@@ -64,7 +64,7 @@ export const useAuthStore = create<AuthState>()(
             'setUser',
           ),
 
-        // 清除用户（登出或 401 错误时调用）
+        // 清除使用者（登出或 401 錯誤時調用）
         clearUser: () =>
           set(
             {
@@ -79,7 +79,7 @@ export const useAuthStore = create<AuthState>()(
       {
         name: 'auth-storage', // localStorage key
         storage: createJSONStorage(() => localStorage),
-        // 只持久化必要的字段
+        // 只持久化必要的欄位
         partialize: (state) => ({
           user: state.user,
           contract: state.contract,
@@ -88,44 +88,44 @@ export const useAuthStore = create<AuthState>()(
       },
     ),
     {
-      name: 'AuthStore', // Redux DevTools 中显示的名称
-      enabled: process.env.NODE_ENV === 'development', // 只在开发环境启用
+      name: 'AuthStore', // Redux DevTools 中顯示的名稱
+      enabled: process.env.NODE_ENV === 'development', // 只在開發環境啟用
     },
   ),
 );
 
 // ===== Selectors =====
-// 细粒度 selectors，只订阅需要的数据，减少不必要的重渲染
+// 細粒度 selectors，只訂閱需要的資料，減少不必要的重新渲染
 
 /**
- * 获取当前用户
+ * 取得目前使用者
  *
- * 业务背景：用于显示用户信息（如导航栏用户名）
- * 性能优化：只有 user 对象变化时才重渲染
+ * 業務背景：用於顯示使用者資訊（如導覽列使用者名稱）
+ * 效能優化：只有 user 物件變化時才重新渲染
  */
 export const useUser = () => useAuthStore((state) => state.user);
 
 /**
- * 获取登录状态
+ * 取得登入狀態
  *
- * 业务背景：用于条件渲染（如显示登录/登出按钮）
- * 性能优化：只有 isLoggedIn 变化时才重渲染
+ * 業務背景：用於條件渲染（如顯示登入/登出按鈕）
+ * 效能優化：只有 isLoggedIn 變化時才重新渲染
  */
 export const useIsLoggedIn = () => useAuthStore((state) => state.isLoggedIn);
 
 /**
- * 获取用户角色
+ * 取得使用者角色
  *
- * 业务背景：用于权限判断和路由保护
- * 性能优化：只有 user.role 变化时才重渲染
+ * 業務背景：用於權限判斷和路由保護
+ * 效能優化：只有 user.role 變化時才重新渲染
  */
 export const useUserRole = () =>
   useAuthStore((state) => state.user?.role ?? null);
 
 /**
- * 获取合约信息
+ * 取得合約資訊
  *
- * 业务背景：用于获取用户的合约信息（如 contractNo）
- * 性能优化：只有 contract 变化时才重渲染
+ * 業務背景：用於取得使用者的合約資訊（如 contractNo）
+ * 效能優化：只有 contract 變化時才重新渲染
  */
 export const useContract = () => useAuthStore((state) => state.contract);

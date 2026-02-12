@@ -1,10 +1,10 @@
 /**
- * Auth 服务 - 认证相关 API
+ * Auth 服務 - 認證相關 API
  *
- * 业务背景：统一管理所有认证相关的 API 调用
- * 数据流：前端 → authClient → /api/auth → Auth Service (localhost:3001)
+ * 業務背景：統一管理所有認證相關的 API 調用
+ * 資料流：前端 → authClient → /api/auth → Auth Service (localhost:3001)
  *
- * 依赖：authClient（lib/api-clients.ts）
+ * 依賴：authClient（lib/api-clients.ts）
  */
 
 import { z } from 'zod';
@@ -13,7 +13,7 @@ import { authClient } from '@/lib/api-clients';
 // ===== Type Definitions =====
 
 /**
- * 用户角色类型
+ * 使用者角色類型
  */
 export type UserRole = 'management' | 'reseller' | 'user';
 
@@ -22,7 +22,7 @@ function isUserRole(value: string): value is UserRole {
 }
 
 /**
- * 用户信息 Schema
+ * 使用者資訊 Schema
  *
  * 業務背景：Auth Service 回傳的 user.id 為 number，userId 為 string
  */
@@ -39,16 +39,16 @@ export const UserSchema = z.object({
 export type User = z.infer<typeof UserSchema>;
 
 /**
- * 登录凭证 Schema
+ * 登入憑證 Schema
  */
 export const LoginCredentialsSchema = z.object({
-  email: z.string().email('Email 格式错误'),
-  password: z.string().min(6, '密码至少需要 6 个字符'),
+  email: z.string().email('Email 格式錯誤'),
+  password: z.string().min(6, '密碼至少需要 6 個字元'),
 });
 export type LoginCredentials = z.infer<typeof LoginCredentialsSchema>;
 
 /**
- * 认证响应 Schema
+ * 認證回應 Schema
  */
 export const AuthResponseSchema = z.object({
   loginState: z.boolean(),
@@ -59,7 +59,7 @@ export const AuthResponseSchema = z.object({
 export type AuthResponse = z.infer<typeof AuthResponseSchema>;
 
 /**
- * 登录响应 Schema
+ * 登入回應 Schema
  */
 export const LoginResponseSchema = z.object({
   success: z.boolean().optional(),
@@ -129,32 +129,31 @@ function normalizeLoginResponse(raw: z.infer<typeof RawLoginResponseSchema>): {
 // ===== API Functions =====
 
 /**
- * 登录
+ * 登入
  *
- * 业务背景：用户登录认证
+ * 業務背景：使用者登入認證
  *
- * 数据流：前端 → authClient.post('/auth/login') → Auth Service
+ * 資料流：前端 → authClient.post('/auth/login') → Auth Service
  *
- * 边界条件：
- * - 邮箱或密码错误时返回 401
- * - 成功返回用户信息和 token（通过 cookie）
- * - 兼容 Auth Service 的 loginState/account 等不同回傳格式
+ * 邊界條件：
+ * - 信箱或密碼錯誤時返回 401
+ * - 成功返回使用者資訊和 token（透過 cookie）
+ * - 相容 Auth Service 的 loginState/account 等不同回傳格式
  *
- * @param credentials 登录凭证
- * @returns 用户信息和合约信息
+ * @param credentials 登入憑證
+ * @returns 使用者資訊和合約資訊
  */
 export async function login(
   credentials: LoginCredentials,
 ): Promise<{ user: User; contract?: unknown }> {
-  // 验证输入
+  // 驗證輸入
   const validatedInput = LoginCredentialsSchema.parse(credentials);
 
-  // 发送请求
+  // 發送請求
   const response = await authClient.post('/auth/login', validatedInput);
 
-  // 開發環境下記錄響應數據
+  // 開發環境下記錄回應資料
   if (process.env.NODE_ENV === 'development') {
-    // eslint-disable-next-line no-console
     console.log('Login API response:', response.data);
   }
 
@@ -168,12 +167,10 @@ export async function login(
   const rawResult = RawLoginResponseSchema.safeParse(response.data);
   if (!rawResult.success) {
     if (process.env.NODE_ENV === 'development') {
-      // eslint-disable-next-line no-console
       console.error(
         'Login response validation failed:',
         strictResult.error.format(),
       );
-      // eslint-disable-next-line no-console
       console.error('Received data:', response.data);
     }
     throw new Error(
@@ -187,29 +184,29 @@ export async function login(
 /**
  * 登出
  *
- * 业务背景：用户登出，清除服务器端 session
+ * 業務背景：使用者登出，清除伺服器端 session
  *
- * 数据流：前端 → authClient.post('/auth/logout') → Auth Service
+ * 資料流：前端 → authClient.post('/auth/logout') → Auth Service
  *
- * 边界条件：
- * - 即使未登录也返回成功
+ * 邊界條件：
+ * - 即使未登入也返回成功
  */
 export async function logout(): Promise<void> {
   await authClient.post('/auth/logout');
 }
 
 /**
- * 切换回管理员身份
+ * 切換回管理員身份
  *
- * 业务背景：管理员或经销商以合约用户身份登录后，切换回管理员身份
+ * 業務背景：管理員或經銷商以合約使用者身份登入後，切換回管理員身份
  *
- * 数据流：前端 → authClient.post('/auth/switch_management') → Auth Service
+ * 資料流：前端 → authClient.post('/auth/switch_management') → Auth Service
  *
- * 边界条件：
- * - 只有 management 或 reseller 角色才能调用
- * - 成功返回管理员用户信息
+ * 邊界條件：
+ * - 只有 management 或 reseller 角色才能調用
+ * - 成功返回管理員使用者資訊
  *
- * @returns 管理员用户信息和合约信息
+ * @returns 管理員使用者資訊和合約資訊
  */
 export async function switchToManagement(): Promise<{
   user: User;
@@ -221,17 +218,17 @@ export async function switchToManagement(): Promise<{
 }
 
 /**
- * 检查认证状态
+ * 檢查認證狀態
  *
- * 业务背景：应用启动时或页面刷新时验证用户登录状态
+ * 業務背景：應用啟動時或頁面重新整理時驗證使用者登入狀態
  *
- * 数据流：前端 → authClient.get('/auth/status') → Auth Service
+ * 資料流：前端 → authClient.get('/auth/status') → Auth Service
  *
- * 边界条件：
- * - 未登录返回 { loginState: false }
- * - 已登录返回用户信息
+ * 邊界條件：
+ * - 未登入返回 { loginState: false }
+ * - 已登入返回使用者資訊
  *
- * @returns 认证状态和用户信息
+ * @returns 認證狀態和使用者資訊
  */
 export async function checkAuth(): Promise<AuthResponse> {
   const response = await authClient.get('/auth/status');
@@ -239,18 +236,18 @@ export async function checkAuth(): Promise<AuthResponse> {
 }
 
 /**
- * 更新个人资料
+ * 更新個人資料
  *
- * 业务背景：用户修改个人信息
+ * 業務背景：使用者修改個人資訊
  *
- * 数据流：前端 → authClient.put('/auth/profile') → Auth Service
+ * 資料流：前端 → authClient.put('/auth/profile') → Auth Service
  *
- * 边界条件：
- * - 未登录返回 401
- * - 成功返回更新后的用户信息
+ * 邊界條件：
+ * - 未登入返回 401
+ * - 成功返回更新後的使用者資訊
  *
- * @param data 要更新的字段
- * @returns 更新后的用户信息
+ * @param data 要更新的欄位
+ * @returns 更新後的使用者資訊
  */
 export async function updateProfile(data: Partial<User>): Promise<User> {
   const response = await authClient.put('/auth/profile', data);
@@ -258,19 +255,19 @@ export async function updateProfile(data: Partial<User>): Promise<User> {
 }
 
 /**
- * 修改密码
+ * 修改密碼
  *
- * 业务背景：用户修改登录密码
+ * 業務背景：使用者修改登入密碼
  *
- * 数据流：前端 → authClient.post('/auth/change-password') → Auth Service
+ * 資料流：前端 → authClient.post('/auth/change-password') → Auth Service
  *
- * 边界条件：
- * - 当前密码错误返回 400
- * - 新密码格式不符返回 400
+ * 邊界條件：
+ * - 目前密碼錯誤返回 400
+ * - 新密碼格式不符返回 400
  * - 成功返回 success: true
  *
- * @param currentPassword 当前密码
- * @param newPassword 新密码
+ * @param currentPassword 目前密碼
+ * @param newPassword 新密碼
  */
 export async function changePassword(
   currentPassword: string,
